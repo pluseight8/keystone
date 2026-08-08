@@ -1,0 +1,18 @@
+app-id: org.keystone.app
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: keystone
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+modules:
+  - name: keystone
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 keystone /app/bin/keystone
+    sources:
+      - type: file
+        path: ../../src-tauri/target/release/keystone-desktop

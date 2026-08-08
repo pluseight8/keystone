@@ -1,0 +1,1 @@
+{"expo":{"name":"Keystone","slug":"keystone","scheme":"keystone","version":"0.1.0","orientation":"default","plugins":["expo-router"],"ios":{"supportsTablet":true,"bundleIdentifier":"org.keystone.app"},"android":{"package":"org.keystone.app","permissions":["INTERNET","FOREGROUND_SERVICE"]},"experiments":{"typedRoutes":true}}}

@@ -1,0 +1,4 @@
+import { useState } from 'react';
+import { ScrollView, Text } from 'react-native';
+import { AuditFeed, NodeCard } from '@keystone/ui';
+export default function Nodes() { const [filter,setFilter]=useState<string>(); const audit=[{id:'1',nodeId:'maya',nodeName:'Maya Kim',type:'Disclosure',summary:'Адрес передан после подтверждения',timestamp:new Date().toISOString()},{id:'2',nodeId:'jordan',nodeName:'Jordan Lee',type:'Automation',summary:'Команда ожидает подтверждения',timestamp:new Date().toISOString()}]; return <ScrollView contentContainerStyle={{padding:20,gap:16}}><Text accessibilityRole="header" style={{fontSize:30,fontWeight:'800'}}>Trusted Nodes</Text><NodeCard name="Maya Kim" role="Family member" status="P2P · Online"/><NodeCard name="Jordan Lee" role="Friend" status="Relay · Approval needed"/><NodeCard name="Tablet" role="Trusted device" status="Offline"/><AuditFeed items={audit} nodeFilter={filter} onNodeFilter={setFilter}/></ScrollView>; }

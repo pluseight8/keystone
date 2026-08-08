@@ -1,0 +1,5 @@
+plugins { id 'com.android.library'; id 'expo-module-gradle-plugin' }
+group = 'org.keystone.browser'
+version = '0.1.0'
+android { namespace 'org.keystone.browser'; defaultConfig { minSdk 26 } }
+dependencies { implementation 'org.mozilla.geckoview:geckoview:139.0.20250529214032' }

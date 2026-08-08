@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Keystone",
+  "version": "0.1.0",
+  "identifier": "org.keystone.app",
+  "build": { "beforeBuildCommand": "pnpm --filter @keystone/web build", "frontendDist": "../../web/dist" },
+  "app": { "withGlobalTauri": false, "security": { "csp": "default-src 'self'; connect-src 'self' https:; script-src 'self'; object-src 'none'; base-uri 'none'" } },
+  "bundle": { "active": true, "targets": ["appimage", "deb", "rpm", "msi", "nsis", "app", "dmg"] }
+}

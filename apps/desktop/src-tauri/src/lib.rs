@@ -1,0 +1,134 @@
+use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use url::Url;
+use enigo::{Enigo, Settings, Keyboard, Mouse, Button, Coordinate, Direction};
+
+/// The Rust side accepts only a short-lived, already double-confirmed payload.
+/// Signature verification of the two approvals belongs in `packages/core`; this
+/// command is deliberately not exposed as a generic `eval` primitive.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataInjectionPayload {
+    pub origin: String,
+    pub fields: HashMap<String, String>,
+    pub confirmation_token: String,
+    pub expires_at: String,
+}
+
+#[derive(Default)]
+struct InjectionState { consumed_tokens: Mutex<HashSet<String>> }
+
+#[tauri::command]
+async fn inject_confirmed_data(
+    app: AppHandle,
+    state: tauri::State<'_, InjectionState>,
+    payload: DataInjectionPayload,
+) -> Result<(), String> {
+    let origin = Url::parse(&payload.origin).map_err(|_| "Invalid origin URL")?;
+    if !matches!(origin.scheme(), "https" | "http") || origin.host_str().is_none() {
+        return Err("Only an explicit HTTP(S) origin is allowed".into());
+    }
+    let expires = chrono_like_timestamp(&payload.expires_at)?;
+    if expires <= std::time::SystemTime::now() { return Err("Confirmation expired".into()); }
+    if payload.confirmation_token.len() < 32 { return Err("Confirmation token is too short".into()); }
+    let webview = app.get_webview_window("browser-automation").ok_or("Automation webview is not open")?;
+    let current = webview.url().map_err(|error| error.to_string())?;
+    if current.origin() != origin.origin() { return Err("Payload origin does not match the active page".into()); }
+    {
+        let mut consumed = state.consumed_tokens.lock().map_err(|_| "Injection state poisoned")?;
+        if !consumed.insert(payload.confirmation_token.clone()) { return Err("Confirmation token was already consumed".into()); }
+    }
+    let json = serde_json::to_string(&payload.fields).map_err(|_| "Cannot serialize fields")?;
+    // Values are JSON encoded, selectors are fixed by the application (never
+    // supplied by the peer), and input/change events notify the target site.
+    let script = format!(r#"(() => {{
+      const values = {json};
+      const selectors = {{ address: '[name="address"],#address', city: '[name="city"],#city', postalCode: '[name="postalCode"],#postalCode' }};
+      for (const [field, value] of Object.entries(values)) {{
+        const selector = selectors[field]; if (!selector) continue;
+        const element = document.querySelector(selector); if (!element) continue;
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(element, value); else element.value = value;
+        element.dispatchEvent(new Event('input', {{ bubbles: true }})); element.dispatchEvent(new Event('change', {{ bubbles: true }}));
+      }}
+    }})();"#);
+    webview.eval(&script).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn open_automation_browser(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|_| "Invalid URL")?;
+    if parsed.scheme() != "https" { return Err("Automation requires HTTPS".into()); }
+    if let Some(existing) = app.get_webview_window("browser-automation") { existing.navigate(parsed).map_err(|e| e.to_string())?; return Ok(()); }
+    WebviewWindowBuilder::new(&app, "browser-automation", WebviewUrl::External(parsed))
+        .title("Keystone secure automation").visible(false).build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn close_automation_browser(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("browser-automation") { window.close().map_err(|e| e.to_string())?; }
+    Ok(())
+}
+
+#[tauri::command]
+async fn evaluate_browser(app: AppHandle, script: String) -> Result<serde_json::Value, String> {
+    if script.len() > 64 * 1024 { return Err("Script exceeds bridge limit".into()); }
+    if script.contains("document.cookie") || script.contains("localStorage") || script.contains("indexedDB") { return Err("Script accesses protected browser storage".into()); }
+    let webview = app.get_webview_window("browser-automation").ok_or("Automation webview is not open")?;
+    webview.eval(&script).map_err(|e| e.to_string())?;
+    Ok(serde_json::Value::Null)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UiAction { Tap { x: i32, y: i32 }, Swipe { x1: i32, y1: i32, x2: i32, y2: i32, #[serde(rename = "durationMs")] duration_ms: u64 }, Type { text: String } }
+
+/// OS-level events are intentionally gated by the same short-lived token used
+/// by DoubleConfirmation. The token is opaque here; core verifies both
+/// signatures before invoking this command.
+#[tauri::command]
+fn ui_action(state: tauri::State<'_, InjectionState>, action: UiAction, confirmation_token: String) -> Result<(), String> {
+    if confirmation_token.len() < 32 { return Err("A double-confirmed token is required".into()); }
+    { let mut consumed = state.consumed_tokens.lock().map_err(|_| "Injection state poisoned")?; if !consumed.insert(confirmation_token) { return Err("Confirmation token was already consumed".into()); } }
+    let mut e = Enigo::new(&Settings::default()).map_err(|e| format!("OS input unavailable: {e}"))?;
+    match action {
+        UiAction::Tap { x, y } => { e.move_mouse(x, y, Coordinate::Abs).map_err(|e| e.to_string())?; e.button(Button::Left, Direction::Click).map_err(|e| e.to_string())?; }
+        UiAction::Swipe { x1,y1,x2,y2,duration_ms } => { e.move_mouse(x1,y1,Coordinate::Abs).map_err(|e|e.to_string())?; e.button(Button::Left,Direction::Press).map_err(|e|e.to_string())?; std::thread::sleep(std::time::Duration::from_millis(duration_ms.min(10_000))); e.move_mouse(x2,y2,Coordinate::Abs).map_err(|e|e.to_string())?; e.button(Button::Left,Direction::Release).map_err(|e|e.to_string())?; }
+        UiAction::Type { text } => e.text(&text).map_err(|e| e.to_string())?,
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn accessibility_status() -> serde_json::Value {
+    serde_json::json!({"platform": std::env::consts::OS, "inputBackend": "enigo", "requiresUserGrant": true, "supported": cfg!(any(target_os="linux", target_os="windows", target_os="macos"))})
+}
+
+#[tauri::command]
+fn scan_windows() -> Result<serde_json::Value, String> {
+    // Native accessibility tree adapters are platform-specific and should be
+    // supplied by the host build (UIAutomation/AXUIElement/AT-SPI). Returning
+    // an explicit empty result is safer than pretending that coordinates are
+    // trustworthy when the permission has not been granted.
+    Ok(serde_json::json!({"windows": [], "permissionRequired": true}))
+}
+
+// Parse the protocol's RFC3339 timestamp into the platform clock.
+fn chrono_like_timestamp(value: &str) -> Result<std::time::SystemTime, String> {
+    let parsed = time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).map_err(|_| "Invalid expiry timestamp")?;
+    let seconds = parsed.unix_timestamp();
+    if seconds < 0 { return Err("Invalid expiry timestamp".into()); }
+    Ok(std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds as u64))
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .manage(InjectionState::default())
+        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, evaluate_browser, inject_confirmed_data, ui_action, accessibility_status, scan_windows])
+        .run(tauri::generate_context!())
+        .expect("error while running Keystone desktop application");
+}
