@@ -1,3 +1,9 @@
 # @keystone/theme
 
-Версионируемые темы Keystone. Удалённые темы загружаются только по HTTPS как подписанный JSON-токен пакет; произвольный код, CSS selectors и JavaScript темы запрещены CSP и schema validation. Built-ins: Neumorphism и Frutiger Aero.
+Единый Signature Design Language Keystone: строгий flat-минимализм, чёрный,
+тёмно-серый и crimson-акцент. Пакет намеренно не содержит загрузчиков,
+JSON-манифестов, пресетов или runtime-переключения тем.
+
+```ts
+import { COLORS, tokens } from '@keystone/theme';
+```

@@ -1,6 +1,6 @@
 import type { AuditEvent, DisclosureRequest, SignedApproval } from './types.js';
 import type { CryptoProvider } from './crypto.js';
-export type ConsentAction = 'crdt_sync' | 'handoff' | 'clipboard' | 'browser_tab' | 'file_offer' | 'os_automation' | 'data_disclosure' | 'external_side_effect';
+export type ConsentAction = 'crdt_sync' | 'handoff' | 'clipboard' | 'browser_tab' | 'file_offer' | 'os_automation' | 'data_disclosure' | 'external_side_effect' | 'addon_life_map_read' | 'addon_p2p_request';
 export type ConsentDecision = { mode: 'implicit'; allowed: true } | { mode: 'double_confirmation'; allowed: false };
 export class DoubleConfirmation {
   private readonly consumedNonces = new Set<string>();
@@ -28,6 +28,11 @@ export class DoubleConfirmation {
     const implicit = !this.requiresDoubleConfirmation(input.role, input.action);
     if (implicit) { this.audit.push({ id: await this.crypto.randomNonce(), type:'implicit_trust_authorized', actor:input.actor, timestamp:new Date(this.now()).toISOString(), metadata:{ action:input.action, ...(input.target ? { target:input.target } : {}) } }); return { mode:'implicit', allowed:true }; }
     this.audit.push({ id: await this.crypto.randomNonce(), type:'double_confirmation_required', actor:input.actor, timestamp:new Date(this.now()).toISOString(), metadata:{ action:input.action, ...(input.target ? { target:input.target } : {}) } }); return { mode:'double_confirmation', allowed:false };
+  }
+  /** Addon data/P2P access is never implicitly trusted, including on Self nodes. */
+  async evaluateAddonAction(input: { addonId: string; addonName: string; action: 'addon_life_map_read' | 'addon_p2p_request' }): Promise<ConsentDecision> {
+    this.audit.push({ id: await this.crypto.randomNonce(), type:'double_confirmation_required', actor:input.addonId, timestamp:new Date(this.now()).toISOString(), metadata:{ action:input.action, addonName:input.addonName } });
+    return { mode:'double_confirmation', allowed:false };
   }
   getAudit(): readonly AuditEvent[] { return this.audit; }
   private async approve(request: DisclosureRequest, signer: string, privateKey: string, type: string): Promise<SignedApproval> { if (Date.parse(request.expiresAt) <= this.now()) throw new Error('Disclosure request expired'); const value = `${request.id}|${request.actionHash}|${request.nonce}`; const approval = { requestId: request.id, signer, actionHash: request.actionHash, approvedAt: new Date(this.now()).toISOString(), signature: await this.crypto.sign(value, privateKey) }; this.audit.push({ id: await this.crypto.randomNonce(), type, actor: signer, timestamp: approval.approvedAt, metadata: { requestId: request.id } }); return approval; }

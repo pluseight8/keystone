@@ -3,6 +3,7 @@ name: Build Keystone
 on:
   push:
     branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions:
@@ -24,122 +25,122 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: '${{ env.PNPM_VERSION }}'
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/pnpm/store
-            ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/package.json') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+          node-version: '${{ env.NODE_VERSION }}'
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm lint
       - run: pnpm test
 
   desktop:
-    name: Desktop · ${{ matrix.os }}
+    name: Desktop · ${{ matrix.name }}
     needs: checks
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-22.04
-            bundles: appimage
-          - os: windows-latest
-            bundles: msi,nsis
-          - os: macos-latest
-            bundles: dmg,app
+          - { name: linux-x86_64, os: ubuntu-22.04, bundles: appimage, target: linux-x86_64 }
+          - { name: windows-x86_64, os: windows-latest, bundles: 'msi,nsis', target: windows-x86_64 }
+          - { name: macos-aarch64, os: macos-latest, bundles: 'dmg,app', target: darwin-aarch64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: '${{ env.PNPM_VERSION }}'
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/package.json') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+          node-version: '${{ env.NODE_VERSION }}'
       - uses: dtolnay/rust-toolchain@stable
+        if: runner.os != 'Windows'
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Windows'
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
+        with: { workspaces: apps/desktop/src-tauri -> target }
       - name: Linux WebKit dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --no-frozen-lockfile
-      - uses: tauri-apps/tauri-action@v1
+      - name: Build signed desktop bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           args: --bundles ${{ matrix.bundles }}
-          uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: desktop-[platform]-[arch]-[bundle]
+      - name: Normalize release assets
+        shell: bash
+        env:
+          RELEASE_TARGET: '${{ matrix.target }}'
+          RELEASE_TAG: '${{ github.ref_name }}'
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$RUNNER_TEMP/release-assets" "$RUNNER_TEMP/updater"
+          root="apps/desktop/src-tauri/target/release/bundle"
+          find "$root" -type f \( -name '*.AppImage' -o -name '*.AppImage.sig' -o -name '*.msi' -o -name '*.msi.sig' -o -name '*.exe' -o -name '*.exe.sig' -o -name '*.nsis.zip' -o -name '*.nsis.zip.sig' -o -name '*.msi.zip' -o -name '*.msi.zip.sig' -o -name '*.dmg' -o -name '*.tar.gz' -o -name '*.tar.gz.sig' \) -print0 |
+            while IFS= read -r -d '' file; do cp "$file" "$RUNNER_TEMP/release-assets/$(basename "$file")"; done
+          python3 - "$RUNNER_TEMP/release-assets" "$RUNNER_TEMP/updater/$RELEASE_TARGET.json" "$RELEASE_TARGET" "$RELEASE_TAG" <<'PY'
+          import base64, json, pathlib, sys
+          directory, out, target, tag = map(pathlib.Path, sys.argv[1:])
+          candidates = [p for p in directory.iterdir() if p.is_file() and not p.name.endswith('.sig')]
+          signed = next((p for p in candidates if p.with_name(p.name + '.sig').exists()), None)
+          if not signed: raise SystemExit(f'No signed updater artifact for {target}')
+          signature = signed.with_name(signed.name + '.sig').read_text().strip()
+          data = {'target': str(target), 'asset': signed.name, 'signature': signature, 'tag': str(tag)}
+          out.write_text(json.dumps(data))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/release-assets/*
+            ${{ runner.temp }}/updater/${{ matrix.target }}.json
 
   mobile-android:
-    name: Mobile · Android AAB
+    name: Mobile · Android APK
     needs: checks
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: '${{ env.PNPM_VERSION }}'
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/.local/share/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/package.json') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+          node-version: '${{ env.NODE_VERSION }}'
       - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
+        with: { distribution: temurin, java-version: '17', cache: gradle }
       - uses: android-actions/setup-android@v3
       - run: pnpm install --no-frozen-lockfile
       - name: Generate native project
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform android --non-interactive
-      - name: Build release bundle
+      - name: Build release APK
         working-directory: apps/mobile/android
-        run: ./gradlew bundleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: android-aab
-          path: apps/mobile/android/app/build/outputs/bundle/release/*.aab
+          name: mobile-android-apk
+          path: apps/mobile/android/app/build/outputs/apk/release/*.apk
 
   mobile-ios:
-    name: Mobile · iOS app
+    name: Mobile · iOS simulator
     needs: checks
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
         with:
-          version: ${{ env.PNPM_VERSION }}
+          version: '${{ env.PNPM_VERSION }}'
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/cache@v4
-        with:
-          path: ~/Library/pnpm/store
-          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/package.json') }}
-          restore-keys: ${{ runner.os }}-pnpm-
+          node-version: '${{ env.NODE_VERSION }}'
       - uses: maxim-lobanov/setup-xcode@v1
-        with:
-          xcode-version: latest-stable
+        with: { xcode-version: latest-stable }
       - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '3.3'
-          bundler-cache: false
+        with: { ruby-version: '3.3', bundler-cache: false }
       - run: pnpm install --no-frozen-lockfile
       - name: Generate native project
         working-directory: apps/mobile
@@ -154,3 +155,45 @@ jobs:
         with:
           name: ios-simulator-app
           path: apps/mobile/ios/build/Build/Products/Release-iphonesimulator/*.app
+
+  release:
+    name: Publish GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [desktop, mobile-android, mobile-ios]
+    runs-on: ubuntu-22.04
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: release-input }
+      - name: Create updater.json and checksums
+        env:
+          RELEASE_TAG: '${{ github.ref_name }}'
+        run: |
+          set -Eeuo pipefail
+          python3 - "$RELEASE_TAG" release-input release-output <<'PY'
+          import hashlib, json, pathlib, sys
+          tag, root, out = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3]); out.mkdir()
+          fragments = {}
+          for fragment in root.glob('desktop-*/*.json'):
+              item=json.loads(fragment.read_text()); fragments[item['target']]=item
+          platforms={}
+          for target,item in fragments.items():
+              asset=out/item['asset']
+              source=next(root.glob(f"desktop-*/{item['asset']}")); asset.write_bytes(source.read_bytes())
+              sig=source.with_name(source.name+'.sig')
+              if sig.exists(): (out/sig.name).write_bytes(sig.read_bytes())
+              platforms[target]={'url': f'https://github.com/pluseight8/keystone/releases/download/{tag}/{item["asset"]}', 'signature': item['signature']}
+          for source in root.glob('mobile-android-apk/*.apk'):
+              destination=out/'Keystone-android.apk'; destination.write_bytes(source.read_bytes())
+          updater={'version': tag.removeprefix('v'), 'notes':'Security and stability update', 'pub_date':__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(), 'platforms': platforms}
+          (out/'updater.json').write_text(json.dumps(updater, indent=2)+'\n')
+          checksums=''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in sorted(out.iterdir()) if p.is_file() and p.name != 'updater.json')
+          (out/'SHA256SUMS').write_text(checksums)
+          PY
+      - name: Publish release with artifacts and updater metadata
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: release-output/*

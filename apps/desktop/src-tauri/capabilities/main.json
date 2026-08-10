@@ -3,5 +3,5 @@
   "identifier": "main-window",
   "description": "Minimal IPC access for Keystone's trusted application UI.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default", "process:default", "global-shortcut:default"]
 }

@@ -1,1 +1,76 @@
-{"expo":{"name":"Keystone","slug":"keystone","scheme":"keystone","version":"0.1.0","orientation":"default","plugins":["expo-router"],"ios":{"supportsTablet":true,"bundleIdentifier":"org.keystone.app"},"android":{"package":"org.keystone.app","permissions":["INTERNET","FOREGROUND_SERVICE"]},"experiments":{"typedRoutes":true}}}
+{
+  "expo": {
+    "name": "Keystone",
+    "slug": "keystone",
+    "scheme": "keystone",
+    "version": "0.1.0",
+    "orientation": "default",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/YOUR_EXPO_PROJECT_ID",
+      "checkAutomatically": "ON_START",
+      "fallbackToCacheTimeout": 0,
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-updates"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.keystone.app"
+    },
+    "android": {
+      "package": "org.keystone.app",
+      "permissions": [
+        "INTERNET",
+        "FOREGROUND_SERVICE",
+        "CAMERA",
+        "RECORD_AUDIO",
+        "POST_NOTIFICATIONS",
+        "FOREGROUND_SERVICE_MEDIA_PROJECTION",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "FOREGROUND_SERVICE_CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": false,
+          "data": [
+            {
+              "scheme": "keystone",
+              "host": "voice"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "../../branding/logos/logo.png",
+        "backgroundColor": "#000000"
+      }
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EXPO_PROJECT_ID"
+      }
+    },
+    "icon": "../../branding/logos/logo.png",
+    "splash": {
+      "image": "../../branding/logos/logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#000000"
+    }
+  }
+}

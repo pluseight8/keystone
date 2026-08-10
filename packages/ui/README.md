@@ -1,6 +1,6 @@
 # @keystone/ui
 
-Общие accessible React primitives: Button, Dialog (double confirmation), NodeCard, ChatComposer и theme tokens. Components use native semantics, touch targets >=44px, keyboard focus on web and `prefers-reduced-motion` compatible transitions.
+Общие accessible React primitives: Button, Dialog (double confirmation), NodeCard, ChatComposer и фиксированные Signature Design Language tokens. Components use native semantics, touch targets >=44px, keyboard focus on web and instant utility motion.
 
 ## Life Map
 

@@ -1,0 +1,70 @@
+name: "💡 Idea / Feature Request"
+description: Propose a product, security, addon, platform, or developer-experience improvement.
+title: "[Idea]: "
+labels: ["idea", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Keystone. Please describe the problem before prescribing an implementation. Ideas do not transfer ownership; contributor terms apply only when you submit code or other copyrightable material.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find the same proposal.
+          required: true
+        - label: This request does not contain secrets, personal data, or private security details.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What user problem should Keystone solve, and who experiences it?
+      placeholder: Today, a user cannot…
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Describe the desired behavior. Include alternatives if useful.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core / protocol
+        - Addons / sandbox
+        - AI tools
+        - Life Map
+        - UI / accessibility
+        - Desktop / Tauri
+        - Mobile / Expo
+        - P2P / relay
+        - Documentation / developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security, privacy, and permission impact
+      description: Which data, capabilities, native APIs, network paths, or confirmations would be affected? Write “None known” if not applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Mockups, examples, constraints, or links. Do not post exploitable vulnerability details here.
+    validations:
+      required: false

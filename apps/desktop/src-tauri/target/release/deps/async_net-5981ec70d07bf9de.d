@@ -1,0 +1,11 @@
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/async_net-5981ec70d07bf9de.d: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/unix.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/addr.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/tcp.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/udp.rs
+
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libasync_net-5981ec70d07bf9de.rlib: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/unix.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/addr.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/tcp.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/udp.rs
+
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libasync_net-5981ec70d07bf9de.rmeta: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/unix.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/addr.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/tcp.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/udp.rs
+
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/lib.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/unix.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/addr.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/tcp.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-net-2.0.0/src/udp.rs:

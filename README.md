@@ -1,197 +1,135 @@
 <div align="center">
 
-# 🔑 Keystone
+<img src="branding/logos/logo+text-of-logo.png" alt="Keystone" width="560">
 
-### Your AI should not live in a tab. It should work across your devices—on your terms.
+# The Ultimate Local-First AI & P2P Life Center
 
-**Keystone is a privacy-first, peer-to-peer AI superapp that can reason locally, coordinate trusted devices, and—with explicit approval—interact with the operating system and the browser.**
+**Keystone turns your devices into one private, intelligent system: local AI, durable personal memory, encrypted peer-to-peer communication, autonomous workflows, and explicitly authorized automation.**
 
-![License: AGPL-3.0-or-later](https://img.shields.io/badge/license-AGPL--3.0--or--later-7c3aed?style=flat-square)
-![Node.js 22](https://img.shields.io/badge/Node.js-22-339933?logo=nodedotjs&logoColor=white&style=flat-square)
-![pnpm 9.15](https://img.shields.io/badge/pnpm-9.15-F69220?logo=pnpm&logoColor=white&style=flat-square)
-![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white&style=flat-square)
-![Expo 52](https://img.shields.io/badge/Expo-52-000020?logo=expo&logoColor=white&style=flat-square)
-![Status: early development](https://img.shields.io/badge/status-early_development-f59e0b?style=flat-square)
+[![Source-Available](https://img.shields.io/badge/LICENSE-SOURCE--AVAILABLE-8B0000?style=for-the-badge&labelColor=090909)](LICENSE.md)
+![Privacy First](https://img.shields.io/badge/PRIVACY-LOCAL--FIRST-DC143C?style=for-the-badge&labelColor=090909)
+![P2P](https://img.shields.io/badge/NETWORK-P2P-8B0000?style=for-the-badge&labelColor=090909)
+![TypeScript](https://img.shields.io/badge/CORE-TYPESCRIPT-DC143C?style=for-the-badge&labelColor=090909)
 
-[Why Keystone](#-why-keystone) · [Features](#-what-makes-keystone-different) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Security](#-security-model) · [Contributing](CONTRIBUTING.md)
+[Get started](#quick-start) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/security.md) · [Protocol](docs/protocol.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
 
-## 🧭 Why Keystone?
+## One life. Every device. No mandatory cloud.
 
-Most assistants stop at an answer. Keystone is designed to complete a user-approved workflow.
+Keystone is a local-first life center for people who want capable AI without surrendering their data, identity, or authority to a hosted platform. It combines a synchronized Life Map, retrieval-augmented local memory, private calls and device handoff, voice and vision pipelines, and proactive automation behind one security model.
 
-Ask Keystone to research a purchase, retrieve an address from a trusted family device, fill a checkout form, or operate an accessible UI. The model proposes a narrowly scoped action; Keystone validates the target and permissions, collects the required confirmations, and only then delegates execution to a native host.
+The system is designed around a strict division of responsibility:
 
-That distinction matters:
+- **Models propose; policy decides.** AI output is untrusted input and must match a known schema, node, field allowlist, and capability.
+- **People authorize consequences.** Personal-data disclosure and external side effects pass through Double Confirmation.
+- **Peers synchronize; no account owns the graph.** Trusted devices exchange signed state directly and converge through CRDTs.
+- **Native hosts execute.** Tauri and Expo modules expose bounded platform capabilities; the shared core never receives ambient authority.
 
-- **The model proposes.** It cannot invent trusted nodes or grant itself capabilities.
-- **The protocol verifies.** Actions are hashed, signed, scoped, time-limited, and replay-resistant.
-- **The user authorizes.** Personal-data disclosure and external side effects require explicit confirmation.
-- **The native host executes.** Tauri, GeckoView, WKWebView, and Android Accessibility APIs provide bounded bridges to the real device.
+> Keystone is not another chatbot tab. It is the private coordination layer between your knowledge, your models, and your devices.
 
-> Keystone is not a cloud account wrapped around a chatbot. It is a network of user-owned nodes with an AI command layer.
+## Philosophy
 
-## ✨ What makes Keystone different
+### Zero dependency on a mandatory service
 
-### 🌐 Decentralized by default
+“Zero Dependency” means Keystone has no required Keystone-operated cloud, account, telemetry collector, model API, or message broker. Core workflows remain available on hardware you control. Optional relays and external model providers are replaceable adapters—not architectural owners of your data.
 
-| Technology | What it does |
-| --- | --- |
-| **Hyperswarm + HyperDHT** | Discovers peers and establishes direct Noise-encrypted connections without a central message broker. |
-| **Relay fallback** | Pairs peers behind restrictive NATs or firewalls when a direct route cannot be established. Direct connections remain preferred. |
-| **Replaceable transport boundary** | Keeps domain logic independent from a specific network adapter so the protocol can evolve without rewriting the product. |
+### Privacy first
 
-### 🛡️ Privacy by architecture, not by policy
+Personal context is processed locally by default. Ed25519 identities, signed envelopes, scoped capabilities, expiry windows, and one-use nonces reduce implicit trust. Relay paths carry recipient-encrypted application payloads; sensitive addon requests require visible consent.
 
-| Technology | What it does |
-| --- | --- |
-| **libsodium** | Provides Ed25519 identities and signatures, secure nonces, and BLAKE2b action hashes. |
-| **Double Confirmation** | Requires the data owner to approve the exact disclosure and the requester to approve the exact resulting action. |
-| **Capabilities, TTLs, and one-use nonces** | Limit who may do what, for how long, and prevent an approved action from being replayed. |
-| **Recipient encryption over relays** | Rejects plaintext application bodies on relay paths; the relay remains a metadata-visible fallback, not a trusted endpoint. |
+### Source-available, inspectable, accountable
 
-### 🧠 Local AI and local memory
+The complete implementation is available for inspection and security review under the [Keystone Source-Available License](LICENSE.md). Source-available does **not** mean Open Source: modification, redistribution, commercial use, and public forks require prior permission unless the license explicitly allows them.
 
-| Technology | What it does |
-| --- | --- |
-| **Ollama / OpenAI-compatible runtimes** | Runs tool-capable models locally through the `/v1/chat/completions` interface. Remote OAuth and API adapters remain optional. |
-| **Local RAG boundary** | Retrieves trusted-node and memory context through a host-provided `ContextManager` instead of placing a central service inside the core. |
-| **Schema-constrained tools** | Accepts only known action shapes, trusted nodes, and allowed fields. Invalid or hallucinated targets fail closed. |
+## Killer features
 
-### 🦾 OS-level and browser automation
+| Capability | What Keystone delivers | Why it matters |
+| --- | --- | --- |
+| **Local RAG** | Orama vector retrieval over notes, Life Map nodes, files, and Context Capsules; Yjs changes are indexed incrementally. | Your context stays near the model and remains useful offline. |
+| **Private WebRTC** | Audio, video, screen sharing, and device handoff with signaling carried over authenticated Hyperswarm envelopes. | Real-time collaboration without making a central communications account the source of identity. |
+| **Chronos** | Scheduled and event-driven AI workflows with audit history, cancellation, power-awareness, and delegation to another trusted Self device. | Automation continues across your personal device mesh without granting an agent unlimited authority. |
+| **Local models** | Embedded llama.cpp inference, whisper.cpp speech recognition, and Piper speech synthesis, plus optional OpenAI-compatible adapters. | Text and voice can stay on-device; the runtime remains user-selectable. |
+| **Cold Backups** | A single encrypted `.keystone` archive containing identity seed, Yjs state, configuration, and RAG assets, protected by a 12- or 24-word recovery phrase. | Recovery does not depend on a vendor account or a running Keystone service. |
+| **P2P Life Map** | Hyperswarm discovery and Noise-encrypted transport with Yjs CRDT convergence across trusted devices. | Every authorized device can work offline and merge later. |
+| **Browser Companion** | A Manifest V3 extension extracts readable pages and sends them to the loopback RAG boundary. | Turn the open web into private, searchable memory without uploading the page. |
+| **Double Confirmation** | The data owner approves the exact disclosure; the requester approves the exact resulting action. | Consent is bound cryptographically to the action that will execute. |
 
-| Host | Native automation surface |
-| --- | --- |
-| **Android** | A user-enabled Accessibility Service exposes a bounded UI tree, gestures, and focused-field input; GeckoView powers the embedded browser. |
-| **Desktop** | Tauri commands bridge to `enigo` for keyboard and pointer input and to an isolated automation webview for confirmed field injection. |
-| **iOS** | WKWebView implements the shared browser contract within iOS platform constraints. |
-
-Automation is intentionally not a generic remote-control API. Browser injection uses fixed field mappings, HTTPS origins, short-lived confirmation tokens, and one-use execution paths.
-
-## 🔐 How Double Confirmation works
+## System at a glance
 
 ```text
-Requester proposes an action
-          │
-          ▼
-Core resolves a trusted node and hashes the exact action
-          │
-          ▼
-Data owner reviews fields, purpose, audience, and expiry ── signs approval #1
-          │
-          ▼
-Requester reviews the final browser/OS action ───────────── signs approval #2
-          │
-          ▼
-Core verifies both signatures + hash + nonce + TTL
-          │
-          ▼
-Native host consumes the token once and executes
+┌────────────────────────────── PRODUCT SURFACES ──────────────────────────────┐
+│  Web / React        Desktop / Tauri        Mobile / React Native + Expo     │
+│  Browser Companion                         Android + iOS native modules      │
+└──────────────┬───────────────────┬──────────────────────┬────────────────────┘
+               │                   │                      │
+          packages/ui      bounded native bridges   packages/browser-engine
+               └───────────────────┴──────────────────────┘
+                                   │
+                         ┌─────────▼─────────┐
+                         │  packages/core   │
+                         │ policy · consent │
+                         │ RAG · Chronos    │
+                         │ sync · identity  │
+                         └──────┬─────┬─────┘
+                                │     │
+                    Orama + local AI  Hyperswarm + Yjs
+                    llama/whisper/    WebRTC media
+                    Piper             relay fallback
 ```
 
-Any mismatch in the action hash, signer, audience, nonce, or expiry aborts the flow.
+Read the full design in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## 🏗️ Architecture
-
-Keystone is a **pnpm workspace** with shared TypeScript packages and platform-specific hosts:
-
-```text
-┌──────────────────────────────── Product surfaces ────────────────────────────────┐
-│  apps/web (React/Vite)   apps/desktop (Tauri)   apps/mobile (Expo/React Native) │
-└───────────────┬──────────────────────┬──────────────────────┬────────────────────┘
-                │                      │                      │
-        packages/ui             Native OS bridges     packages/browser-engine
-                │                enigo / A11y API      Tauri / GeckoView / WKWebView
-                └──────────────────────┴──────────────────────┘
-                                       │
-                               packages/core
-                       intent → policy → consent → audit
-                          │                           │
-                   Local model + RAG          Signed P2P envelopes
-                    (for example, Ollama)             │
-                                                Hyperswarm
-                                                    │
-                                            apps/relay fallback
-
-                     packages/theme → validated data-only design tokens
-```
-
-### Repository map
+## Repository map
 
 | Path | Responsibility |
 | --- | --- |
-| [`packages/core`](packages/core) | Domain types, crypto provider, Double Confirmation, AI action validation, engine, and Hyperswarm transport. No React dependency. |
-| [`packages/ui`](packages/ui) | Shared accessible React Native primitives used across product surfaces. |
-| [`packages/theme`](packages/theme) | Versioned theme manifests and the built-in **Neumorphism** and **Frutiger Aero** presets. |
-| [`packages/browser-engine`](packages/browser-engine) | Cross-platform boundary for Tauri, GeckoView, and WKWebView browser automation. |
-| [`apps/web`](apps/web) | Vite-powered web UI shell and the fastest development feedback loop. |
-| [`apps/desktop`](apps/desktop) | Tauri 2 host, Rust security boundary, desktop automation, and native bundles. |
-| [`apps/mobile`](apps/mobile) | Expo Router host plus native Android/iOS browser modules and mobile P2P lifecycle. |
-| [`apps/relay`](apps/relay) | Minimal HyperDHT rendezvous relay for otherwise unreachable peers. |
-| [`docs`](docs) | Protocol, threat model, platform, security, AI, relay, and CI/CD design notes. |
+| [`apps/web`](apps/web) | React/Vite development shell. |
+| [`apps/desktop`](apps/desktop) | Tauri 2 host, native desktop capabilities, updates, and automation boundaries. |
+| [`apps/mobile`](apps/mobile) | Expo Router and React Native host with Android/iOS native modules. |
+| [`apps/extension`](apps/extension) | Chromium/Firefox Browser Companion for local page ingestion. |
+| [`apps/relay`](apps/relay) | Minimal HyperDHT rendezvous fallback for peers that cannot connect directly. |
+| [`packages/core`](packages/core) | Framework-independent identity, transport, CRDT, consent, RAG, model, voice, WebRTC, backup, and Chronos logic. |
+| [`packages/ui`](packages/ui) | Shared React Native primitives and product views. |
+| [`packages/browser-engine`](packages/browser-engine) | Common Tauri, GeckoView, and WKWebView automation contract. |
+| [`packages/addons`](packages/addons) | Addon manifests, capability checks, registration, and sandbox RPC contracts. |
+| [`packages/theme`](packages/theme) | Validated data-only design tokens and themes. |
 
-The core depends on interfaces—not UI frameworks, keychains, or browser implementations. Each host supplies secure storage and platform capabilities while the core owns policy and consent.
+## Quick start
 
-## 🚀 Quick start
+### Requirements
 
-### Prerequisites
+- Node.js 22
+- Corepack and pnpm 9.15.0
+- Rust stable plus the [Tauri 2 platform prerequisites](https://v2.tauri.app/start/prerequisites/) for desktop builds
+- JDK 17 and Android Studio/SDK for Android builds
+- Xcode for iOS builds
 
-- **Node.js 22** (the version used by CI)
-- **Corepack** and the repository-pinned **pnpm 9.15.0**
-- **Rust stable** plus platform dependencies for the desktop host
-- **JDK 17**, Android Studio/SDK, and ADB for Android development
-- Optional: **Ollama** with a tool-capable local model
-
-### 1. Install the workspace
-
-From the repository root:
+### Install and verify
 
 ```bash
 corepack enable
 corepack prepare pnpm@9.15.0 --activate
+pnpm install --frozen-lockfile
 
-pnpm install
+pnpm tsc
 pnpm test
-pnpm lint
+pnpm build
 ```
 
-> Use `pnpm` from the workspace root. Do not mix npm, Yarn, and pnpm lockfiles.
+Run commands from the repository root. Do not mix npm, Yarn, and pnpm lockfiles.
 
-### 2. Start the web shell
+### Run the web shell
 
 ```bash
 pnpm dev
 ```
 
-Vite prints the local URL. This is the quickest way to work on the UI, but a browser tab cannot provide Tauri or mobile native automation capabilities.
+The web shell is the fastest UI feedback loop. Native automation, embedded runtimes, and mobile modules require their platform hosts.
 
-### 3. Connect a local model (optional)
-
-Keystone's `OpenAICompatibleAdapter` can target Ollama's OpenAI-compatible endpoint:
-
-```bash
-ollama pull <tool-capable-model>
-ollama serve
-```
-
-```ts
-import { OpenAICompatibleAdapter } from '@keystone/core';
-
-const model = new OpenAICompatibleAdapter({
-  kind: 'local',
-  endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
-  model: '<tool-capable-model>',
-});
-```
-
-Choose a model that supports function/tool calling. See the [Ollama OpenAI compatibility documentation](https://docs.ollama.com/api/openai-compatibility).
-
-## 🖥️ Run the desktop host
-
-Install the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your operating system, including Rust and the platform webview toolchain. Then run:
+### Run the desktop host
 
 ```bash
 pnpm --filter @keystone/web build
@@ -199,147 +137,102 @@ pnpm --filter @keystone/desktop check
 pnpm --filter @keystone/desktop tauri dev
 ```
 
-Create a native bundle with:
+Build distributable desktop artifacts with:
 
 ```bash
 pnpm --filter @keystone/desktop tauri build
 ```
 
-Desktop automation still requires the relevant user grant. Wayland compositors may restrict global input; macOS requires Accessibility permission; Windows automation is constrained by integrity level. See [`OS_AUTOMATION.md`](apps/desktop/src-tauri/OS_AUTOMATION.md).
+OS automation requires an explicit platform grant. macOS uses Accessibility permission; Wayland and Windows impose additional compositor or integrity-level constraints. See [`apps/desktop/src-tauri/OS_AUTOMATION.md`](apps/desktop/src-tauri/OS_AUTOMATION.md).
 
-### Atomic Linux: Bazzite, Fedora Atomic, Silverblue, and Kinoite
+### Run mobile
 
-Image-based systems keep much of the host immutable. The cleanest development setup is a mutable **Distrobox** container with the repository directory shared from the host:
+Keystone uses custom native modules, so **Expo Go is not supported**.
 
 ```bash
-# On the host
-distrobox create --name keystone-dev \
-  --image registry.fedoraproject.org/fedora:latest
-distrobox enter keystone-dev
+# Android device or emulator
+pnpm --dir apps/mobile exec expo run:android
 
-# Inside the container
-sudo dnf install -y \
-  webkit2gtk4.1-devel openssl-devel curl wget file \
-  libappindicator-gtk3-devel librsvg2-devel libxdo-devel \
-  gcc gcc-c++ make pkgconf-pkg-config
-sudo dnf group install -y c-development
-
-# Install Node.js 22 and Rust stable in the container, then:
-corepack enable
-corepack prepare pnpm@9.15.0 --activate
-cd /path/to/keystone
-pnpm install
-pnpm --filter @keystone/web build
-pnpm --filter @keystone/desktop tauri dev
+# iOS simulator or device on macOS
+pnpm --dir apps/mobile exec expo run:ios
 ```
 
-Distrobox forwards the desktop session and shares your home directory, so the Tauri window can run against the host display while build dependencies stay inside the container. If the packaged binary—not just `tauri dev`—is the artifact under test, validate it on its target distribution as well; CI builds remain the reproducible release path.
+For JavaScript-only iteration after the native client is installed:
 
-You can instead layer the official Tauri dependencies with `rpm-ostree`, but that modifies the deployment and requires a reboot. Prefer Distrobox for an iterative development environment.
+```bash
+pnpm --filter @keystone/mobile start
+```
 
-## 📱 Run on a physical Android device
+### Build the Browser Companion
 
-Keystone includes GeckoView and an Android Accessibility Service as custom native modules. **Expo Go cannot load them.** Build the native debug client through Expo CLI.
+```bash
+pnpm --filter @keystone/extension build
+```
 
-1. Install Android Studio, JDK 17, the Android SDK, and platform tools.
-2. On the phone, enable **Developer options → USB debugging**.
-3. Connect the device by USB, accept its RSA prompt, and verify it:
+Load `apps/extension/dist` as an unpacked extension in a Chromium browser. For Firefox packaging, replace the generated manifest with `apps/extension/manifest.firefox.json`. The desktop loopback host must bind to `127.0.0.1` and validate the extension origin, subprotocol, payload size, and pairing token.
 
-   ```bash
-   adb devices
-   ```
-
-4. Build, install, and start Keystone on the selected device:
-
-   ```bash
-   corepack enable
-   pnpm install
-   pnpm --dir apps/mobile exec expo run:android --device
-   ```
-
-   This works on current arm64 Android hardware, including devices such as the Galaxy S24 Ultra. The first build generates the native Android project and downloads Gradle/GeckoView dependencies.
-
-5. For later JavaScript/TypeScript-only changes, start Metro without rebuilding native code:
-
-   ```bash
-   adb reverse tcp:8081 tcp:8081   # reliable Metro access over USB
-   pnpm --filter @keystone/mobile start
-   ```
-
-6. To test OS automation, explicitly enable **Keystone UI automation** in Android's Accessibility settings. On Samsung devices this is typically under **Settings → Accessibility → Installed apps**. Review the warning before granting access and disable the service when testing is complete.
-
-Re-run `expo run:android --device` after changing Kotlin, Gradle, the native manifest, or Expo configuration. See Expo's [local app development guide](https://docs.expo.dev/guides/local-app-development/) for SDK setup and device selection.
-
-## 🌉 Run a relay
-
-Direct Hyperswarm connections are preferred. To run a development relay:
+### Run a development relay
 
 ```bash
 export RELAY_SEED="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
 pnpm --filter @keystone/relay dev
 ```
 
-The first JSON log line contains the relay public key and observed UDP address. Keep `RELAY_SEED` stable for a persistent relay identity and store production seeds in a secret manager. Deployment and firewall notes live in [`apps/relay/README.md`](apps/relay/README.md).
+Direct peer connections remain preferred. Store a stable production relay seed in a secret manager; never commit it.
 
-## ✅ Quality checks
+## Install a release
 
-```bash
-pnpm lint       # TypeScript checks across the workspace
-pnpm test       # Core consent/AI/workflow and theme tests
-pnpm build      # Build every package that exposes a build script
-```
-
-Native checks:
+On supported Linux and macOS systems, the helper resolves the latest release artifact and installs it locally:
 
 ```bash
-pnpm --filter @keystone/desktop check
-pnpm --dir apps/mobile exec expo prebuild --platform android
+./scripts/install.sh
 ```
 
-## 🔒 Security model
+Remove the installed application with:
 
-Keystone is built around least privilege, explicit consent, signed actions, short expiry windows, and auditable boundaries. Start with:
+```bash
+./scripts/uninstall.sh
+```
 
-- [`docs/security.md`](docs/security.md) — the disclosure protocol
-- [`docs/threat-model.md`](docs/threat-model.md) — assets, threats, and mitigations
-- [`docs/protocol.md`](docs/protocol.md) — signed envelope format and framing
-- [`docs/relay.md`](docs/relay.md) — direct routing and relay trust boundaries
+Review both scripts before execution. Release binaries, update signatures, and mobile distribution remain platform-specific.
 
-> [!CAUTION]
-> Keystone is in early development and has not been presented as independently security-audited. No software can promise absolute security or anonymity. Do not use the current code to protect high-risk identities, irreversible financial actions, or production secrets without completing the hardening work described in the threat model—especially encrypted persistence for consumed tokens and recipient-level encryption on relay paths.
+## Security posture
 
-Never commit identity seeds, API keys, real personal data, exported browser sessions, or relay secrets.
+Keystone follows least privilege and fail-closed validation, but it is still early-stage software and has not been represented as independently audited.
 
-## 🤝 Contributing
+- Never commit identity seeds, recovery phrases, API keys, browser sessions, relay secrets, or real personal datasets.
+- Treat every model response, remote envelope, addon message, imported archive, and browser payload as untrusted.
+- Do not use the current release for irreversible financial actions, high-risk identities, or production secrets without completing an independent review.
 
-Contributions are welcome across TypeScript, Rust, Kotlin, Swift, protocol design, accessibility, documentation, and themes.
+Start with the [architecture](docs/ARCHITECTURE.md), [security protocol](docs/security.md), [threat model](docs/threat-model.md), [P2P protocol](docs/protocol.md), and [addon model](docs/addons.md).
 
-Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. It includes:
+## Documentation
 
-- the development and review workflow;
-- direct and relay-backed P2P testing guidance;
-- security-sensitive change requirements; and
-- the `keystone.theme.v1` manifest format for community themes.
-
-## 📚 Documentation
-
-| Document | Topic |
+| Document | Subject |
 | --- | --- |
-| [`architecture.md`](docs/architecture.md) | Domain and adapter boundaries |
-| [`platform-architecture.md`](docs/platform-architecture.md) | Desktop, mobile, and browser hosts |
-| [`ai.md`](docs/ai.md) | Model providers and constrained commands |
-| [`protocol.md`](docs/protocol.md) | P2P message envelopes |
-| [`relay.md`](docs/relay.md) | Rendezvous fallback |
-| [`ci.md`](docs/ci.md) | CI/CD targets and signing notes |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | End-to-end system design and trust boundaries. |
+| [`docs/protocol.md`](docs/protocol.md) | Signed P2P envelopes, pairing, and CRDT synchronization. |
+| [`docs/security.md`](docs/security.md) | Disclosure and execution authorization. |
+| [`docs/threat-model.md`](docs/threat-model.md) | Assets, threats, assumptions, and mitigations. |
+| [`docs/addons.md`](docs/addons.md) | Addon isolation and capability enforcement. |
+| [`docs/ai.md`](docs/ai.md) | AI providers, constrained commands, and RAG. |
+| [`docs/webrtc-platform-permissions.md`](docs/webrtc-platform-permissions.md) | WebRTC capture permissions by platform. |
+| [`docs/ci.md`](docs/ci.md) | CI/CD and release-signing targets. |
 
-## 📄 License
+## Contributing
 
-Keystone is licensed under **AGPL-3.0-or-later**. Network-accessible modified versions must make their corresponding source available under the license terms.
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening an issue or pull request. Contributions are governed by the Contributor Assignment Agreement described there. Community participation does not change Keystone's source-available licensing status.
+
+## License
+
+Copyright © 2026 Keystone copyright holder(s). All rights reserved.
+
+Keystone is proprietary **source-available** software, not FOSS or Open Source. The [Keystone Source-Available License](LICENSE.md) permits inspection, security review, and limited unmodified non-commercial local use subject to its terms. It does not grant general rights to modify, fork, redistribute, host, or use the software commercially.
 
 ---
 
 <div align="center">
 
-**Local intelligence. User-owned identity. Explicit authority.**
+**LOCAL INTELLIGENCE · USER-OWNED IDENTITY · EXPLICIT AUTHORITY**
 
 </div>

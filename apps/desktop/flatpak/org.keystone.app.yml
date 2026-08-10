@@ -8,6 +8,8 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0
 modules:
   - name: keystone
     buildsystem: simple

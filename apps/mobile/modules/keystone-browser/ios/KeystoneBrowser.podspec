@@ -5,7 +5,7 @@ Pod::Spec.new do |s|
   s.description    = 'Expo module backed by WKWebView on iOS.'
   s.author         = 'Keystone contributors'
   s.homepage       = 'https://github.com/keystone-app/keystone'
-  s.license        = { :type => 'AGPL-3.0-or-later' }
+  s.license        = { :type => 'Proprietary', :file => '../../../../../LICENSE.md' }
   s.platforms      = { :ios => '15.1' }
   s.swift_version  = '5.9'
   s.source         = { :git => '' }

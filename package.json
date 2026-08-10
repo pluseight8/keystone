@@ -5,6 +5,6 @@
   "description": "Privacy-first peer-to-peer AI superapp",
   "packageManager": "pnpm@9.15.0",
   "workspaces": ["apps/*", "apps/mobile/modules/*", "packages/*"],
-  "scripts": {"dev": "pnpm --filter @keystone/web dev", "build": "pnpm -r build", "test": "pnpm -r test", "lint": "pnpm -r lint"},
-  "license": "AGPL-3.0-or-later"
+  "scripts": {"dev": "pnpm --filter @keystone/web dev", "build": "pnpm -r build", "test": "pnpm -r test", "lint": "pnpm -r lint", "tsc": "pnpm -r --if-present lint"},
+  "license": "SEE LICENSE IN LICENSE.md"
 }

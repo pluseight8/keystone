@@ -13,3 +13,18 @@ pnpm --filter @keystone/mobile install
 pnpm --filter @keystone/mobile start
 npx expo prebuild
 ```
+
+## Тихие OTA-патчи
+
+`expo-updates` настроен на production-канал. Замените `YOUR_EXPO_PROJECT_ID` в
+`app.json` на ID проекта Expo или выполните `pnpm exec eas update:configure`.
+Release/preview-сборки проверяют EAS при старте, скачивают совместимый JS-патч
+в фоне и применяют его при следующем запуске; нативный runtime не меняется.
+
+Публикация срочного патча:
+
+```bash
+pnpm --dir apps/mobile update:production
+```
+
+Нативные изменения требуют новой EAS Build и увеличения `version`/runtime.

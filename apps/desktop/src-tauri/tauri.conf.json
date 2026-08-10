@@ -3,7 +3,63 @@
   "productName": "Keystone",
   "version": "0.1.0",
   "identifier": "org.keystone.app",
-  "build": { "beforeBuildCommand": "pnpm --filter @keystone/web build", "frontendDist": "../../web/dist" },
-  "app": { "withGlobalTauri": false, "security": { "csp": "default-src 'self'; connect-src 'self' https:; script-src 'self'; object-src 'none'; base-uri 'none'" } },
-  "bundle": { "active": true, "targets": ["appimage", "deb", "rpm", "msi", "nsis", "app", "dmg"] }
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Keystone",
+        "width": 760,
+        "height": 420,
+        "center": true,
+        "visible": false,
+        "transparent": true,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false
+      }
+    ],
+    "withGlobalTauri": false,
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' https: ws://127.0.0.1:*; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "appimage",
+      "deb",
+      "rpm",
+      "msi",
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "entitlements": "./Entitlements.plist",
+      "infoPlist": "./Info.plist"
+    },
+    "icon": [
+      "icons/icon.png"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
+      "endpoints": [
+        "https://github.com/pluseight8/keystone/releases/latest/download/updater.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
 }

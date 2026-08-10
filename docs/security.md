@@ -1,3 +1,5 @@
+<p align="center"><img src="../branding/logos/logo+text-of-logo.png" alt="Keystone" width="420"></p>
+
 # Security protocol
 
 PII flow: requester creates a scoped `DisclosureRequest` → owner reviews fields and expiry → owner signs approval → requester reviews the exact browser action → requester signs execution approval → encrypted payload is delivered once → audit event is appended. Any mismatch in action hash, audience, nonce or expiry aborts the flow.

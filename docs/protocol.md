@@ -1,3 +1,5 @@
+<p align="center"><img src="../branding/logos/logo+text-of-logo.png" alt="Keystone" width="420"></p>
+
 # Protocol (v0)
 
 Messages are versioned envelopes: `{version, type, id, sender, recipient, nonce, expiresAt, body, signature}`. `body` is canonical JSON. Unknown fields are ignored; unknown versions are rejected. Never send raw PII outside an approved disclosure envelope.

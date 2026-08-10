@@ -1,1 +1,1 @@
-{"platforms":["android","ios"],"android":{"modules":["org.keystone.browser.KeystoneBrowserModule"]},"ios":{"modules":["KeystoneBrowserModule"]}}
+{"platforms":["android","ios"],"android":{"modules":["org.keystone.browser.KeystoneBrowserModule","org.keystone.browser.KeystoneAccessibilityModule","org.keystone.browser.KeystoneAssistantModule"]},"ios":{"modules":["KeystoneBrowserModule"]}}

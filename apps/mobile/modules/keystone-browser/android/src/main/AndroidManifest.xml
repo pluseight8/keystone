@@ -1,8 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET"/>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.INTERNET" />
   <application>
     <service android:name=".KeystoneAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="false" android:label="Keystone UI automation">
       <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
       <meta-data android:name="android.accessibilityservice" android:resource="@xml/keystone_accessibility_service" />
     </service>
+    <service android:name=".KeystoneQuickTileService" android:label="Keystone Voice" android:icon="@drawable/ic_keystone_tile" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
+      <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+    </service>
+    <service android:name=".KeystoneVoiceInteractionService" android:label="Keystone" android:permission="android.permission.BIND_VOICE_INTERACTION" android:exported="true">
+      <intent-filter><action android:name="android.service.voice.VoiceInteractionService" /></intent-filter>
+      <meta-data android:name="android.voice_interaction" android:resource="@xml/keystone_voice_interaction" />
+    </service>
+    <service android:name=".KeystoneVoiceSessionService" android:permission="android.permission.BIND_VOICE_INTERACTION" android:exported="true" />
   </application>
 </manifest>

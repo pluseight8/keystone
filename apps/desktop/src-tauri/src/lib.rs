@@ -1,9 +1,14 @@
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use url::Url;
 use enigo::{Enigo, Settings, Keyboard, Mouse, Button, Coordinate, Direction};
+mod knowledge;
+use knowledge::KnowledgeState;
 
 /// The Rust side accepts only a short-lived, already double-confirmed payload.
 /// Signature verification of the two approvals belongs in `packages/core`; this
@@ -103,6 +108,11 @@ fn ui_action(state: tauri::State<'_, InjectionState>, action: UiAction, confirma
 }
 
 #[tauri::command]
+fn get_system_locale() -> String {
+    std::env::var("LC_ALL").or_else(|_| std::env::var("LANG")).unwrap_or_else(|_| "en".into())
+}
+
+#[tauri::command]
 fn accessibility_status() -> serde_json::Value {
     serde_json::json!({"platform": std::env::consts::OS, "inputBackend": "enigo", "requiresUserGrant": true, "supported": cfg!(any(target_os="linux", target_os="windows", target_os="macos"))})
 }
@@ -116,6 +126,15 @@ fn scan_windows() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({"windows": [], "permissionRequired": true}))
 }
 
+/// Single entry point used by the tray and keyboard accelerator. Re-centering
+/// also handles a monitor change between invocations.
+fn toggle_overlay(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) { let _ = window.hide(); }
+        else { let _ = window.center(); let _ = window.show(); let _ = window.set_focus(); }
+    }
+}
+
 // Parse the protocol's RFC3339 timestamp into the platform clock.
 fn chrono_like_timestamp(value: &str) -> Result<std::time::SystemTime, String> {
     let parsed = time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).map_err(|_| "Invalid expiry timestamp")?;
@@ -127,8 +146,39 @@ fn chrono_like_timestamp(value: &str) -> Result<std::time::SystemTime, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(|app, shortcut, event| {
+            if shortcut == &Shortcut::new(Some(Modifiers::ALT), Code::Space)
+                && event.state() == ShortcutState::Pressed { toggle_overlay(app); }
+        }).build())
+        .setup(|app| {
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            let show = MenuItem::with_id(app, "show", "Show Keystone", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let mut tray = TrayIconBuilder::new().tooltip("Keystone").menu(&menu)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => toggle_overlay(app), "quit" => app.exit(0), _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if matches!(event, TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }) {
+                        toggle_overlay(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
+            tray.build(app)?;
+            app.global_shortcut().register(Shortcut::new(Some(Modifiers::ALT), Code::Space))?;
+            if let Some(window) = app.get_webview_window("main") {
+                window.on_window_event({ let window = window.clone(); move |event| {
+                    if matches!(event, WindowEvent::Focused(false)) { let _ = window.hide(); }
+                }});
+            }
+            Ok(())
+        })
         .manage(InjectionState::default())
-        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, evaluate_browser, inject_confirmed_data, ui_action, accessibility_status, scan_windows])
+        .manage(KnowledgeState::default())
+        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, evaluate_browser, inject_confirmed_data, ui_action, accessibility_status, scan_windows, get_system_locale, knowledge::pick_local_folder, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
         .run(tauri::generate_context!())
         .expect("error while running Keystone desktop application");
 }

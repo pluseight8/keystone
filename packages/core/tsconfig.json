@@ -1,1 +1,1 @@
-{"compilerOptions":{"target":"ES2022","lib":["ES2022","DOM"],"module":"ESNext","moduleResolution":"Bundler","strict":true,"declaration":true,"skipLibCheck":true},"include":["src"]}
+{"compilerOptions":{"target":"ES2022","lib":["ES2022","DOM"],"module":"ESNext","moduleResolution":"Bundler","strict":true,"declaration":true,"skipLibCheck":true,"resolveJsonModule":true},"include":["src","types/**/*.d.ts"]}

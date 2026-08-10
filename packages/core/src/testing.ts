@@ -14,5 +14,6 @@ export class TestLoopbackTransport implements Transport {
   async connect(_peer: NodeId) {}
   async send(peerOrEnvelope: NodeId | Envelope, envelope?: Envelope) { this.listeners.forEach(listener => listener(envelope ?? peerOrEnvelope as Envelope)); }
   onMessage(handler: (envelope: Envelope) => void) { this.listeners.add(handler); return () => this.listeners.delete(handler); }
+  isPeerConnected(_peer: NodeId) { return true; }
   async close() { this.listeners.clear(); }
 }

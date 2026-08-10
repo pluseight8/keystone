@@ -1,0 +1,10 @@
+cargo:rerun-if-changed=permissions
+cargo:PERMISSION_FILES_PATH=/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/build/tauri-plugin-updater-4a37228a053a7e64/out/tauri-plugin-updater-permission-files
+cargo:rerun-if-env-changed=REMOVE_UNUSED_COMMANDS
+cargo:GLOBAL_API_SCRIPT_PATH=/var/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tauri-plugin-updater-2.10.1/api-iife.js
+cargo:rustc-check-cfg=cfg(mobile)
+cargo:rustc-check-cfg=cfg(desktop)
+cargo:rustc-cfg=desktop
+cargo:rustc-check-cfg=cfg(desktop)
+cargo:rustc-cfg=desktop
+cargo:rustc-check-cfg=cfg(mobile)

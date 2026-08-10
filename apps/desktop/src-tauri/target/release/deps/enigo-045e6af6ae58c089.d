@@ -1,0 +1,11 @@
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/enigo-045e6af6ae58c089.d: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/agent.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/mod.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/xdo.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/keycodes.rs
+
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libenigo-045e6af6ae58c089.rlib: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/agent.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/mod.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/xdo.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/keycodes.rs
+
+/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libenigo-045e6af6ae58c089.rmeta: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/lib.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/agent.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/mod.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/xdo.rs /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/keycodes.rs
+
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/lib.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/agent.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/mod.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/linux/xdo.rs:
+/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/enigo-0.2.1/src/keycodes.rs:

@@ -1,3 +1,5 @@
+<p align="center"><img src="../branding/logos/logo+text-of-logo.png" alt="Keystone" width="420"></p>
+
 # Cross-platform host architecture
 
 ## Shared layers

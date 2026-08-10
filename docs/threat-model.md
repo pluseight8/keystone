@@ -1,3 +1,5 @@
+<p align="center"><img src="../branding/logos/logo+text-of-logo.png" alt="Keystone" width="420"></p>
+
 # Threat model
 
 Assets: identity keys, contact data, browser sessions, automation capabilities. Threats: malicious peer, compromised renderer, replay, confused deputy, malicious theme, metadata leakage. Mitigations: signed capabilities, double confirmation, nonce/TTL, origin allow-list, CSP, sandboxed themes, append-only audit log, encrypted transport.

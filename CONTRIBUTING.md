@@ -1,11 +1,12 @@
 # Contributing to Keystone
 
-Thank you for helping build a user-owned AI network. Keystone welcomes contributions to the protocol, core engine, desktop and mobile hosts, UI system, documentation, relay, and community themes.
+Thank you for helping build a user-owned AI network. Keystone is proprietary source-available software, not FOSS or Open Source. The community may propose ideas and code, while the maintainers retain product direction and decide which contributions enter Keystone.
 
 This guide explains how to make changes that are reviewable, testable, and consistent with Keystone's security model.
 
 ## 📌 Contents
 
+- [Source-available model and contributor assignment](#-source-available-model-and-contributor-assignment)
 - [Ground rules](#-ground-rules)
 - [Choose an area](#-choose-an-area)
 - [Set up the workspace](#-set-up-the-workspace)
@@ -15,6 +16,26 @@ This guide explains how to make changes that are reviewable, testable, and consi
 - [Contribute a theme](#-contribute-a-theme)
 - [Security-sensitive changes](#-security-sensitive-changes)
 - [Open a pull request](#-open-a-pull-request)
+
+## 🔏 Source-available model and contributor assignment
+
+The repository is publicly readable for transparency and security audit. The [Keystone Source-Available License](LICENSE.md) allows unmodified, non-commercial local use but does **not** allow unauthorized copying, fork-clones, modifications, commercial use, or redistribution. Normal GitHub fork workflows may therefore require prior written permission; if you do not have it, propose an idea in the issue tracker and ask a maintainer for an authorized contribution workflow.
+
+### Contributor Assignment Agreement
+
+The following terms apply to every pull request, patch, commit, document, design, test, asset, or other copyrightable material you intentionally submit for inclusion in Keystone (the **“Contribution”**). Merely opening an issue or describing an uncopyrightable idea is not a Contribution under these terms.
+
+By submitting a Contribution, you represent and agree that:
+
+1. you have read these terms, are legally able to agree to them, and own the Contribution or have sufficient written authority from its owner and your employer to submit and assign it;
+2. to the maximum extent permitted by law, you hereby irrevocably assign to the current Keystone copyright holder(s) all worldwide right, title, and interest in the Contribution, including all transferable copyrights and all rights to reproduce, modify, create derivative works, distribute, publicly display or perform, sublicense, relicense, enforce, and commercialize it, for the full term of those rights and all renewals and extensions;
+3. where an assignment is not legally effective, you grant the Keystone copyright holder(s) an exclusive, perpetual, irrevocable, worldwide, fully paid, royalty-free, transferable, sublicensable license to exercise those rights for any purpose and under any license, and you agree not to assert non-transferable moral or similar rights to the extent waiver/non-assertion is permitted;
+4. the assignment is effective when you submit the Contribution through a pull request or another maintainer-approved channel and record assent using the pull-request template (including the checkbox and GitHub username as an electronic signature); and
+5. you will identify third-party material and its license. You do not knowingly submit confidential information, patent-encumbered material without disclosure, or code that you lack authority to assign.
+
+The assignment lets the project owner incorporate, modify, dual-license, relicense, and commercially distribute the Contribution. It does not promise that a Contribution will be accepted, and it does not retroactively change licenses validly granted for earlier Keystone releases. Corporate or high-value contributions may require a separately signed CLA/assignment before merge. Because assignment formalities and moral rights vary by jurisdiction, maintainers should have these terms reviewed by qualified counsel before relying on them.
+
+If you do not agree, **do not submit code**. Use the Feature Request form to propose an idea without implementation.
 
 ## 🧭 Ground rules
 
@@ -34,6 +55,7 @@ Be constructive, assume good intent, and critique the change rather than the con
 | Area | Start here | Typical changes |
 | --- | --- | --- |
 | Core and protocol | [`packages/core`](packages/core), [`docs/protocol.md`](docs/protocol.md) | Consent, crypto adapters, message framing, AI validation, transport |
+| Addons | [`packages/addons`](packages/addons), [`docs/addons.md`](docs/addons.md) | Manifests, sandbox RPC, capability handlers, tools, nodes, widgets |
 | Shared UI | [`packages/ui`](packages/ui) | Accessible cross-platform primitives and interaction states |
 | Themes | [`packages/theme`](packages/theme) | Manifests, presets, token validation, rendering tests |
 | Desktop | [`apps/desktop`](apps/desktop) | Tauri commands, Rust boundary, `enigo`, packaging |
@@ -424,7 +446,7 @@ Reviewers may ask for a smaller change, threat-model clarification, cross-platfo
 
 ## 📄 License
 
-By contributing, you agree that your contribution is licensed under **AGPL-3.0-or-later**, the same license as Keystone. Only submit code, documentation, themes, and assets that you have the right to redistribute under compatible terms.
+Keystone is distributed under the proprietary [Keystone Source-Available License](LICENSE.md), not an Open Source license. Submitting a Contribution constitutes assent to the Contributor Assignment Agreement above; it is not merely a contribution under the repository license. Only submit material you have the authority to assign, and disclose all third-party licenses and notices.
 
 ---
 
