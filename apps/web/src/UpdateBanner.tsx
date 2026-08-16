@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useWebTranslation } from './i18n';
 
 type Update = { version: string; body?: string | null; downloadAndInstall: (onEvent?: (event: unknown) => void) => Promise<void> };
 
 export function UpdateBanner() {
+  const { locale } = useWebTranslation();
   const [update, setUpdate] = useState<Update | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(false);
@@ -28,6 +30,7 @@ export function UpdateBanner() {
     } catch { setError(true); setBusy(false); }
   };
 
-  if (!update) return error ? <div className="update-banner update-error" role="status">Не удалось проверить обновления. Повторим при следующем запуске.</div> : null;
-  return <aside className="update-banner" role="alert"><div><strong>Доступен патч безопасности {update.version}</strong><p>{update.body || 'Настоятельно рекомендуем обновиться сейчас.'}</p>{error && <small>Загрузка не удалась. Проверьте сеть и повторите.</small>}</div><button className="button primary" onClick={install} disabled={busy}>{busy ? 'Загрузка…' : 'Обновить и перезапустить'}</button></aside>;
+  const t = locale === 'ru' ? { check: 'Не удалось проверить обновления. Повторим при следующем запуске.', available: 'Доступен патч безопасности', recommended: 'Настоятельно рекомендуем обновиться сейчас.', failed: 'Загрузка не удалась. Проверьте сеть и повторите.', downloading: 'Загрузка…', install: 'Обновить и перезапустить' } : { check: 'Unable to check for updates. We will retry on the next launch.', available: 'Security patch available', recommended: 'We strongly recommend updating now.', failed: 'Download failed. Check your network and try again.', downloading: 'Downloading…', install: 'Update and restart' };
+  if (!update) return error ? <div className="update-banner update-error" role="status">{t.check}</div> : null;
+  return <aside className="update-banner" role="alert"><div><strong>{t.available} {update.version}</strong><p>{update.body || t.recommended}</p>{error && <small>{t.failed}</small>}</div><button className="button primary" onClick={install} disabled={busy}>{busy ? t.downloading : t.install}</button></aside>;
 }

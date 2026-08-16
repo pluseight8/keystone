@@ -14,7 +14,7 @@ modules:
   - name: keystone
     buildsystem: simple
     build-commands:
-      - install -Dm755 keystone /app/bin/keystone
+      - install -Dm755 keystone-desktop /app/bin/keystone
     sources:
       - type: file
-        path: ../../src-tauri/target/release/keystone-desktop
+        path: ../src-tauri/target/release/keystone-desktop

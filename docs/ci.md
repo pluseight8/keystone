@@ -2,16 +2,17 @@
 
 # CI/CD
 
-`.github/workflows/build.yml` runs on `main`, semantic version tags (`v*.*.*`)
-and manually. Checks gate all platform jobs. A version tag additionally
-publishes a GitHub Release with desktop updater bundles, Android APK and
-`updater.json` containing inline Tauri signatures.
+`.github/workflows/build.yml` provides a fast core preflight on pull requests,
+`main`, version tags (`v*.*.*`), and manual dispatch. Native desktop and mobile
+jobs are dispatched manually or for a signed desktop tag release, so ordinary
+pushes do not repeatedly download platform SDKs. A tagged release publishes
+only signed desktop updater bundles and `updater.json` after strict preflight.
 
 - Linux: AppImage
 - Windows: MSI and NSIS `.exe`
 - macOS: `.app` and DMG
-- Android: unsigned release APK in CI; configure EAS/Gradle signing for store distribution
-- iOS: unsigned simulator `.app`
+- Android: manual unsigned debug APK check; store signing is owner-controlled
+- iOS: manual unsigned simulator `.app` check; experimental/deferred
 
 A distributable `.ipa` cannot be produced without an Apple Developer identity,
 provisioning profile and keychain setup. For release signing, configure EAS
@@ -19,14 +20,17 @@ credentials and replace the simulator command with
 `eas build --platform ios --profile production --non-interactive`, or import a
 certificate/profile and run `xcodebuild archive` plus `-exportArchive`.
 
-The release job requires `TAURI_SIGNING_PRIVATE_KEY` and
-`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` GitHub Secrets. The public key belongs in
-`apps/desktop/src-tauri/tauri.conf.json`. After committing the generated
-`pnpm-lock.yaml`, replace `--no-frozen-lockfile` with `--frozen-lockfile` and key
-pnpm caches on that file.
+The release job requires `KEYSTONE_TAURI_UPDATER_PUBLIC_KEY`,
+`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`,
+`KEYSTONE_EXPO_PROJECT_ID`, and `ANDROID_KEYSTORE_PATH` only for a full
+production release. The public updater key is supplied through the environment
+and written to an ignored release-only Tauri config by
+`pnpm release:prepare-desktop`; it is not hardcoded in development config.
+CI installs with `--frozen-lockfile`.
 
 ### EAS OTA
 
-Run `pnpm exec eas update:configure` once in `apps/mobile`, set the project ID,
-then publish `eas update --channel production`. Only JS/assets are eligible for
-OTA; native capability changes must ship as a new binary.
+Supply `KEYSTONE_EXPO_PROJECT_ID` to a release build to enable EAS OTA, then
+publish `eas update --channel production`. Without it, OTA remains disabled and
+development remains local-first. Only JS/assets are eligible for OTA; native
+capability changes must ship as a new binary.

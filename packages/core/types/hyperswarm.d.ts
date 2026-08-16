@@ -22,6 +22,7 @@ declare module 'hyperswarm' {
 
   export interface HyperswarmOptions {
     keyPair?: { publicKey: Buffer; secretKey: Buffer };
+    dht?: unknown;
     maxPeers?: number;
     firewall?: (remotePublicKey: Buffer, payload: unknown) => boolean | Promise<boolean>;
   }

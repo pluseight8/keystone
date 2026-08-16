@@ -11,7 +11,7 @@
 ![P2P](https://img.shields.io/badge/NETWORK-P2P-8B0000?style=for-the-badge&labelColor=090909)
 ![TypeScript](https://img.shields.io/badge/CORE-TYPESCRIPT-DC143C?style=for-the-badge&labelColor=090909)
 
-[Get started](#quick-start) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/security.md) · [Protocol](docs/protocol.md) · [Contributing](CONTRIBUTING.md)
+[Get started](#quick-start) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/security.md) · [Protocol](docs/protocol.md) · [Русская документация](docs/ru/README.md) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -31,6 +31,12 @@ The system is designed around a strict division of responsibility:
 > Keystone is not another chatbot tab. It is the private coordination layer between your knowledge, your models, and your devices.
 
 ## Philosophy
+
+### Non-commercial by design
+
+Keystone has no payments, purchases, billing, advertising, marketplace, or
+monetization features. It is a non-commercial local-first project; protocol
+capabilities intentionally exclude financial actions.
 
 ### Zero dependency on a mandatory service
 
@@ -116,10 +122,28 @@ pnpm install --frozen-lockfile
 
 pnpm tsc
 pnpm test
+pnpm test:integration
+pnpm test:network
 pnpm build
+pnpm release:check
 ```
 
 Run commands from the repository root. Do not mix npm, Yarn, and pnpm lockfiles.
+`release:check` runs the cross-platform static and available-host checks. It
+reports production credentials as `BLOCKED` in development mode; use
+`pnpm release:check -- --release` only in the owner-controlled release CI.
+`test` is the fast unit suite; `test:integration` is the controlled distributed
+failure suite; `test:network` starts independent processes over an isolated
+real Hyperswarm/Noise network. See the [network guide](docs/testing/real-network.md).
+
+AI tool and skill boundaries are documented in [AI tools](docs/ai-tools.md)
+and [skills](docs/skills.md). Local-first agent sessions and bounded context
+are documented in [agents](docs/agents.md), [agent sessions](docs/agent-sessions.md)
+and [context engine](docs/context-engine.md). Safe scheduled and event-driven
+jobs are documented in [Agent automation](docs/agent-automation.md) and
+[Chronos + Agents](docs/chronos-agents.md). Signed P2P guest visits and
+temporary multi-agent rooms are documented in [Agent visits](docs/agent-visits.md)
+and [Agent Rooms](docs/agent-rooms.md).
 
 ### Run the web shell
 
@@ -143,7 +167,7 @@ Build distributable desktop artifacts with:
 pnpm --filter @keystone/desktop tauri build
 ```
 
-OS automation requires an explicit platform grant. macOS uses Accessibility permission; Wayland and Windows impose additional compositor or integrity-level constraints. See [`apps/desktop/src-tauri/OS_AUTOMATION.md`](apps/desktop/src-tauri/OS_AUTOMATION.md).
+Browser form injection requires an explicit, double-confirmed action. Generic OS automation is currently unavailable pending platform-native adapters that can verify authorization at the native boundary; see [`apps/desktop/src-tauri/OS_AUTOMATION.md`](apps/desktop/src-tauri/OS_AUTOMATION.md).
 
 ### Run mobile
 
@@ -212,10 +236,37 @@ Start with the [architecture](docs/ARCHITECTURE.md), [security protocol](docs/se
 | --- | --- |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | End-to-end system design and trust boundaries. |
 | [`docs/protocol.md`](docs/protocol.md) | Signed P2P envelopes, pairing, and CRDT synchronization. |
+| [`docs/social-protocol.md`](docs/social-protocol.md) | Signed profiles and decentralized social graph foundation. |
+| [`docs/communities.md`](docs/communities.md) | Signed community roles, channels, and moderation projection. |
+| [`docs/content-addressing.md`](docs/content-addressing.md) | Immutable P2P content manifests, cache limits, and integrity checks. |
+| [`docs/attachments.md`](docs/attachments.md) | Signed message attachments backed by resumable P2P content transfer. |
+| [`docs/music.md`](docs/music.md) | Signed music catalog and local playback foundation. |
+| [`docs/video.md`](docs/video.md) | Signed video metadata and range-aware playback foundation. |
+| [`docs/short-videos.md`](docs/short-videos.md) | Signed vertical-video objects and range-prefetching short feed. |
+| [`docs/streams.md`](docs/streams.md) | Signed live-broadcast lifecycle, live chat, and P2P distribution-tree contract. |
+| [`docs/discovery.md`](docs/discovery.md) | Local-first unified feed, search, and opt-in scoped P2P discovery. |
+| [`docs/hardening.md`](docs/hardening.md) | Phase 12 safety, storage, multi-device, and performance boundaries. |
+| [`docs/PHASE12_REVIEW.md`](docs/PHASE12_REVIEW.md) | Source-level integration review and explicit host responsibilities. |
+| [`docs/PLATFORM_READINESS.md`](docs/PLATFORM_READINESS.md) | Evidence-based Linux/Windows/macOS/Android/iOS readiness matrix and release blockers. |
+| [`docs/release`](docs/release) | Platform-specific Android, Windows, macOS, and iOS release boundaries. |
+| [`docs/i18n.md`](docs/i18n.md) | English/Russian language preference and translation contract. |
+| [`docs/ru/README.md`](docs/ru/README.md) | Русский вход в документацию и обзор социальной/медиа-подсистемы. |
 | [`docs/security.md`](docs/security.md) | Disclosure and execution authorization. |
 | [`docs/threat-model.md`](docs/threat-model.md) | Assets, threats, assumptions, and mitigations. |
 | [`docs/addons.md`](docs/addons.md) | Addon isolation and capability enforcement. |
 | [`docs/ai.md`](docs/ai.md) | AI providers, constrained commands, and RAG. |
+| [`docs/ai-runtime.md`](docs/ai-runtime.md) | Local runtime lifecycle, provider/model routing, and host boundaries. |
+| [`docs/ai-privacy.md`](docs/ai-privacy.md) | External AI egress classes, firewall, tool intents, and audit semantics. |
+| [`docs/ai-context.md`](docs/ai-context.md) | Unified local-first context resolver, provenance, permissions, scopes, and bounded citations. |
+| [`docs/ai-search.md`](docs/ai-search.md) | Personal AI search UI, cross-object references, temporal queries, and source handling. |
+| [`docs/personal-ai-mesh.md`](docs/personal-ai-mesh.md) | Trusted-device personal AI compute, streaming, routing, and privacy boundary. |
+| [`docs/ai-orchestration.md`](docs/ai-orchestration.md) | Private-first planning, safe external subtasks, bounded delegation, and provenance. |
+| [`docs/memory.md`](docs/memory.md) | Local Personal Memory entries, provenance, controls, privacy, and bounded retrieval. |
+| [`docs/memory-consolidation.md`](docs/memory-consolidation.md) | Local-only consolidation, deduplication, conflicts, and Chronos adapter. |
+| [`docs/agent-visits.md`](docs/agent-visits.md) | Signed, scoped and revocable P2P guest-agent visits. |
+| [`docs/agent-rooms.md`](docs/agent-rooms.md) | Temporary rooms with explicitly shared safe context. |
+| [`docs/shared-spaces.md`](docs/shared-spaces.md) | Signed P2P Shared Spaces, durable CRDT objects, roles, bounded agents, and explicit sharing. |
+| [`docs/shared-workspaces.md`](docs/shared-workspaces.md) | Shared Space wire protocol, private epochs, replay checks, and production transport tests. |
 | [`docs/webrtc-platform-permissions.md`](docs/webrtc-platform-permissions.md) | WebRTC capture permissions by platform. |
 | [`docs/ci.md`](docs/ci.md) | CI/CD and release-signing targets. |
 

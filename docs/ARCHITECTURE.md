@@ -14,6 +14,24 @@ The architecture follows five invariants:
 4. **Offline work is normal.** Each authorized node can update local state and reconcile later through Yjs.
 5. **Security boundaries are explicit.** Renderers, native bridges, peers, relays, addons, browser content, models, and imported files are separate trust domains.
 
+6. **Social state is layered.** Versioned signed social objects sit above identity and transport. Private direct conversations use recipient encryption and private local storage; they do not enter the trusted-device CRDT or public discovery.
+
+7. **Profiles and graph have no registrar.** A profile is signed by its existing Keystone identity. Follow events can converge from peer-provided objects; display handles are not globally authoritative, while block, mute, and trust choices remain local.
+
+8. **Community authority is explicit and replayable.** Community roles, membership, channels, and moderation are signed event objects. Each client derives authorization from the same ordered event log; a relay or UI is never an authority.
+
+9. **Large content is content-addressed.** Messages and future media objects reference immutable chunk manifests. Caches are local and quota-bound; providers are optional peers, not a Keystone storage service.
+
+10. **Music is a content-graph surface.** Signed Tracks reference generic audio content and Artist/Album objects; local playback is an adapter, not a centralized streaming backend.
+
+11. **Video reuses media primitives.** Signed Video metadata refers to generic content and delegates range buffering and decoding to a local host adapter.
+
+12. **Live media remains peer-owned.** Signed broadcasts and chat describe the session while WebRTC adapters form a bounded peer-assisted distribution tree; a relay may assist transport but never becomes the owner of the stream.
+
+13. **Discovery is scoped and local-first.** One validated object index projects feed and search locally; optional neighbourhood/public adapters are opt-in and cannot advertise private conversations, chat, contacts-only, or community-only content.
+
+14. **Safety policy is local and fail-closed.** Local blocks, mutes, hides, reports, and per-peer abuse limits never create a global social score or a mandatory moderator/telemetry service.
+
 ## 2. High-level topology
 
 ```text

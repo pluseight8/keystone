@@ -2,3 +2,10 @@ packages:
   - apps/*
   - apps/mobile/modules/*
   - packages/*
+
+# Explicitly allow only lifecycle builds required by the pinned workspace.
+# This avoids silently skipping native/Vite binaries in reproducible installs.
+allowBuilds:
+  esbuild: true
+  protobufjs: true
+  sharp: true

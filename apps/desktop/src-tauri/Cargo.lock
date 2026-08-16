@@ -1042,23 +1042,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
-name = "enigo"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0087a01fc8591217447d28005379fb5a183683cc83f0a4707af28cc6603f70fb"
-dependencies = [
- "core-graphics 0.23.2",
- "foreign-types-shared",
- "icrate",
- "libc",
- "log",
- "objc2 0.5.2",
- "windows 0.56.0",
- "xkbcommon",
- "xkeysym",
-]
-
-[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2213,7 +2196,6 @@ dependencies = [
 name = "keystone-desktop"
 version = "0.1.0"
 dependencies = [
- "enigo",
  "notify",
  "pdf-extract",
  "rfd",

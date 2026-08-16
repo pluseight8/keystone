@@ -6,7 +6,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use url::Url;
-use enigo::{Enigo, Settings, Keyboard, Mouse, Button, Coordinate, Direction};
 mod knowledge;
 use knowledge::KnowledgeState;
 
@@ -79,42 +78,13 @@ async fn close_automation_browser(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn evaluate_browser(app: AppHandle, script: String) -> Result<serde_json::Value, String> {
-    if script.len() > 64 * 1024 { return Err("Script exceeds bridge limit".into()); }
-    if script.contains("document.cookie") || script.contains("localStorage") || script.contains("indexedDB") { return Err("Script accesses protected browser storage".into()); }
-    let webview = app.get_webview_window("browser-automation").ok_or("Automation webview is not open")?;
-    webview.eval(&script).map_err(|e| e.to_string())?;
-    Ok(serde_json::Value::Null)
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
-pub enum UiAction { Tap { x: i32, y: i32 }, Swipe { x1: i32, y1: i32, x2: i32, y2: i32, #[serde(rename = "durationMs")] duration_ms: u64 }, Type { text: String } }
-
-/// OS-level events are intentionally gated by the same short-lived token used
-/// by DoubleConfirmation. The token is opaque here; core verifies both
-/// signatures before invoking this command.
-#[tauri::command]
-fn ui_action(state: tauri::State<'_, InjectionState>, action: UiAction, confirmation_token: String) -> Result<(), String> {
-    if confirmation_token.len() < 32 { return Err("A double-confirmed token is required".into()); }
-    { let mut consumed = state.consumed_tokens.lock().map_err(|_| "Injection state poisoned")?; if !consumed.insert(confirmation_token) { return Err("Confirmation token was already consumed".into()); } }
-    let mut e = Enigo::new(&Settings::default()).map_err(|e| format!("OS input unavailable: {e}"))?;
-    match action {
-        UiAction::Tap { x, y } => { e.move_mouse(x, y, Coordinate::Abs).map_err(|e| e.to_string())?; e.button(Button::Left, Direction::Click).map_err(|e| e.to_string())?; }
-        UiAction::Swipe { x1,y1,x2,y2,duration_ms } => { e.move_mouse(x1,y1,Coordinate::Abs).map_err(|e|e.to_string())?; e.button(Button::Left,Direction::Press).map_err(|e|e.to_string())?; std::thread::sleep(std::time::Duration::from_millis(duration_ms.min(10_000))); e.move_mouse(x2,y2,Coordinate::Abs).map_err(|e|e.to_string())?; e.button(Button::Left,Direction::Release).map_err(|e|e.to_string())?; }
-        UiAction::Type { text } => e.text(&text).map_err(|e| e.to_string())?,
-    }
-    Ok(())
-}
-
-#[tauri::command]
 fn get_system_locale() -> String {
     std::env::var("LC_ALL").or_else(|_| std::env::var("LANG")).unwrap_or_else(|_| "en".into())
 }
 
 #[tauri::command]
 fn accessibility_status() -> serde_json::Value {
-    serde_json::json!({"platform": std::env::consts::OS, "inputBackend": "enigo", "requiresUserGrant": true, "supported": cfg!(any(target_os="linux", target_os="windows", target_os="macos"))})
+    serde_json::json!({"platform": std::env::consts::OS, "inputBackend": serde_json::Value::Null, "requiresUserGrant": true, "supported": false, "reason": "Native accessibility adapters are not installed"})
 }
 
 #[tauri::command]
@@ -152,7 +122,7 @@ pub fn run() {
                 && event.state() == ShortcutState::Pressed { toggle_overlay(app); }
         }).build())
         .setup(|app| {
-            #[cfg(desktop)]
+            #[cfg(all(desktop, feature = "updater"))]
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
             let show = MenuItem::with_id(app, "show", "Show Keystone", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -178,7 +148,7 @@ pub fn run() {
         })
         .manage(InjectionState::default())
         .manage(KnowledgeState::default())
-        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, evaluate_browser, inject_confirmed_data, ui_action, accessibility_status, scan_windows, get_system_locale, knowledge::pick_local_folder, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
+        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, inject_confirmed_data, accessibility_status, scan_windows, get_system_locale, knowledge::pick_local_folder, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
         .run(tauri::generate_context!())
         .expect("error while running Keystone desktop application");
 }

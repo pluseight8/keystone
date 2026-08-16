@@ -1,0 +1,35 @@
+import type { NodeId } from '../types.js';
+import type { DiscoveryEntry, DiscoveryVisibilityPolicy } from './discovery.js';
+
+export type SafetyTarget = { kind: 'identity' | 'community' | 'object'; id: string };
+export type LocalReport = { id: string; target: SafetyTarget; reason: string; note?: string; createdAt: string };
+export interface LocalSafetyStorage { savePolicy(value: { blockedIdentities: readonly NodeId[]; mutedIdentities: readonly NodeId[]; blockedCommunities: readonly string[]; mutedCommunities: readonly string[]; hiddenObjects: readonly string[] }): Promise<void>; loadPolicy(): Promise<{ blockedIdentities: readonly NodeId[]; mutedIdentities: readonly NodeId[]; blockedCommunities: readonly string[]; mutedCommunities: readonly string[]; hiddenObjects: readonly string[] } | undefined>; saveReport(value: LocalReport): Promise<void>; reports(): Promise<readonly LocalReport[]>; }
+export class InMemoryLocalSafetyStorage implements LocalSafetyStorage { private policy?: { blockedIdentities: readonly NodeId[]; mutedIdentities: readonly NodeId[]; blockedCommunities: readonly string[]; mutedCommunities: readonly string[]; hiddenObjects: readonly string[] }; private readonly values: LocalReport[] = []; async savePolicy(value: { blockedIdentities: readonly NodeId[]; mutedIdentities: readonly NodeId[]; blockedCommunities: readonly string[]; mutedCommunities: readonly string[]; hiddenObjects: readonly string[] }) { this.policy = structuredClone(value); } async loadPolicy() { return this.policy && structuredClone(this.policy); } async saveReport(value: LocalReport) { this.values.push(structuredClone(value)); } async reports() { return structuredClone(this.values); } }
+
+/** Local-only presentation/moderation policy. Reports remain on the user's device unless a future user-selected exporter sends them. */
+export class LocalSafetyPolicy implements DiscoveryVisibilityPolicy {
+  private loaded?: Promise<void>; private initialized = false; private readonly blockedIdentities = new Set<NodeId>(); private readonly mutedIdentities = new Set<NodeId>(); private readonly blockedCommunities = new Set<string>(); private readonly mutedCommunities = new Set<string>(); private readonly hiddenObjects = new Set<string>();
+  constructor(private readonly storage: LocalSafetyStorage, private readonly now: () => number = () => Date.now()) {}
+  async initialize(): Promise<void> { await this.ready(); }
+  async blockIdentity(identity: NodeId, blocked = true): Promise<void> { await this.ready(); toggle(this.blockedIdentities, identity, blocked); await this.save(); }
+  async muteIdentity(identity: NodeId, muted = true): Promise<void> { await this.ready(); toggle(this.mutedIdentities, identity, muted); await this.save(); }
+  async blockCommunity(communityId: string, blocked = true): Promise<void> { await this.ready(); toggle(this.blockedCommunities, communityId, blocked); await this.save(); }
+  async muteCommunity(communityId: string, muted = true): Promise<void> { await this.ready(); toggle(this.mutedCommunities, communityId, muted); await this.save(); }
+  async hideObject(objectId: string, hidden = true): Promise<void> { await this.ready(); toggle(this.hiddenObjects, objectId, hidden); await this.save(); }
+  async report(target: SafetyTarget, reason: string, note?: string): Promise<LocalReport> { await this.ready(); if (!target.id || !reason.trim() || reason.length > 240 || note && note.length > 4_000) throw new Error('Invalid local report'); const report = { id: crypto.randomUUID(), target: structuredClone(target), reason: reason.trim(), ...(note?.trim() ? { note: note.trim() } : {}), createdAt: new Date(this.now()).toISOString() }; await this.storage.saveReport(report); return report; }
+  shouldDisplay(value: DiscoveryEntry): boolean { if (!this.initialized) return false; const communityIds = value.references.filter(reference => reference.type === 'community').map(reference => reference.id); return !this.blockedIdentities.has(value.author) && !this.mutedIdentities.has(value.author) && !this.hiddenObjects.has(value.id) && !communityIds.some(id => this.blockedCommunities.has(id) || this.mutedCommunities.has(id)); }
+  private async ready(): Promise<void> { if (!this.loaded) this.loaded = this.load(); await this.loaded; }
+  private async load(): Promise<void> { const state = await this.storage.loadPolicy(); if (state) { state.blockedIdentities.forEach(value => this.blockedIdentities.add(value)); state.mutedIdentities.forEach(value => this.mutedIdentities.add(value)); state.blockedCommunities.forEach(value => this.blockedCommunities.add(value)); state.mutedCommunities.forEach(value => this.mutedCommunities.add(value)); state.hiddenObjects.forEach(value => this.hiddenObjects.add(value)); } this.initialized = true; }
+  private save(): Promise<void> { return this.storage.savePolicy({ blockedIdentities: [...this.blockedIdentities], mutedIdentities: [...this.mutedIdentities], blockedCommunities: [...this.blockedCommunities], mutedCommunities: [...this.mutedCommunities], hiddenObjects: [...this.hiddenObjects] }); }
+}
+
+export interface PeerAbuseGuard { allow(input: { peer: NodeId; kind: string; bytes: number; knownContact: boolean }): boolean; malformed(peer: NodeId): void; isPenalized(peer: NodeId): boolean; }
+/** Per-device rolling limits; no global reputation, proof of work, or telemetry collector. */
+export class LocalPeerAbuseGuard implements PeerAbuseGuard {
+  private readonly events = new Map<string, number[]>(); private readonly malformedEvents = new Map<NodeId, number[]>(); private readonly penalties = new Map<NodeId, number>();
+  constructor(private readonly now: () => number = () => Date.now(), private readonly limits = { knownPerMinute: 60, unknownPerMinute: 6, maxBytes: 128 * 1024, malformedBeforePenalty: 4, penaltyMs: 5 * 60_000 }) {}
+  allow(input: { peer: NodeId; kind: string; bytes: number; knownContact: boolean }): boolean { const now = this.now(); if (!input.peer || !input.kind || input.bytes < 0 || input.bytes > this.limits.maxBytes || this.isPenalized(input.peer)) return false; const key = `${input.peer}:${input.kind}`, recent = (this.events.get(key) ?? []).filter(time => now - time < 60_000), cap = input.knownContact ? this.limits.knownPerMinute : this.limits.unknownPerMinute; if (recent.length >= cap) { this.events.set(key, recent); return false; } recent.push(now); this.events.set(key, recent); return true; }
+  malformed(peer: NodeId): void { const now = this.now(), recent = (this.malformedEvents.get(peer) ?? []).filter(time => now - time < 60_000); recent.push(now); this.malformedEvents.set(peer, recent); if (recent.length >= this.limits.malformedBeforePenalty) this.penalties.set(peer, now + this.limits.penaltyMs); }
+  isPenalized(peer: NodeId): boolean { const until = this.penalties.get(peer); if (!until) return false; if (until > this.now()) return true; this.penalties.delete(peer); return false; }
+}
+function toggle(values: Set<string>, value: string, enabled: boolean): void { if (!value) throw new Error('Safety target is required'); if (enabled) values.add(value); else values.delete(value); }

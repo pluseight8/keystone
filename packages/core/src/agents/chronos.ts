@@ -3,12 +3,15 @@ import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '..
 
 export type ChronosSystemEvent =
   | { type: 'file.created'; path: string; occurredAt: string }
-  | { type: 'wifi.connected'; ssid: string; occurredAt: string };
+  | { type: 'wifi.connected'; ssid: string; occurredAt: string }
+  /** Additive typed bridge for local-first agent automation events. */
+  | { type: 'system'; eventType: string; eventId?: string; payload?: unknown; dataClass?: 'PUBLIC' | 'USER_EXPLICIT' | 'PRIVATE' | 'SECRET'; occurredAt: string; causedBy?: readonly string[] };
 
 export type ChronosTrigger =
   | { type: 'schedule'; cron: string; timeZone?: string }
   | { type: 'file.created'; directory: string; glob?: string }
-  | { type: 'wifi.connected'; ssid: string };
+  | { type: 'wifi.connected'; ssid: string }
+  | { type: 'system'; eventType: string };
 
 export type ChronosAction =
   | { type: 'web.digest'; urls: string[]; topic?: string; notificationTitle?: string }
@@ -27,13 +30,13 @@ export interface ChronosRule {
   createdAt: string;
 }
 
-export type ChronosAuditStatus = 'started' | 'succeeded' | 'failed' | 'delegated' | 'skipped';
-export interface ChronosAuditEntry { id: string; ruleId: string; ruleName: string; nodeId: NodeId; status: ChronosAuditStatus; timestamp: string; message: string; durationMs?: number; }
+export type ChronosAuditStatus = 'started' | 'succeeded' | 'failed' | 'delegated' | 'skipped' | 'waiting_for_approval' | 'retry_scheduled' | 'cancelled';
+export interface ChronosAuditEntry { id: string; ruleId: string; ruleName: string; nodeId: NodeId; status: ChronosAuditStatus; timestamp: string; message: string; durationMs?: number; automationId?: string; agentId?: string; trigger?: string; tools?: readonly string[]; resultStatus?: string; approvalState?: string; }
 export interface ChronosRunContext { runId: string; ruleId: string; trigger: ChronosTrigger; event?: ChronosSystemEvent; delegatedFrom?: NodeId; signal: AbortSignal; }
 export interface ChronosWorkflowRunner { run(action: ChronosAction, context: ChronosRunContext): Promise<{ summary?: string } | void>; }
 export interface ChronosStore { listRules(): Promise<readonly ChronosRule[]>; putRule(rule: ChronosRule): Promise<void>; deleteRule(id: string): Promise<void>; appendAudit(entry: ChronosAuditEntry): Promise<void>; }
 export interface ChronosPowerMonitor { isDeviceAwake(): boolean; canRunBackgroundWork(): boolean; }
-export interface ChronosEventSource { subscribe(handler: (event: ChronosSystemEvent) => void): () => void; }
+export interface ChronosEventSource { subscribe(handler: (event: ChronosSystemEvent) => void | Promise<void>): () => void; }
 export interface ChronosTaskDelegator { delegate(task: ChronosDelegatedTask): Promise<{ accepted: boolean; nodeId?: NodeId; message?: string }>; }
 export interface ChronosDelegatedTask { version: 1; runId: string; rule: ChronosRule; event?: ChronosSystemEvent; requestedAt: string; }
 
@@ -68,7 +71,7 @@ export class Chronos {
     if (this.started) return;
     this.started = true;
     for (const rule of await this.options.store.listRules()) this.rules.set(rule.id, validateRule(rule));
-    this.unsubscribeEvents = this.options.events?.subscribe(event => { void this.handleEvent(event); });
+    this.unsubscribeEvents = this.options.events?.subscribe(event => this.handleEvent(event));
     this.armNextTimer();
   }
 
@@ -213,7 +216,8 @@ export class ChronosP2PDelegator implements ChronosTaskDelegator {
 
 function matchesEvent(trigger: ChronosTrigger, event: ChronosSystemEvent): boolean {
   if (trigger.type === 'file.created' && event.type === 'file.created') return isInside(event.path, trigger.directory) && matchesGlob(fileName(event.path), trigger.glob ?? '*');
-  return trigger.type === 'wifi.connected' && event.type === 'wifi.connected' && trigger.ssid === event.ssid;
+  if (trigger.type === 'wifi.connected' && event.type === 'wifi.connected') return trigger.ssid === event.ssid;
+  return trigger.type === 'system' && event.type === 'system' && trigger.eventType === event.eventType;
 }
 function isInside(path: string, directory: string): boolean { const root = directory.replace(/[\\/]+$/, ''); return path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`); }
 function fileName(path: string): string { return path.split(/[\\/]/).pop() ?? ''; }
@@ -225,6 +229,7 @@ function parseCronField(field: string, min: number, max: number): Set<number> { 
 function dateParts(date: Date, timeZone?: string): [number,number,number,number,number] { if (!timeZone) return [date.getMinutes(),date.getHours(),date.getDate(),date.getMonth()+1,date.getDay()]; const parts = new Intl.DateTimeFormat('en-US',{ timeZone, minute:'numeric',hour:'numeric',hourCycle:'h23',day:'numeric',month:'numeric',weekday:'short' }).formatToParts(date); const get=(type:string)=>parts.find(p=>p.type===type)?.value ?? ''; const week=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(get('weekday')); return [Number(get('minute')),Number(get('hour')),Number(get('day')),Number(get('month')),week]; }
 function isCronDue(cron: string, date: Date, timeZone?: string): boolean { const fields=parseCron(cron), values=dateParts(date,timeZone); return fields.every((set,index)=>set.has(values[index]!)); }
 export function nextCronDate(cron: string, after: Date, timeZone?: string): Date { parseCron(cron); const next=new Date(after); next.setSeconds(0,0); next.setMinutes(next.getMinutes()+1); for(let i=0;i<366*24*60;i++,next.setMinutes(next.getMinutes()+1)) if(isCronDue(cron,next,timeZone)) return new Date(next); throw new Error('Cron expression has no occurrence within one year'); }
-function validateRule(value: ChronosRule): ChronosRule { if (!value || value.version !== 1 || typeof value.id !== 'string' || !value.id || typeof value.name !== 'string' || typeof value.enabled !== 'boolean' || typeof value.allowSelfDelegation !== 'boolean' || !value.trigger || !value.action || !Number.isFinite(Date.parse(value.createdAt))) throw new Error('Invalid Chronos rule'); if(value.trigger.type==='schedule') parseCron(value.trigger.cron); else if(value.trigger.type==='file.created'){if(!value.trigger.directory)throw new Error('File trigger directory is required');} else if(value.trigger.type==='wifi.connected'){if(!value.trigger.ssid)throw new Error('Wi-Fi SSID is required');} else throw new Error('Unsupported Chronos trigger'); if(value.action.type==='web.digest'){if(!value.action.urls.length||value.action.urls.some(url=>{try{return new URL(url).protocol!=='https:';}catch{return true;}}))throw new Error('Web digest requires HTTPS URLs');} else if(value.action.type==='life-map.review'){if(!Number.isFinite(value.action.staleAfterDays)||value.action.staleAfterDays<1)throw new Error('Invalid stale age');} else if(value.action.type==='ai.workflow'){if(!value.action.instruction.trim())throw new Error('Workflow instruction is empty');} else throw new Error('Unsupported Chronos action'); return value; }
+function validateRule(value: ChronosRule): ChronosRule { if (!value || value.version !== 1 || typeof value.id !== 'string' || !value.id || typeof value.name !== 'string' || typeof value.enabled !== 'boolean' || typeof value.allowSelfDelegation !== 'boolean' || !value.trigger || !value.action || !Number.isFinite(Date.parse(value.createdAt))) throw new Error('Invalid Chronos rule'); if(value.trigger.type==='schedule') parseCron(value.trigger.cron); else if(value.trigger.type==='file.created'){if(!value.trigger.directory)throw new Error('File trigger directory is required');} else if(value.trigger.type==='wifi.connected'){if(!value.trigger.ssid)throw new Error('Wi-Fi SSID is required');} else if(value.trigger.type==='system'){if(!safeEventType(value.trigger.eventType))throw new Error('System event type is invalid');} else throw new Error('Unsupported Chronos trigger'); if(value.action.type==='web.digest'){if(!value.action.urls.length||value.action.urls.some(url=>{try{return new URL(url).protocol!=='https:';}catch{return true;}}))throw new Error('Web digest requires HTTPS URLs');} else if(value.action.type==='life-map.review'){if(!Number.isFinite(value.action.staleAfterDays)||value.action.staleAfterDays<1)throw new Error('Invalid stale age');} else if(value.action.type==='ai.workflow'){if(!value.action.instruction.trim())throw new Error('Workflow instruction is empty');} else throw new Error('Unsupported Chronos action'); return value; }
 function validateDelegatedTask(value: unknown): ChronosDelegatedTask { if(!value||typeof value!=='object')throw new Error('Invalid delegated task'); const v=value as ChronosDelegatedTask; if(v.version!==1||typeof v.runId!=='string'||!Number.isFinite(Date.parse(v.requestedAt)))throw new Error('Invalid delegated task'); validateRule(v.rule); return v; }
 function safeError(error: unknown): string { return error instanceof Error ? error.message : 'Unknown workflow error'; }
+function safeEventType(value: unknown): value is string { return typeof value === 'string' && /^[a-z][a-z0-9._:-]{0,95}$/.test(value); }

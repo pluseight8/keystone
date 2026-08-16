@@ -1,2 +1,3 @@
 import { Text, View } from 'react-native';
-export default function Browser() { return <View style={{flex:1,padding:20}}><Text accessibilityRole="header" style={{fontSize:28,fontWeight:'800'}}>Browser</Text><Text>Secure automation opens after double confirmation.</Text></View>; }
+import { useMobileLocale } from '../src/i18n';
+export default function Browser() { const ru = useMobileLocale() === 'ru'; return <View style={{flex:1,padding:20}}><Text accessibilityRole="header" style={{fontSize:28,fontWeight:'800'}}>{ru ? 'Браузер' : 'Browser'}</Text><Text>{ru ? 'Безопасная автоматизация запускается после двойного подтверждения.' : 'Secure automation opens after double confirmation.'}</Text></View>; }

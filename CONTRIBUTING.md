@@ -58,7 +58,7 @@ Be constructive, assume good intent, and critique the change rather than the con
 | Addons | [`packages/addons`](packages/addons), [`docs/addons.md`](docs/addons.md) | Manifests, sandbox RPC, capability handlers, tools, nodes, widgets |
 | Shared UI | [`packages/ui`](packages/ui) | Accessible cross-platform primitives and interaction states |
 | Themes | [`packages/theme`](packages/theme) | Manifests, presets, token validation, rendering tests |
-| Desktop | [`apps/desktop`](apps/desktop) | Tauri commands, Rust boundary, `enigo`, packaging |
+| Desktop | [`apps/desktop`](apps/desktop) | Tauri commands, Rust boundary, typed automation policy, packaging |
 | Mobile | [`apps/mobile`](apps/mobile) | Expo Router, Kotlin/Swift modules, GeckoView/WKWebView, accessibility |
 | Relay | [`apps/relay`](apps/relay) | HyperDHT routing, backpressure, deployment hardening |
 | Documentation | [`docs`](docs) | Architecture decisions, threat model, guides, diagrams |

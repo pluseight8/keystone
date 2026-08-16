@@ -42,7 +42,7 @@
       "app",
       "dmg"
     ],
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "macOS": {
       "entitlements": "./Entitlements.plist",
       "infoPlist": "./Info.plist"
@@ -50,16 +50,5 @@
     "icon": [
       "icons/icon.png"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY",
-      "endpoints": [
-        "https://github.com/pluseight8/keystone/releases/latest/download/updater.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
   }
 }

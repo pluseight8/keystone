@@ -21,8 +21,9 @@ declare module 'hyperdht' {
   }
 
   export default class DHT {
-    constructor(options?: { keyPair?: KeyPair; bootstrap?: Array<{ host: string; port: number }> });
+    constructor(options?: { keyPair?: KeyPair; bootstrap?: Array<{ host: string; port: number } | string> });
     static keyPair(seed?: Buffer): KeyPair;
+    static bootstrapper(port: number, host?: string): DHT;
     createServer(onconnection?: (socket: RelaySocket) => void): DHTServer;
     connect(publicKey: Buffer, options?: ConnectOptions): RelaySocket;
     destroy(): Promise<void>;

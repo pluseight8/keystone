@@ -2,6 +2,22 @@
 
 # AI providers and command processing
 
+For local/trusted-first planning and isolated external subtasks, see
+[AI orchestration](ai-orchestration.md).
+
+For typed tools, capability approval and source-available skills, see
+[AI tools](ai-tools.md) and [skills](skills.md).
+
+For local-first agents, durable sessions/runs and bounded context, see
+[agents](agents.md), [agent sessions](agent-sessions.md) and
+[context engine](context-engine.md).
+
+For safe scheduled/event-driven Agent jobs, see
+[Agent automation](agent-automation.md) and [Chronos + Agents](chronos-agents.md).
+
+For durable, provenance-aware Personal Memory and local consolidation, see
+[memory](memory.md) and [memory consolidation](memory-consolidation.md).
+
 `AICommandProcessor` separates intent routing from execution. `AIModelAdapter`
 supports three user-selected provider classes: `local` (OpenAI-compatible local
 runtime), `oauth` (short-lived access-token callback) and `api` (user API key).
@@ -44,3 +60,10 @@ If model initialization fails, the manager uses a deterministic local hash
 embedding so offline startup remains functional. Security-sensitive hosts can
 set `fallbackToHash: false` and surface the model error instead. Private
 credential-like fields are excluded from indexed text and result metadata.
+
+## Phase 29 runtime and privacy boundary
+
+For the provider/model router, local lifecycle and external egress rules, see
+[`ai-runtime.md`](ai-runtime.md) and [`ai-privacy.md`](ai-privacy.md). The
+mandatory `AIEgressFirewall` sends only `PUBLIC`/`USER_EXPLICIT` data to an
+external provider, redacts `PRIVATE` context and denies `SECRET` data.

@@ -2,7 +2,7 @@ import en from './en.json';
 import ru from './ru.json';
 export type Locale = 'en' | 'ru';
 export type I18nDictionary = typeof en;
-export type LocaleDetector = () => string | Promise<string | undefined>;
+export type LocaleDetector = () => string | undefined | Promise<string | undefined>;
 const dictionaries: Record<Locale, I18nDictionary> = { en, ru };
 const STORAGE_KEY = 'keystone.locale';
 function normalize(value?: string | null): Locale | undefined { const language = value?.toLowerCase().split(/[-_]/)[0]; return language === 'ru' ? 'ru' : language === 'en' ? 'en' : undefined; }

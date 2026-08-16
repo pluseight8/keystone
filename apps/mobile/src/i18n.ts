@@ -1,6 +1,13 @@
+import { i18n, type Locale } from '@keystone/core';
+import { useEffect, useState } from 'react';
 import { getLocales } from 'react-native-localize';
-import { i18n } from '@keystone/core';
 
 /** Offline locale source backed by the device's native locale settings. */
 i18n.configureDetector(() => getLocales()[0]?.languageTag);
-export const mobileI18n = i18n;
+
+/** Renders React Native screens from the same persisted locale used by shared settings. */
+export function useMobileLocale(): Locale {
+  const [locale, setLocale] = useState(i18n.getLocale);
+  useEffect(() => i18n.subscribe(setLocale), []);
+  return locale;
+}

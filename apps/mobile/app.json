@@ -8,14 +8,6 @@
     "runtimeVersion": {
       "policy": "appVersion"
     },
-    "updates": {
-      "url": "https://u.expo.dev/YOUR_EXPO_PROJECT_ID",
-      "checkAutomatically": "ON_START",
-      "fallbackToCacheTimeout": 0,
-      "requestHeaders": {
-        "expo-channel-name": "production"
-      }
-    },
     "plugins": [
       "expo-router",
       "expo-updates"
@@ -26,6 +18,11 @@
     },
     "android": {
       "package": "org.keystone.app",
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
       "permissions": [
         "INTERNET",
         "FOREGROUND_SERVICE",
@@ -60,11 +57,6 @@
     },
     "experiments": {
       "typedRoutes": true
-    },
-    "extra": {
-      "eas": {
-        "projectId": "YOUR_EXPO_PROJECT_ID"
-      }
     },
     "icon": "../../branding/logos/logo.png",
     "splash": {

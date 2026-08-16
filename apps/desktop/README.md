@@ -35,16 +35,17 @@ automation sidecar; do not label the native Tauri WebView as Firefox.
 
 ## Автообновление
 
-Desktop builds используют подписанный Tauri Updater. Перед первым релизом:
+Development builds do not load the Tauri updater and require no production
+credential. For a production release, the owner first creates the signing key:
 
 ```bash
 pnpm tauri signer generate -w ~/.tauri/keystone.key
 ```
 
-Публичное содержимое `~/.tauri/keystone.key.pub` поместите вместо
-`REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY` в `src-tauri/tauri.conf.json`. Приватный
-ключ **никогда не коммитьте**: сохраните его в GitHub Secret
+Set the public content of `~/.tauri/keystone.key.pub` as
+`KEYSTONE_TAURI_UPDATER_PUBLIC_KEY`, then generate the ignored release-only
+configuration with `pnpm release:prepare-desktop`. The private key **must never
+be committed**: store it in GitHub Secret
 `TAURI_SIGNING_PRIVATE_KEY`, а пароль — в
 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Workflow создаёт `.sig` и
-`updater.json`; приложение проверяет его при старте и предлагает «Обновить и
-перезапустить».
+`updater.json` only for a configured signed release.

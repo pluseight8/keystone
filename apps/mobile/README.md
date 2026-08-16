@@ -16,12 +16,12 @@ npx expo prebuild
 
 ## Тихие OTA-патчи
 
-`expo-updates` настроен на production-канал. Замените `YOUR_EXPO_PROJECT_ID` в
-`app.json` на ID проекта Expo или выполните `pnpm exec eas update:configure`.
-Release/preview-сборки проверяют EAS при старте, скачивают совместимый JS-патч
+`expo-updates` is disabled until `KEYSTONE_EXPO_PROJECT_ID` is supplied to the
+build environment. Local development does not need an Expo account. Configured
+release/preview-сборки проверяют EAS при старте, скачивают совместимый JS-патч
 в фоне и применяют его при следующем запуске; нативный runtime не меняется.
 
-Публикация срочного патча:
+Публикация настроенного срочного патча:
 
 ```bash
 pnpm --dir apps/mobile update:production
