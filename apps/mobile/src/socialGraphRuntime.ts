@@ -1,4 +1,4 @@
-import type { DiscoveryEntry, NodeId, NotificationService, SocialGraphService, UnifiedDiscoveryService } from '@keystone/core';
+import type { AgentPresenceService, AgentProfileService, AgentSocialGraphService, DiscoveryEntry, NodeId, NotificationService, SocialGraphService, UnifiedDiscoveryService } from '@keystone/core';
 
 /** Native/bootstrap boundary for the encrypted local social graph and notifications. */
 export interface MobileSocialGraphRuntime {
@@ -7,6 +7,12 @@ export interface MobileSocialGraphRuntime {
   localNodeId: NodeId;
   viewedIdentity?: NodeId;
   discovery?: UnifiedDiscoveryService;
+  /** Optional owner-bound AgentProfile service for the human Profile surface. */
+  agentProfiles?: AgentProfileService;
+  /** Optional agent-only relationship graph; never inferred from human follows. */
+  agentGraph?: AgentSocialGraphService;
+  /** Optional signed presence and Personal Concierge service. */
+  agentPresence?: AgentPresenceService;
   openObject?: (objectId: string, objectType: DiscoveryEntry['type']) => void;
   shareObject?: (objectId: string, destination: 'chat' | 'community') => void | Promise<void>;
 }

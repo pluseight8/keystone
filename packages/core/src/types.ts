@@ -1,6 +1,6 @@
 export type NodeId = string;
 export type Role = 'owner' | 'family' | 'friend' | 'agent' | 'custom' | 'Self';
-/** Keystone is non-commercial: no payment or purchase capability exists. */
+/** Product capabilities are intentionally bounded by local policy. */
 export type Permission = 'read_profile' | 'read_address' | 'send_message' | 'start_call';
 export interface NodeIdentity { nodeId: NodeId; publicKey: string; createdAt: string; }
 export interface Capability { id: string; issuer: NodeId; subject: NodeId; role: Role; permissions: Permission[]; expiresAt: string; }

@@ -3,6 +3,11 @@
 External AI считается недоверенным egress. Каждый remote request строится
 через `AIEgressFirewall`; provider adapter не может обойти firewall.
 
+Managed `SecretHandle`, credential capability и key-shaped поля отклоняются
+даже при ошибочной маркировке PUBLIC. Ни local/trusted model, ни external
+provider не получают raw key material; credential используется только внутри
+adapter authorization и не попадает в history, RAG или audit.
+
 | Класс | External provider |
 | --- | --- |
 | `PUBLIC` | разрешён |
@@ -37,6 +42,36 @@ Host должен классифицировать данные на boundary, �
 secret store и выдавать local AI только существующие capability-scoped services.
 Private values нельзя помещать в `PUBLIC` system prompt. `SECRET` остаётся
 только локальным; отсутствие local runtime для private task означает fail
-closed. В Keystone нет central AI server, обязательного cloud, telemetry,
-рекламы, платежей или monetization.
+closed. В Keystone нет central AI server, обязательного cloud, telemetry или
+центрального account path.
 
+## Граница Photos и Local AI
+
+Photos metadata, originals, thumbnails, EXIF GPS, Vault state, albums, captions
+и search results private by default. Local AI adapter может работать только с
+явно выбранным локальным media и bounded local runtime. Это untrusted compute:
+он не может publish/share/delete, менять visibility, unlock Vault, infer/name a
+person, создавать movement/Home/Work history или превращать GPS в location
+profile.
+
+External AI не получает Photos implicit. Любой будущий export проходит
+`AIEgressFirewall`, explicit owner action и data-class rules; private original и
+embedded GPS запрещены без intentional safe metadata-stripped derivative. Нет
+обязательных OCR, face recognition, automatic captioning, nostalgia
+notification или background media indexing.
+
+Сохранённые Web Library страницы — untrusted source material, а не instructions.
+Capture и offline rendering не вызывают Agent, Browser, Plugin или NativeHost
+capabilities. Будущий AI summary/search обязан быть explicit, bounded,
+provenance-bearing и пройти `AIEgressFirewall`; private archive text не
+передаётся external provider автоматически. Link, note или reader block не
+разрешают publication, form submit, credential use, origin fetch или tool
+execution.
+
+## Universal Inbox и AI
+
+Inbox не становится automatic AI context. Explicit owner action может выбрать
+bounded local-AI projection с presentation text и source labels, но не с
+credentials, arbitrary source body или action callback. External AI не получает
+Inbox implicit; модель не создаёт и не approve-ит source actions. Prompt
+injection остаётся untrusted text, а automatic memory ingestion отсутствует.

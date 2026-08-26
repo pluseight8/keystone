@@ -19,6 +19,13 @@ import type { VideoService, VideoObject, WatchStateStore } from '../social/video
 import type { ShortVideoService } from '../social/shorts.js';
 import type { LiveBroadcastService, LiveBroadcastObject, LiveChatObject } from '../social/streams.js';
 import type { NotificationService, NotificationRecord } from '../social/notifications.js';
+import type { VaultService } from '../vaults.js';
+import type { VaultGraphService } from '../vault-graph.js';
+import type { CanvasService } from '../vault-canvas.js';
+import type { SharedVaultService } from '../shared-vaults.js';
+import { SafetyRuntime, SafetySurfaceGate, type ContentDomain, type SafetyEvaluationRequest } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
+import { SecretRedactionPolicy } from '../security/secrets.js';
 
 export const UNIFIED_CONTEXT_VERSION = 1 as const;
 export const CONTEXT_SCOPES = ['all-private', 'current-space', 'current-chat', 'communities', 'files', 'public-only'] as const;
@@ -29,7 +36,7 @@ export type UnifiedContextSourceType =
   | 'space' | 'space_document' | 'space_note' | 'task_list' | 'task' | 'space_file'
   | 'space_comment' | 'space_link' | 'file' | 'track' | 'artist' | 'album'
   | 'playlist' | 'library' | 'video' | 'short' | 'live' | 'live_chat'
-  | 'profile' | 'notification' | 'post' | 'comment' | 'object';
+  | 'profile' | 'notification' | 'vault_note' | 'vault_graph' | 'vault_canvas' | 'shared_vault' | 'shared_vault_note' | 'post' | 'comment' | 'object';
 
 export interface ContextReference { readonly id: string; readonly type: string; }
 
@@ -64,6 +71,8 @@ export interface ContextQuery {
   readonly currentSpaceId?: string;
   readonly currentChatId?: string;
   readonly currentCommunityId?: string;
+  readonly currentCanvasId?: string;
+  readonly selectedCanvasNodeIds?: readonly string[];
   readonly after?: string;
   readonly before?: string;
   readonly afterObjectId?: string;
@@ -117,7 +126,7 @@ export class InMemoryUnifiedContextStateStore implements ContextStateStore {
 }
 
 export interface UnifiedContextSourceRequest { readonly query: ContextQuery; readonly viewerId: string; readonly now: number; }
-export interface UnifiedContextSource { readonly id: string; read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]>; }
+export interface UnifiedContextSource { readonly id: string; readonly refreshOnResolve?: boolean; read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]>; }
 
 /** Small callback adapter for hosts that already have a local query/index. */
 export class FunctionUnifiedContextSource implements UnifiedContextSource {
@@ -184,6 +193,8 @@ export interface UnifiedContextResolverOptions {
   readonly storage?: ContextStateStore;
   readonly now?: () => number;
   readonly maxRecords?: number;
+  /** Mandatory recipient-local gate for shared/public AI context. */
+  readonly protectedSurfaces?: MandatorySafetySurfaceRegistry;
 }
 
 /** Resolves local context, follows references, and emits only real citations. */
@@ -195,6 +206,7 @@ export class UnifiedContextResolver {
   private readonly now: () => number;
   private readonly maxRecords: number;
   private readonly filter: ContextPermissionFilter;
+  private readonly protectedSurfaces: MandatorySafetySurfaceRegistry;
   private sourcesHydrated = false;
   private readyPromise: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
@@ -202,6 +214,7 @@ export class UnifiedContextResolver {
   constructor(options: UnifiedContextResolverOptions) {
     if (!options.viewerId?.trim()) throw new UnifiedContextError('UNAUTHORIZED', 'A viewer identity is required');
     this.viewerId = options.viewerId; this.storage = options.storage; this.now = options.now ?? Date.now; this.maxRecords = clamp(options.maxRecords ?? 10_000, 1, 100_000);
+    this.protectedSurfaces = options.protectedSurfaces ?? new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()));
     this.filter = options.filter ?? new ContextPermissionFilter({ viewerId: options.viewerId });
     for (const source of options.sources ?? []) this.registerSource(source);
     this.readyPromise = this.hydrate();
@@ -220,10 +233,21 @@ export class UnifiedContextResolver {
     this.sourcesHydrated = true;
     await this.persist();
   }
-  async ingestRecord(value: UnifiedContextRecord): Promise<void> { await this.ready(); validateRecord(value); this.recordsMap.set(value.id, cloneRecord(value)); await this.persist(); }
+  async ingestRecord(value: UnifiedContextRecord): Promise<void> {
+    await this.ready(); validateRecord(value);
+    if (requiresSharedSafety(value.visibility)) {
+      const eligible = await this.protectedSurfaces.evaluate('AI_CONTEXT', contextRequest(value));
+      if (!eligible) throw new UnifiedContextError('UNAUTHORIZED', 'Shared/public context requires a current SafetyDecisionToken');
+    }
+    this.recordsMap.set(value.id, cloneRecord(value)); await this.persist();
+  }
   /** Direct object ingestion requires an explicit verification assertion. */
   async ingestObject(object: KeystoneObject, options: { verified: true; dataClass?: AIDataClass; permissionScope?: string; accessibleTo?: readonly string[]; relatedAuthors?: readonly string[] } ): Promise<void> {
     if (!options?.verified) throw new UnifiedContextError('UNAUTHORIZED', 'Only verified Keystone objects may enter unified context');
+    if (requiresSharedSafety(object.visibility)) {
+      const eligible = await this.protectedSurfaces.evaluate('AI_CONTEXT', { objectId: object.id, value: object, content: object.payload, text: JSON.stringify(object.payload), domain: contextDomain(object.visibility), sourceType: 'object', verified: true, authorized: true, sharing: true });
+      if (!eligible) throw new UnifiedContextError('UNAUTHORIZED', 'Shared/public object failed the mandatory SafetySurfaceGate');
+    }
     const record = recordFromObject(object, { ...options, viewerId: this.viewerId });
     await this.ingestRecord(record);
   }
@@ -233,10 +257,16 @@ export class UnifiedContextResolver {
     const query = normalizeQuery(input);
     if (query.execution === 'external') return this.emptyResult(query, 'blocked_external', 'external_blocked', 'Unified Keystone context is local-only.');
     if (query.signal?.aborted) throw new UnifiedContextError('INVALID_QUERY', 'Context query was cancelled');
+    for (const source of this.sourceMap.values()) if (source.refreshOnResolve) {
+      const values = await source.read({ query, viewerId: this.viewerId, now: this.now() });
+      for (const existing of [...this.recordsMap.values()].filter(value => value.sourceId === source.id)) this.recordsMap.delete(existing.id);
+      for (const value of values.slice(0, this.maxRecords)) { validateRecord(value); this.recordsMap.set(value.id, { ...cloneRecord(value), sourceId: value.sourceId ?? source.id }); }
+    }
     const visible = await this.filter.filter([...this.recordsMap.values()], query);
-    const temporal = resolveTimeRange(query, visible, this.now());
-    const matched = rankRecords(visible.filter(record => inRange(record, temporal) && matchesQuery(record, query.text)), query.text);
-    const expanded = expandReferences(matched, visible);
+    const safetyVisible = await this.gateSharedRecords(visible);
+    const temporal = resolveTimeRange(query, safetyVisible, this.now());
+    const matched = rankRecords(safetyVisible.filter(record => inRange(record, temporal) && matchesQuery(record, query.text)), query.text);
+    const expanded = expandReferences(matched, safetyVisible);
     const candidates = (expanded.length ? expanded : matched).slice(0, clamp(query.limit ?? 64, 1, 512));
     if (!candidates.length) return this.emptyResult(query, 'not_found', query.execution === 'personal_trusted' ? 'personal_trusted' : 'local', 'No permitted Keystone objects found.');
     const budget = new ContextBudget(clamp(query.maxTokens ?? 4_096, 64, 128_000));
@@ -265,6 +295,15 @@ export class UnifiedContextResolver {
   toAIContext(result: ContextResult, execution: ContextExecution): readonly AIContextItem[] {
     if (execution === 'external') throw new UnifiedContextError('EXTERNAL_CONTEXT_FORBIDDEN', 'Unified Keystone context cannot be sent to an external AI provider');
     return result.contextItems.map(item => ({ ...item, value: structuredClone(item.value), source: KEYSTONE_UNIFIED_CONTEXT_SOURCE }));
+  }
+  private async gateSharedRecords(records: readonly UnifiedContextRecord[]): Promise<readonly UnifiedContextRecord[]> {
+    const output: UnifiedContextRecord[] = [];
+    for (const record of records) {
+      if (!requiresSharedSafety(record.visibility)) { output.push(record); continue; }
+      const eligible = await this.protectedSurfaces.evaluate('AI_CONTEXT', contextRequest(record));
+      if (eligible) output.push(record);
+    }
+    return output;
   }
   private emptyResult(query: ContextQuery, status: ContextResult['status'], privacy: ContextResult['privacy'], answer: string): ContextResult {
     return { version: 1, query: serializableQuery(query), status, privacy, scope: query.scope ?? 'all-private', answer, citations: [], contextItems: [], omittedObjectIds: [], truncatedObjectIds: [], generatedAt: new Date(this.now()).toISOString() };
@@ -310,6 +349,10 @@ export function createUnifiedContextSources(services: {
   shorts?: ShortVideoService;
   live?: LiveBroadcastService;
   notifications?: NotificationService;
+  vault?: VaultService;
+  graph?: VaultGraphService;
+  canvas?: CanvasService;
+  sharedVaults?: readonly SharedVaultService[];
   messages?: { conversations(): Promise<readonly { id: string; members?: readonly string[]; participants?: readonly string[]; kind?: string }[]>; history(id: string): Promise<readonly KeystoneObject[]> };
 }, viewerId: string): readonly UnifiedContextSource[] {
   const sources: UnifiedContextSource[] = [];
@@ -324,6 +367,10 @@ export function createUnifiedContextSources(services: {
   if (services.shorts) sources.push(new ShortUnifiedContextSource(services.shorts, viewerId));
   if (services.live) sources.push(new LiveUnifiedContextSource(services.live, viewerId));
   if (services.notifications) sources.push(new NotificationUnifiedContextSource(services.notifications, viewerId));
+  if (services.vault) sources.push(new VaultUnifiedContextSource(services.vault, viewerId));
+  if (services.graph) sources.push(new VaultGraphUnifiedContextSource(services.graph, viewerId));
+  if (services.canvas) sources.push(new VaultCanvasUnifiedContextSource(services.canvas, viewerId));
+  if (services.sharedVaults?.length) sources.push(new SharedVaultUnifiedContextSource(services.sharedVaults, viewerId));
   return sources;
 }
 
@@ -418,6 +465,90 @@ export class NotificationUnifiedContextSource implements UnifiedContextSource {
   async read(): Promise<readonly UnifiedContextRecord[]> { return (await this.notifications.list({ limit: 100 })).map(value => notificationRecord(value, this.viewerId)); }
 }
 
+/** Markdown Vault projection. Notes remain private, bounded and explicitly untrusted. */
+export class VaultUnifiedContextSource implements UnifiedContextSource {
+  readonly id = 'vault';
+  readonly refreshOnResolve = true;
+  constructor(private readonly vault: VaultService, private readonly viewerId: string) {}
+  async read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]> {
+    const query = request.query.text ? { text: request.query.text, limit: 512 } : { limit: 512 };
+    const hits = await this.vault.search(query, this.viewerId);
+    const output: UnifiedContextRecord[] = [];
+    for (const hit of hits) {
+      try {
+        const note = await this.vault.getNote(hit.note.id, this.viewerId);
+        if (!note) continue;
+        output.push({
+          id: note.id,
+          sourceType: 'vault_note',
+          author: this.viewerId,
+          timestamp: note.modifiedAt,
+          updatedAt: note.modifiedAt,
+          visibility: 'private',
+          dataClass: 'PRIVATE',
+          text: `${note.title}: ${note.body.slice(0, 8_000)}`,
+          references: [
+            ...note.headings.slice(0, 64).map(heading => ({ id: `${note.id}#${heading.id}`, type: 'vault_heading' })),
+            ...note.links.filter(link => link.targetNoteId).map(link => ({ id: link.targetNoteId!, type: 'vault_note' })),
+          ],
+          permissionScope: `vault-owner:${note.vaultId}`,
+          accessibleTo: [this.viewerId],
+          sourceId: this.id,
+          labels: ['UNTRUSTED_VAULT_MARKDOWN', ...note.tags.slice(0, 32)],
+        });
+      } catch {
+        // Missing or malformed notes fail closed without poisoning other context.
+      }
+    }
+    return output;
+  }
+}
+
+/** Explicit shared-vault projection. Membership is checked by SharedVaultService before data enters AI context. */
+export class SharedVaultUnifiedContextSource implements UnifiedContextSource {
+  readonly id = 'shared-vaults';
+  readonly refreshOnResolve = true;
+  constructor(private readonly sharedVaults: readonly SharedVaultService[], private readonly viewerId: string) {}
+  async read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]> {
+    const output: UnifiedContextRecord[] = [];
+    for (const service of this.sharedVaults) {
+      for (const shared of await service.list(this.viewerId)) {
+        if (request.query.scope === 'public-only' && shared.visibility !== 'public') continue;
+        output.push({ id: shared.id, sourceType: 'shared_vault', author: shared.ownerIdentityId, timestamp: shared.createdAt, updatedAt: shared.updatedAt, visibility: shared.visibility === 'public' ? 'public' : 'private', dataClass: shared.visibility === 'public' ? 'PUBLIC' : 'PRIVATE', text: `${shared.title}${shared.description ? `: ${shared.description}` : ''}`, references: [{ id: shared.id, type: 'shared_vault' }], permissionScope: `shared-vault:${shared.id}`, accessibleTo: shared.visibility === 'public' ? undefined : [this.viewerId], sourceId: this.id });
+        try {
+          const notes = await service.listNotes(shared.id, this.viewerId);
+          for (const note of notes.slice(0, Math.min(request.query.limit ?? 64, 256))) output.push({ id: note.id, sourceType: 'shared_vault_note', author: this.viewerId, timestamp: note.modifiedAt, updatedAt: note.modifiedAt, visibility: 'private', dataClass: 'PRIVATE', text: `${note.title}: ${note.body.slice(0, 8_000)}`, references: [{ id: shared.id, type: 'shared_vault' }], permissionScope: `shared-vault:${shared.id}`, accessibleTo: [this.viewerId], sourceId: this.id, spaceId: shared.id });
+        } catch { /* removed/revoked vaults fail closed */ }
+      }
+    }
+    return output;
+  }
+}
+
+/** Explicit, bounded graph scope for a local/trusted Agent Bot. */
+export class VaultGraphUnifiedContextSource implements UnifiedContextSource {
+  readonly id = 'vault-graph';
+  readonly refreshOnResolve = true;
+  constructor(private readonly graph: VaultGraphService, private readonly viewerId: string) {}
+  async read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]> {
+    const projection = await this.graph.globalGraph({ filter: { searchQuery: request.query.text || undefined, includeUnresolved: true }, limitNodes: Math.min(request.query.limit ?? 64, 256), limitEdges: 512 }, this.viewerId);
+    return projection.nodes.map(node => ({ id: node.id, sourceType: 'vault_graph', author: this.viewerId, timestamp: node.modifiedAt ?? new Date(request.now).toISOString(), visibility: 'private', dataClass: 'PRIVATE', text: `${node.kind}: ${node.label}${node.path ? ` (${node.path})` : ''}`, references: projection.edges.filter(edge => edge.source === node.id || edge.target === node.id).slice(0, 32).map(edge => ({ id: edge.source === node.id ? edge.target : edge.source, type: `graph_${edge.kind.toLowerCase()}` })), permissionScope: `vault-graph:${projection.vaultId}`, accessibleTo: [this.viewerId], sourceId: this.id, labels: ['UNTRUSTED_VAULT_GRAPH', ...(node.unresolved ? ['unresolved'] : [])] }));
+  }
+}
+
+/** Canvas context is opt-in and selected-card bounded; it never imports note content. */
+export class VaultCanvasUnifiedContextSource implements UnifiedContextSource {
+  readonly id = 'vault-canvas';
+  readonly refreshOnResolve = true;
+  constructor(private readonly canvas: CanvasService, private readonly viewerId: string) {}
+  async read(request: UnifiedContextSourceRequest): Promise<readonly UnifiedContextRecord[]> {
+    if (!request.query.currentCanvasId) return [];
+    const document = await this.canvas.open(request.query.currentCanvasId, this.viewerId); if (!document) return [];
+    const selected = request.query.selectedCanvasNodeIds?.length ? new Set(request.query.selectedCanvasNodeIds) : undefined;
+    return document.nodes.filter(node => !selected || selected.has(node.id)).slice(0, 256).map(node => ({ id: `${document.id}:${node.id}`, sourceType: 'vault_canvas', author: this.viewerId, timestamp: document.updatedAt, visibility: 'private', dataClass: 'PRIVATE', text: `${node.kind}: ${node.title ?? node.text ?? node.reference?.kind ?? node.id}`.slice(0, 4_000), references: node.reference ? [{ id: typeof node.reference === 'object' && 'noteId' in node.reference ? String(node.reference.noteId) : node.id, type: 'canvas_reference' }] : [], permissionScope: `vault-canvas:${document.id}`, accessibleTo: [this.viewerId], sourceId: this.id, labels: ['UNTRUSTED_VAULT_CANVAS', ...(selected ? ['selected'] : [])] }));
+  }
+}
+
 function memoryRecord(entry: MemoryEntry, viewerId: string): UnifiedContextRecord { return { id: entry.id, sourceType: 'memory', author: viewerId, timestamp: entry.updatedAt, updatedAt: entry.updatedAt, visibility: 'local', dataClass: entry.privacyClass, text: `${entry.summary} (${entry.assertion})`, references: entry.sources.map(source => ({ id: source.id, type: source.type })), permissionScope: 'local-owner', accessibleTo: [viewerId], labels: [entry.kind, ...(entry.pinned ? ['pinned'] : [])] }; }
 function spaceRecord(space: SharedSpace, base: { viewerId: string; dataClass: AIDataClass; permissionScope: string; accessibleTo: readonly string[] }): UnifiedContextRecord { return { id: space.id, sourceType: 'space', author: space.owner, timestamp: space.createdAt, updatedAt: space.updatedAt, visibility: space.visibility, dataClass: base.dataClass, text: `${space.title}: ${space.description}`, references: [], permissionScope: base.permissionScope, accessibleTo: base.accessibleTo, spaceId: space.id }; }
 function childSpaceRecord(value: unknown, sourceType: UnifiedContextSourceType, space: SharedSpace, base: { viewerId: string; dataClass: AIDataClass; permissionScope: string; accessibleTo: readonly string[] }, text: string): UnifiedContextRecord { const candidate = value as { id: string; createdAt: string; updatedAt?: string; createdBy?: string; author?: string; listId?: string; fileId?: string; objectId?: string; sourceId?: string; dataClass?: AIDataClass }; const refs = [{ id: space.id, type: 'space' }, ...(candidate.listId ? [{ id: candidate.listId, type: 'task_list' }] : []), ...(candidate.fileId ? [{ id: candidate.fileId, type: 'file' }] : []), ...(candidate.objectId ? [{ id: candidate.objectId, type: 'object' }] : []), ...(candidate.sourceId ? [{ id: candidate.sourceId, type: 'object' }] : [])]; return { id: candidate.id, sourceType, author: candidate.createdBy ?? candidate.author ?? space.owner, timestamp: candidate.createdAt, updatedAt: candidate.updatedAt, visibility: space.visibility, dataClass: candidate.dataClass ?? base.dataClass, text: text.slice(0, 4_000), references: refs, permissionScope: base.permissionScope, accessibleTo: base.accessibleTo, spaceId: space.id }; }
@@ -429,7 +560,7 @@ function notificationRecord(value: NotificationRecord, viewerId: string): Unifie
 
 function mapObjectType(type: string): UnifiedContextSourceType { const map: Record<string, UnifiedContextSourceType> = { 'identity.profile': 'profile', message: 'message', 'group_message': 'group_message', community: 'community', post: 'post', comment: 'comment', file_object: 'file', track: 'track', artist: 'artist', album: 'album', playlist: 'playlist', library_entry: 'library', video: 'video', short_video: 'short', live_broadcast: 'live', live_chat_message: 'live_chat' }; return map[type] ?? 'object'; }
 function objectSummary(type: string, payload: Record<string, unknown>): string { const fields = ['title', 'name', 'displayName', 'username', 'description', 'bio', 'text', 'filename', 'caption', 'status', 'category']; const pieces = fields.flatMap(field => typeof payload[field] === 'string' ? [payload[field] as string] : []).map(value => value.trim()).filter(Boolean); return (pieces.length ? pieces.join(': ') : `${type} object`).slice(0, 4_000); }
-function validateRecord(value: UnifiedContextRecord): void { if (!value || typeof value.id !== 'string' || !value.id || typeof value.author !== 'string' || !isValidDate(value.timestamp) || !value.text || value.text.length > 16_000 || !value.permissionScope || !value.sourceType) throw new UnifiedContextError('INVALID_RECORD', 'Invalid unified context record'); if (value.dataClass === 'SECRET') throw new UnifiedContextError('INVALID_RECORD', 'SECRET records cannot enter unified context'); }
+function validateRecord(value: UnifiedContextRecord): void { if (!value || SecretRedactionPolicy.containsManagedSecret(value) || typeof value.id !== 'string' || !value.id || typeof value.author !== 'string' || !isValidDate(value.timestamp) || !value.text || value.text.length > 16_000 || !value.permissionScope || !value.sourceType) throw new UnifiedContextError('INVALID_RECORD', 'Invalid unified context record'); if (value.dataClass === 'SECRET') throw new UnifiedContextError('INVALID_RECORD', 'SECRET records cannot enter unified context'); }
 function cloneRecord(value: UnifiedContextRecord): UnifiedContextRecord { return { ...value, references: value.references.map(ref => ({ ...ref })), ...(value.accessibleTo ? { accessibleTo: [...value.accessibleTo] } : {}), ...(value.relatedAuthors ? { relatedAuthors: [...value.relatedAuthors] } : {}), ...(value.labels ? { labels: [...value.labels] } : {}) }; }
 function normalizeQuery(input: ContextQuery): ContextQuery { if (!input || typeof input.text !== 'string' || input.text.length > 4_000 || !input.text.trim()) throw new UnifiedContextError('INVALID_QUERY', 'Context query must be a bounded non-empty string'); const timezone = input.timezone ?? 'UTC'; try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }); } catch { throw new UnifiedContextError('INVALID_QUERY', 'Invalid IANA timezone'); } return { ...input, text: input.text.trim(), scope: input.scope ?? 'all-private', limit: clamp(input.limit ?? 64, 1, 512), maxTokens: clamp(input.maxTokens ?? 4_096, 64, 128_000), timezone }; }
 function serializableQuery(query: ContextQuery): Omit<ContextQuery, 'signal'> { const { signal: _signal, ...serializable } = query; return serializable; }
@@ -471,3 +602,8 @@ function localDayStart(timestamp: number, timezone: string): number {
 }
 function clamp(value: number, min: number, max: number): number { return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.floor(value))) : min; }
 function isObject(value: unknown): value is Record<string, any> { return Boolean(value && typeof value === 'object' && !Array.isArray(value)); }
+function requiresSharedSafety(visibility: UnifiedContextRecord['visibility'] | KeystoneObject['visibility']): boolean { return visibility === 'contacts' || visibility === 'community' || visibility === 'public'; }
+function contextDomain(visibility: KeystoneObject['visibility']): ContentDomain { if (visibility === 'contacts') return 'DIRECT_SHARED'; if (visibility === 'community') return 'COMMUNITY'; return 'PUBLIC'; }
+function contextRequest(record: UnifiedContextRecord): SafetyEvaluationRequest {
+  return { objectId: record.id, domain: contextDomain(record.visibility as KeystoneObject['visibility']), content: record.text, text: record.text, sourceType: 'object', verified: true, authorized: true, sharing: true };
+}

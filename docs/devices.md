@@ -7,3 +7,12 @@ Pairing requests and authorizations are signed with existing Keystone `DeviceSes
 The production network suite starts an independent `alice_device` process. Alice authorizes it over Hyperswarm/Noise, receives a signed privileged event, revokes it, and the revoked process is rejected after restart. Mallory's authority spoof is rejected.
 
 Private keys and recovery phrases are never returned by the Settings Center. Recovery status is summary-only; an explicit, host-owned reveal flow is required for any future recovery UX.
+
+## Continuity
+
+Device Continuity reuses this same registry, enrollment, session keys, trust
+epoch and revocation path. A device advertises a bounded continuity capability
+set and coarse availability; these are hints for a picker, not a replacement
+for the destination's authorization check. No second Continuity enrollment or
+trust database is created. Revocation blocks new handoffs and rejects stale
+epoch envelopes.

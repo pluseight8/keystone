@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import { create, remove as removeFromIndex, search as searchIndex, upsert as upsertIndex, type AnyOrama } from '@orama/orama';
 import type { CrdtSyncAdapter, PersonalEcosystemDocument } from './sync/crdt.js';
+import { SecretRedactionPolicy } from './security/secrets.js';
 
 export type RAGDocumentType = 'node' | 'note' | 'context_capsule' | string;
 export interface RAGDocument { id: string; type: RAGDocumentType; text: string; metadata: Record<string, unknown>; embedding?: number[]; }
@@ -66,6 +67,7 @@ export class RAGManager {
     this.maxResults = options.maxResults ?? 8;
   }
   async upsert(document: Omit<RAGDocument, 'embedding'> | RAGDocument): Promise<void> {
+    if (SecretRedactionPolicy.containsManagedSecret(document)) throw new Error('Managed secrets cannot be indexed in RAG');
     const text = document.text.trim(); if (!text) return;
     const suppliedEmbedding = 'embedding' in document ? document.embedding : undefined;
     const embedding = normalize(suppliedEmbedding?.length ? suppliedEmbedding : await this.embed(text));
@@ -107,7 +109,7 @@ export class RAGManager {
     void this.scheduleRebuild(roots);
     return this.detach;
   }
-  private async indexValue(id: string, type: RAGDocumentType, value: unknown): Promise<void> { const safe = safeValue(value); const text = valueToText(safe); if (text) await this.upsert({ id, type, text, metadata: isPlainRecord(safe) ? safe : { value: safe } }); }
+  private async indexValue(id: string, type: RAGDocumentType, value: unknown): Promise<void> { const safe = safeValue(SecretRedactionPolicy.redact(value)); const text = valueToText(safe); if (text) await this.upsert({ id, type, text, metadata: isPlainRecord(safe) ? safe : { value: safe } }); }
   private async embed(text: string): Promise<readonly number[]> { try { return await this.embedder.embed(text); } catch (error) { if (!this.fallback) throw error; return this.fallback.embed(text); } }
   private ensureDatabase(dimensions: number): void {
     if (this.dimensions !== undefined && this.dimensions !== dimensions) throw new Error(`Embedding dimension mismatch: expected ${this.dimensions}, received ${dimensions}`);
@@ -127,7 +129,7 @@ function rootsFromDocument(document: Y.Doc): RAGRoots { return { lifeMap: docume
 
 function entries(value: unknown): Array<[string, unknown]> { if (value instanceof Y.Map) return [...value.entries()]; if (value && typeof value === 'object') return Object.entries(value as Record<string, unknown>); return []; }
 function valueToText(value: unknown): string { if (typeof value === 'string') return value; if (!value || typeof value !== 'object') return ''; const record = value as Record<string, unknown>; return Object.entries(record).map(([key, child]) => `${key}: ${typeof child === 'string' ? child : JSON.stringify(child)}`).join('\n'); }
-const PRIVATE_METADATA_KEY = /^(private|secret|token|password|credential|apiKey)$/i;
+const PRIVATE_METADATA_KEY = /^(private|secret|token|password|credential|apiKey|accessToken|refreshToken|privateKey|encryptionPrivateKey|masterSeed|mnemonic|recoveryPhrase|keyMaterial)$/i;
 function safeValue(value: unknown): unknown {
   if (value instanceof Y.Map) return Object.fromEntries([...value.entries()].filter(([key]) => !PRIVATE_METADATA_KEY.test(key)).map(([key, child]) => [key, safeValue(child)]));
   if (Array.isArray(value)) return value.map(safeValue);

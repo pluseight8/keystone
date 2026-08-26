@@ -41,5 +41,5 @@ data classes, never prompt values or private tool output. The UI exposes
 `Processed privately` or `External AI used for an isolated subtask`.
 
 The feature uses configured provider adapters and the existing Hyperswarm/
-Noise Personal AI Mesh. It adds no central Keystone AI service, telemetry,
-payments, advertising or public GPU sharing.
+Noise Personal AI Mesh. It adds no central Keystone AI service, telemetry or
+public compute sharing.

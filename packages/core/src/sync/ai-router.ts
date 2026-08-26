@@ -1,6 +1,7 @@
 import type { InferenceBackend, InferenceRequest } from '../ai/llama-cpp.js';
 import type { NodeId } from '../types.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 
 export const AI_INFERENCE_REQUEST = 'ai_inference_request' as const;
 export const AI_INFERENCE_STREAM = 'ai_inference_stream' as const;
@@ -38,7 +39,7 @@ export class AiInferenceRpc implements AsyncDisposable {
   private readonly active = new Set<string>();
   private readonly unsubscribe: () => void;
 
-  constructor(private readonly transport: Transport, private readonly options: AiInferenceRpcOptions) {
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly options: AiInferenceRpcOptions) {
     this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope).catch(() => undefined); });
   }
 

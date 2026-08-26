@@ -4,7 +4,7 @@ Backup Keystone — это локальный зашифрованный экс�
 
 ## Контейнер
 
-В Phase 28 используется контейнер `keystone.backup` версии 2. Во внешнем manifest находятся только:
+В  используется контейнер `keystone.backup` версии 2. Во внешнем manifest находятся только:
 
 - формат и версия;
 - время создания;
@@ -43,6 +43,6 @@ Policy по умолчанию включает identity/security, application s
 
 ## Не входит в scope
 
-Нет обязательного cloud backup, центрального account recovery, telemetry, платежей, рекламы, marketplace или server-side media cache. Media bytes можно не включать; content-addressed references при этом сохраняются и позволяют получить данные по P2P.
+Нет обязательного cloud backup, центрального account recovery, telemetry или server-side media cache. Media bytes можно не включать; content-addressed references при этом сохраняются и позволяют получить данные по P2P.
 
 Основная реализация: `packages/core/src/sync/backup-recovery.ts`. Старый cold-backup API для Yjs/config архивов оставлен без изменений.

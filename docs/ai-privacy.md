@@ -3,6 +3,12 @@
 External AI is an untrusted egress. Every remote request is constructed by
 `AIEgressFirewall`; provider adapters cannot opt out of it.
 
+System-managed `SecretHandle`, credential capabilities and key-shaped fields
+are denied even when a caller incorrectly labels them PUBLIC. Local/trusted
+models also receive no raw key material. Provider credentials are adapter-only
+authorization capabilities and never enter model payloads, history, RAG or
+audit records.
+
 | Class | External provider |
 | --- | --- |
 | `PUBLIC` | allowed |
@@ -37,6 +43,5 @@ Hosts should classify data at the boundary, keep API credentials in a secure
 secret store, and expose only existing capability-scoped services to local AI.
 They should not put private values in a `PUBLIC` system prompt. `SECRET` values
 remain local only, and a missing local runtime is a fail-closed condition for a
-private task. Keystone has no central AI server, mandatory cloud, telemetry,
-advertising, payments or monetization path.
-
+private task. Keystone has no central AI server, mandatory cloud, telemetry or
+central account path.

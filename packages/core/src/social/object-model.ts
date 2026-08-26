@@ -6,7 +6,7 @@ export const objectTypes = [
   'identity.profile', 'conversation', 'conversation_event', 'message', 'message_attachment', 'reaction',
   'community', 'channel', 'community_category', 'community_member', 'community_message', 'community_moderation', 'community_invite', 'community_report', 'role', 'permission', 'post', 'comment',
   'follow', 'media_object', 'file_object', 'track', 'artist', 'album', 'playlist', 'library_entry',
-  'video', 'short_video', 'live_broadcast', 'live_chat_message', 'creator_profile',
+  'video', 'short_video', 'live_broadcast', 'live_chat_message', 'creator_profile', 'publication',
 ] as const;
 export type KeystoneObjectType = typeof objectTypes[number];
 export type ObjectVisibility = 'private' | 'contacts' | 'community' | 'public';

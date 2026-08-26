@@ -44,7 +44,9 @@ export class DocumentParser {
 
   private async parsePdf(input: DocumentInput): Promise<string> {
     if (!this.pdf) throw new Error('PDF extraction is not available on this platform');
-    return normalizeText(await this.pdf.extract(input.bytes, input.path));
+    // A document name is metadata only.  Never hand a remote path (including
+    // traversal, drive or UNC components) to a host PDF boundary.
+    return normalizeText(await this.pdf.extract(input.bytes, safeDocumentName(input.path)));
   }
 }
 
@@ -74,6 +76,13 @@ function parseCsv(value: string): string[][] {
 
 function normalizeText(value: string): string {
   return value.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n\n').trim();
+}
+
+function safeDocumentName(value: string): string {
+  const base = value.split(/[?#]/, 1)[0]!.split(/[\\/]/).pop() ?? 'document';
+  const normalized = base.normalize('NFKC').replace(/[^\p{L}\p{N}._-]/gu, '_').trim();
+  if (normalized === '.' || normalized === '..') return 'document';
+  return normalized.slice(0, 255) || 'document';
 }
 
 export type { DocumentInput, ParsedDocument, PdfTextExtractor, SupportedDocumentExtension } from './types.js';

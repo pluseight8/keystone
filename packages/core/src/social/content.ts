@@ -3,9 +3,13 @@ import { z } from 'zod';
 export const CONTENT_MANIFEST_VERSION = 1;
 export const DEFAULT_CHUNK_SIZE = 256 * 1024;
 export const MAX_CHUNK_SIZE = 1024 * 1024;
+export const MAX_CONTENT_BYTES = 2 ** 40;
+export const MAX_MANIFEST_CHUNKS = 4_000_000;
+export const CONTENT_CACHE_POLICIES = ['PRIVATE_NO_STRANGER_CACHE', 'OWNED_DEVICES', 'AUTHORIZED_GROUP', 'PUBLIC_CACHEABLE', 'EPHEMERAL_CACHE'] as const;
+export type ContentCachePolicy = typeof CONTENT_CACHE_POLICIES[number];
 export type ContentId = `sha256-${string}`;
 const hash = z.string().regex(/^[a-f0-9]{64}$/i);
-export const contentManifestSchema = z.object({ version: z.literal(CONTENT_MANIFEST_VERSION), contentId: z.string().regex(/^sha256-[a-f0-9]{64}$/i), byteLength: z.number().int().nonnegative().max(2 ** 40), mimeType: z.string().min(1).max(255), name: z.string().max(255).optional(), chunkSize: z.number().int().min(16 * 1024).max(MAX_CHUNK_SIZE), chunks: z.array(hash).min(1).max(4_000_000) }).strict().superRefine((value, ctx) => { if (Math.max(1, Math.ceil(value.byteLength / value.chunkSize)) !== value.chunks.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Chunk count does not match byte length' }); });
+export const contentManifestSchema = z.object({ version: z.literal(CONTENT_MANIFEST_VERSION), contentId: z.string().regex(/^sha256-[a-f0-9]{64}$/i), byteLength: z.number().int().nonnegative().max(MAX_CONTENT_BYTES), mimeType: z.string().min(1).max(255), name: z.string().max(255).optional(), chunkSize: z.number().int().min(16 * 1024).max(MAX_CHUNK_SIZE), chunks: z.array(hash).min(1).max(MAX_MANIFEST_CHUNKS), contentPolicy: z.enum(CONTENT_CACHE_POLICIES).optional() }).strict().superRefine((value, ctx) => { if (Math.max(1, Math.ceil(value.byteLength / value.chunkSize)) !== value.chunks.length) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Chunk count does not match byte length' }); });
 export type ContentManifest = Omit<z.infer<typeof contentManifestSchema>, 'contentId'> & { contentId: ContentId };
 export interface ContentProvider { id: string; getChunk(contentId: ContentId, index: number, signal?: AbortSignal): Promise<Uint8Array>; }
 export interface ContentDownloadProgress { contentId: ContentId; completedChunks: number; totalChunks: number; completedBytes: number; totalBytes: number; }
@@ -13,7 +17,7 @@ export interface ContentCacheStateStore { read(): Promise<unknown | undefined>; 
 
 export function contentUri(contentId: ContentId): string { return `keystone://content/${contentId}`; }
 export function parseContentUri(value: string): ContentId { const url = new URL(value); if (url.protocol !== 'keystone:' || url.hostname !== 'content' || !/^sha256-[a-f0-9]{64}$/i.test(url.pathname.slice(1))) throw new Error('Invalid Keystone content URI'); return url.pathname.slice(1) as ContentId; }
-export async function createContentManifest(bytes: Uint8Array, options: { mimeType: string; name?: string; chunkSize?: number }): Promise<ContentManifest> { const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE; if (!Number.isInteger(chunkSize) || chunkSize < 16 * 1024 || chunkSize > MAX_CHUNK_SIZE || !options.mimeType || options.mimeType.length > 255) throw new Error('Invalid content manifest options'); const chunks: string[] = []; for (let offset = 0; offset < bytes.length; offset += chunkSize) chunks.push(await sha256(bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize)))); if (!chunks.length) chunks.push(await sha256(new Uint8Array())); const manifest = { version: CONTENT_MANIFEST_VERSION as 1, contentId: `sha256-${await sha256(bytes)}` as ContentId, byteLength: bytes.length, mimeType: options.mimeType, ...(options.name ? { name: options.name } : {}), chunkSize, chunks }; return contentManifestSchema.parse(manifest) as ContentManifest; }
+export async function createContentManifest(bytes: Uint8Array, options: { mimeType: string; name?: string; chunkSize?: number; contentPolicy?: ContentCachePolicy }): Promise<ContentManifest> { const chunkSize = options.chunkSize ?? DEFAULT_CHUNK_SIZE; if (!Number.isInteger(chunkSize) || chunkSize < 16 * 1024 || chunkSize > MAX_CHUNK_SIZE || !options.mimeType || options.mimeType.length > 255 || bytes.byteLength > MAX_CONTENT_BYTES) throw new Error('Invalid content manifest options'); const chunks: string[] = []; for (let offset = 0; offset < bytes.length; offset += chunkSize) chunks.push(await sha256(bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize)))); if (!chunks.length) chunks.push(await sha256(new Uint8Array())); const manifest = { version: CONTENT_MANIFEST_VERSION as 1, contentId: `sha256-${await sha256(bytes)}` as ContentId, byteLength: bytes.length, mimeType: options.mimeType, ...(options.name ? { name: options.name } : {}), chunkSize, chunks, ...(options.contentPolicy ? { contentPolicy: options.contentPolicy } : {}) }; return contentManifestSchema.parse(manifest) as ContentManifest; }
 export async function sha256(bytes: Uint8Array): Promise<string> { const input = new Uint8Array(bytes.length); input.set(bytes); const digest = await crypto.subtle.digest('SHA-256', input.buffer); return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''); }
 
 /** Local cache only; hosts may map this to files/SQLite but no remote store is required. */
@@ -51,7 +55,33 @@ export class PersistentContentCache extends ContentCache {
   override async putVerifiedChunk(manifest: ContentManifest, index: number, bytes: Uint8Array): Promise<void> { await this.ready(); await super.putVerifiedChunk(manifest, index, bytes); await this.persist(); }
   override pin(contentId: ContentId, pinned = true): void { super.pin(contentId, pinned); void this.persist(); }
   override remove(contentId: ContentId): boolean { const removed = super.remove(contentId); void this.persist(); return removed; }
-  private async hydrate(): Promise<void> { const value = await this.backend.read(); if (!value || typeof value !== 'object') return; const state = value as { version?: number; manifests?: Record<string, ContentManifest>; chunks?: Record<string, number[]>; pins?: string[]; access?: Record<string, number> }; if (state.version !== 1 || !state.manifests || !state.chunks) return; for (const [id, manifest] of Object.entries(state.manifests)) { const parsed = contentManifestSchema.safeParse(manifest); if (parsed.success) this.manifests.set(id as ContentId, parsed.data as ContentManifest); } for (const [chunkKey, bytes] of Object.entries(state.chunks)) { const separator = chunkKey.lastIndexOf(':'); const contentId = separator > 0 ? chunkKey.slice(0, separator) : ''; const index = separator > 0 ? Number(chunkKey.slice(separator + 1)) : -1; const manifest = this.manifests.get(contentId as ContentId); if (!manifest || !Number.isInteger(index) || index < 0 || !Array.isArray(bytes)) continue; const candidate = Uint8Array.from(bytes); const expectedLength = index === manifest.chunks.length - 1 ? manifest.byteLength - manifest.chunkSize * index : manifest.chunkSize; if (index >= manifest.chunks.length || candidate.length !== expectedLength || await sha256(candidate) !== manifest.chunks[index]) continue; this.chunks.set(chunkKey, candidate); this.used += candidate.length; } for (const id of state.pins ?? []) if (this.manifests.has(id as ContentId)) this.pins.add(id as ContentId); for (const [id, timestamp] of Object.entries(state.access ?? {})) if (this.manifests.has(id as ContentId) && Number.isFinite(timestamp)) this.access.set(id as ContentId, timestamp); }
+  private async hydrate(): Promise<void> {
+    const value = await this.backend.read(); if (!value || typeof value !== 'object') return;
+    const state = value as { version?: number; manifests?: Record<string, ContentManifest>; chunks?: Record<string, number[]>; pins?: string[]; access?: Record<string, number> };
+    if (state.version !== 1 || !state.manifests || !state.chunks || typeof state.manifests !== 'object' || typeof state.chunks !== 'object') return;
+    // Persistence is a host boundary: malformed or rolled-back state must not
+    // be allowed to allocate beyond the configured cache budget while it is
+    // being hydrated.  Keep metadata bounded even when a backend returns a
+    // hostile object with many entries.
+    for (const [id, manifest] of Object.entries(state.manifests).slice(0, 4_096)) {
+      const parsed = contentManifestSchema.safeParse(manifest);
+      if (parsed.success && id === parsed.data.contentId) this.manifests.set(id as ContentId, parsed.data as ContentManifest);
+    }
+    const maxHydratedChunks = Math.min(16_384, Math.floor(this.quotaBytes / (16 * 1024)) || 0);
+    let hydratedChunks = 0;
+    for (const [chunkKey, bytes] of Object.entries(state.chunks)) {
+      if (hydratedChunks >= maxHydratedChunks || this.used >= this.quotaBytes) break;
+      const separator = chunkKey.lastIndexOf(':'); const contentId = separator > 0 ? chunkKey.slice(0, separator) : ''; const index = separator > 0 ? Number(chunkKey.slice(separator + 1)) : -1;
+      const manifest = this.manifests.get(contentId as ContentId);
+      if (!manifest || !Number.isInteger(index) || index < 0 || index >= manifest.chunks.length || !Array.isArray(bytes)) continue;
+      const expectedLength = index === manifest.chunks.length - 1 ? manifest.byteLength - manifest.chunkSize * index : manifest.chunkSize;
+      if (bytes.length !== expectedLength || bytes.length > this.quotaBytes - this.used || bytes.length > MAX_CHUNK_SIZE || !bytes.every(byte => Number.isInteger(byte) && byte >= 0 && byte <= 255)) continue;
+      const candidate = Uint8Array.from(bytes); if (await sha256(candidate) !== manifest.chunks[index]) continue;
+      this.chunks.set(chunkKey, candidate); this.used += candidate.length; hydratedChunks += 1;
+    }
+    for (const id of (Array.isArray(state.pins) ? state.pins.slice(0, 4_096) : [])) if (typeof id === 'string' && this.manifests.has(id as ContentId)) this.pins.add(id as ContentId);
+    for (const [id, timestamp] of Object.entries(state.access ?? {}).slice(0, 4_096)) if (this.manifests.has(id as ContentId) && Number.isFinite(timestamp)) this.access.set(id as ContentId, timestamp);
+  }
   private async persist(): Promise<void> { const snapshot = { version: 1 as const, manifests: Object.fromEntries(this.manifests), chunks: Object.fromEntries([...this.chunks.entries()].map(([chunkKey, bytes]) => [chunkKey, [...bytes]])), pins: [...this.pins], access: Object.fromEntries(this.access) }; const operation = this.writes.then(() => this.backend.write(snapshot)); this.writes = operation.catch(() => undefined); await operation; }
 }
 export class InMemoryContentCacheStateStore implements ContentCacheStateStore { private value?: unknown; async read() { return structuredClone(this.value); } async write(value: unknown) { this.value = structuredClone(value); } }

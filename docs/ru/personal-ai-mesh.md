@@ -1,6 +1,6 @@
 # Personal AI Mesh
 
-Phase 30 добавляет приватную compute-возможность для доверенных устройств
+Personal AI Mesh предоставляет приватную compute-возможность для доверенных устройств
 Keystone. Модель физически остаётся на host (например, Ollama, LM Studio или
 llama.cpp), а телефон или планшет получают только metadata модели и подписанный
 поток результата inference.
@@ -23,7 +23,7 @@ database state отклоняются. Внешний `AIEgressFirewall` не и
 
 ## Host и routing
 
-Advertisement содержит только device identity, capability `AI_COMPUTE`, ссылки
+Capability record содержит только device identity, capability `AI_COMPUTE`, ссылки
 на модели, context limits, признаки vision/tools, online/busy state, queue length
 и expiry. В нём нет model weights, prompt, context, API keys или private database
 записей. Host может загружать/выгружать модель через локальную provider boundary;
@@ -53,5 +53,5 @@ Host получает `AIProvider` (или `AIRuntime`) через `PersonalAIHo
 - `MY DEVICES` — `Trusted Personal Device`, найденные через Keystone P2P;
 - `EXTERNAL` — providers без доступа к private Keystone context.
 
-В этот слой не входят payments, ads, marketplace, compute economy, telemetry,
-обязательный cloud или доступ посторонних к GPU пользователя.
+В этот слой не входят public compute sharing, telemetry, обязательный cloud или
+доступ посторонних устройств.

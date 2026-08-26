@@ -4,7 +4,7 @@ Keystone Live is a small, local-first livestream vertical slice. A `LiveBroadcas
 
 ## Transport and topology
 
-Public lifecycle and chat/reaction objects are replicated in signed `social.live_object` envelopes over the existing Transport. Contacts-only broadcasts fail closed until a group-encrypted object path exists. Community broadcasts require a community reference. There is no central stream server, CDN, account registry, monetization, advertising, or analytics service.
+Public lifecycle and chat/reaction objects are replicated in signed `social.live_object` envelopes over the existing Transport. Contacts-only broadcasts fail closed until a group-encrypted object path exists. Community broadcasts require a community reference. There is no central stream server, CDN, account registry, or analytics service.
 
 WebRTC signaling uses the existing `HyperswarmSignalingChannel` and the existing signed Noise envelope. `LiveSessionController` keeps a bounded distribution tree: a viewer has one upstream and a forwarder has a finite child limit. Join, duplicate-join, block, reconnect, disconnect subtree cleanup, stale-member cleanup, and broadcaster-stop transitions are handled locally. A future host may replace the tree policy with peer-assisted relay, but Live does not add a media protocol.
 

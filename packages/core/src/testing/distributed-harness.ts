@@ -27,7 +27,10 @@ import { FileService, FileStorageManager, PersistentFileStorage } from '../socia
 import { FileReplicationService } from '../social/file-replication.js';
 import { AgentVisitService } from '../ai/visits.js';
 import { AgentMailbox } from '../ai/agent-social.js';
+import { AgentNegotiationService } from '../ai/agent-negotiation.js';
+import { AgentWorkboardService, WorkboardTransportReplication } from '../ai/workboards.js';
 import { PersistentSharedSpaceStateStore, SharedSpaceService } from '../social/spaces.js';
+import { CalendarReplicationService, CalendarService } from '../social/calendar.js';
 
 export type QueuedEnvelope = Readonly<{ from: NodeId; to: NodeId; envelope: Envelope }>;
 
@@ -79,6 +82,7 @@ export class ControlledTransport implements Transport {
   }
   onMessage(handler: (envelope: Envelope) => void): () => void { this.handlers.add(handler); return () => this.handlers.delete(handler); }
   isPeerConnected(peer: NodeId): boolean { return true; }
+  isDeterministic(): boolean { return true; }
   async close(): Promise<void> { this.handlers.clear(); this.network.unregister(this.nodeId); }
   deliver(envelope: Envelope): void { this.handlers.forEach(handler => handler(envelope)); }
 }
@@ -120,7 +124,12 @@ export type DistributedNode = {
   readonly fileReplication: FileReplicationService;
   readonly visits: AgentVisitService;
   readonly agentSocial: AgentMailbox;
+  readonly agentNegotiation: AgentNegotiationService;
   readonly spaces: SharedSpaceService;
+  readonly workboards: AgentWorkboardService;
+  readonly workboardReplication: WorkboardTransportReplication;
+  readonly calendar: CalendarService;
+  readonly calendarReplication: CalendarReplicationService;
   readonly transport: ControlledTransport;
   close(): Promise<void>;
 };
@@ -151,6 +160,37 @@ export class DistributedHarness {
     const crypto = new SodiumCryptoProvider();
     const messageStorage = new PersistentSocialStorage(new FileTestStateStore(join(dataDir, 'messages.json')));
     const security = new ContactEnvelopeSecurity(keys, contacts);
+    const workboardReplication = new WorkboardTransportReplication({ transport, security, localIdentityId: keys.nodeId, peers: contacts.map(contact => contact.nodeId) });
+    const workboards = new AgentWorkboardService({
+      identityId: keys.nodeId,
+      agentId: `${name}-agent`,
+      storage: new FileTestStateStore(join(dataDir, 'workboards.json')),
+      signer: {
+        sign: payload => crypto.sign(payload, keys.privateKey),
+        verify: (payload, signature, actor) => {
+          const identityId = actor.ownerIdentityId ?? actor.id;
+          const publicKey = [...this.keys.values()].find(candidate => candidate.nodeId === identityId)?.publicKey;
+          return publicKey ? crypto.verify(payload, signature, publicKey) : false;
+        },
+      },
+      replication: workboardReplication,
+    });
+    await workboards.ready();
+    const calendar = new CalendarService({
+      identityId: keys.nodeId,
+      deviceId: name,
+      storage: new FileTestStateStore(join(dataDir, 'calendar.json')),
+      signer: {
+        sign: payload => crypto.sign(payload, keys.privateKey),
+        verify: (payload, signature, actor) => {
+          const publicKey = [...this.keys.values()].find(candidate => candidate.nodeId === actor.identityId)?.publicKey;
+          return publicKey ? crypto.verify(payload, signature, publicKey) : false;
+        },
+      },
+      defaultTimezone: 'UTC',
+    });
+    await calendar.ready();
+    const calendarReplication = new CalendarReplicationService({ transport, service: calendar, security, local: keys, peers: contacts.map(contact => contact.nodeId) });
     const messages = new DirectMessageService(transport, messageStorage, crypto, keys, contacts, security, new SodiumDirectMessageCipher());
     const groups = new GroupConversationService(messages, messageStorage, crypto, keys);
     const graph = new SocialGraphService(messageStorage, crypto, keys);
@@ -184,9 +224,11 @@ export class DistributedHarness {
     const agentContacts = [...this.keys.values()].filter(value => value.nodeId !== keys.nodeId).map(value => ({ version: 1 as const, agent: { agentId: `${[...this.keys.entries()].find(([, candidate]) => candidate.nodeId === value.nodeId)?.[0] ?? 'peer'}-agent`, identityId: value.nodeId }, signingPublicKey: value.publicKey, encryptionPublicKey: value.encryptionPublicKey, trusted: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
     const agentSocial = new AgentMailbox({ transport, crypto, security, local: keys, agentId: `${name}-agent`, contacts: agentContacts, storage: new FileTestStateStore(join(dataDir, 'agent-social.json')), policy: { mode: 'auto', askBeforeAccepting: false, autoAcceptTaskTypes: ['availability', 'coordination'], maxPending: 64 }, executor: { execute: async task => ({ value: { accepted: true, taskId: task.taskId, agent: `${name}-agent` }, dataClass: 'USER_EXPLICIT' }) } });
     await agentSocial.ready();
+    const agentNegotiation = new AgentNegotiationService({ mailbox: agentSocial, crypto, local: keys, storage: new FileTestStateStore(join(dataDir, 'agent-negotiation.json')), policy: { mode: 'ALLOW_SAFE_NEGOTIATIONS', askBeforeAccepting: false, defaultDisclosure: 'BOOLEAN' }, evaluator: name === 'bob' || name === 'charlie' ? async ({ proposal }) => ({ decision: 'accept', selectedOptionIds: proposal.options.filter(option => option.id === 'sat-18').map(option => option.id), disclosure: 'BOOLEAN', derived: { available: true }, score: 0.9 }) : undefined });
+    await agentNegotiation.ready();
     const spaces = new SharedSpaceService({ transport, crypto, security, local: keys, peers: [...this.keys.values()].filter(value => value.nodeId !== keys.nodeId), storage: new PersistentSharedSpaceStateStore(new FileTestStateStore(join(dataDir, 'shared-spaces.json')), keys) });
     await spaces.ready();
-    this.nodes.set(name, { name, dataDir, keys, messages, groups, messageStorage, graph, graphReplication, notifications, communities, communityReplication, privateCommunities, privateCommunityReplication, music, musicReplication, content, videos, videoContent, videoReplication, live, liveReplication, discovery, discoveryReplication, files, fileStorage, filePolicy, fileReplication, visits, agentSocial, spaces, transport, close: async () => { spaces.close(); agentSocial.close(); visits.close(); groups.close(); messages.close(); graphReplication.close(); communityReplication.close(); privateCommunityReplication.close(); musicReplication.close(); videoReplication.close(); liveReplication.close(); discoveryReplication.close(); fileReplication.close(); await transport.close(); } });
+    this.nodes.set(name, { name, dataDir, keys, messages, groups, messageStorage, graph, graphReplication, notifications, communities, communityReplication, privateCommunities, privateCommunityReplication, music, musicReplication, content, videos, videoContent, videoReplication, live, liveReplication, discovery, discoveryReplication, files, fileStorage, filePolicy, fileReplication, visits, agentSocial, agentNegotiation, spaces, workboards, workboardReplication, calendar, calendarReplication, transport, close: async () => { calendarReplication.close(); calendar.close(); workboards.close(); workboardReplication.close(); spaces.close(); agentNegotiation.close(); agentSocial.close(); visits.close(); groups.close(); messages.close(); graphReplication.close(); communityReplication.close(); privateCommunityReplication.close(); musicReplication.close(); videoReplication.close(); liveReplication.close(); discoveryReplication.close(); fileReplication.close(); await transport.close(); } });
   }
 }
 

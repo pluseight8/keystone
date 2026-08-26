@@ -1,9 +1,12 @@
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import { followObjectSchema, profileObjectSchema, type FollowObject, type ProfileObject, unsignedObject } from './object-model.js';
 import { SocialGraphService } from './graph.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
 
 export const SOCIAL_GRAPH_ENVELOPE = 'social.graph_object';
 const MAX_LIFETIME_MS = 10 * 60_000;
@@ -18,7 +21,7 @@ export class SocialGraphReplicationService {
   private readonly blocked = new Set<NodeId>();
   private acceptedCount = 0;
   private rejectedCount = 0;
-  constructor(private readonly transport: Transport, private readonly graph: SocialGraphService, private readonly crypto: CryptoProvider, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now(), private readonly options: SocialGraphReplicationOptions = {}) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly graph: SocialGraphService, private readonly crypto: CryptoProvider, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now(), private readonly options: SocialGraphReplicationOptions = {}, private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()))) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
   close(): void { this.unsubscribe(); }
   block(peer: NodeId): void { this.blocked.add(peer); }
   unblock(peer: NodeId): void { this.blocked.delete(peer); }
@@ -27,9 +30,11 @@ export class SocialGraphReplicationService {
     if (this.blocked.has(peer)) throw new Error('Blocked social graph peer rejected');
     if (object.visibility !== 'public') throw new Error('Social graph replication currently supports public objects only');
     const parsed = parseGraphObject(object); if (!parsed || !(await this.crypto.verify(canonicalJson(unsignedObject(parsed)), parsed.signature, parsed.author))) throw new Error('Invalid signed social graph object');
+    if (!(await this.eligible(parsed))) throw new Error('Social graph object failed mandatory SafetySurfaceGate');
     const unsigned: UnsignedEnvelope = { version: 1, type: SOCIAL_GRAPH_ENVELOPE, id: crypto.randomUUID(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + MAX_LIFETIME_MS).toISOString(), body: { object: parsed } };
     await this.transport.connect(peer); await this.transport.send(peer, { ...unsigned, signature: await this.security.sign(unsigned) });
   }
+  private async eligible(object: SocialGraphObject): Promise<boolean> { return (await this.protectedSurfaces.evaluate('PROFILES', { objectId: object.id, value: object, content: object.payload, text: JSON.stringify(object.payload), domain: 'PUBLIC', sourceType: 'profile', verified: true, authorized: true, sharing: true })) !== undefined; }
   private async receive(envelope: Envelope): Promise<void> {
     if (envelope.type !== SOCIAL_GRAPH_ENVELOPE || envelope.recipient !== this.local.nodeId || this.blocked.has(envelope.sender)) return;
     const expiresAt = Date.parse(envelope.expiresAt);

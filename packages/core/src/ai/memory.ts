@@ -11,6 +11,7 @@ import { ContextBudget, type AgentContextCandidate, type AgentContextSource, typ
 import type { AIContextItem, AIDataClass } from './privacy.js';
 import { LocalHashEmbeddingProvider, type EmbeddingProvider } from '../rag.js';
 import type { ChronosAction, ChronosRunContext, ChronosWorkflowRunner } from '../agents/chronos.js';
+import { SecretRedactionPolicy, secureRandomId } from '../security/secrets.js';
 
 export const MEMORY_VERSION = 1 as const;
 export const MEMORY_CHRONOS_PREFIX = 'keystone-memory-consolidation:';
@@ -571,6 +572,7 @@ type NormalizedCandidate = Omit<MemoryCandidate, 'explicit'> & { readonly id?: s
 type MutableMemoryEntry = { -readonly [K in keyof MemoryEntry]: MemoryEntry[K] };
 
 function normalizeCandidate(value: CreateMemoryInput | (MemoryCandidate & { readonly id?: string }), explicit: boolean): NormalizedCandidate {
+  if (SecretRedactionPolicy.containsManagedSecret(value)) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Managed secrets cannot be stored in Personal Memory');
   if (!value || !MEMORY_KINDS.includes(value.kind) || !MEMORY_ASSERTIONS.includes(value.assertion) || typeof value.summary !== 'string' || !value.summary.trim() || value.summary.length > 4_000 || !Array.isArray(value.sources) || !value.sources.length) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Invalid memory candidate');
   if (!AI_DATA_CLASSES.includes(value.privacyClass as AIDataClass)) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Invalid memory privacy class');
   if (value.value !== undefined && stringify(value.value).length > 64_000) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Memory value is too large');
@@ -594,7 +596,7 @@ function normalizeAutomaticCandidate(value: unknown, sourceMap: ReadonlyMap<stri
 
 function validateObservation(value: MemoryObservation): MemoryObservation | undefined {
   try {
-    if (!value || !safeId(value.id) || typeof value.text !== 'string' || !value.text.trim() || value.text.length > 32_000 || !AI_DATA_CLASSES.includes(value.dataClass) || !validTimestamp(value.occurredAt) || !validateSource(value.source)) return undefined;
+    if (!value || SecretRedactionPolicy.containsManagedSecret(value) || !safeId(value.id) || typeof value.text !== 'string' || !value.text.trim() || value.text.length > 32_000 || !AI_DATA_CLASSES.includes(value.dataClass) || !validTimestamp(value.occurredAt) || !validateSource(value.source)) return undefined;
     return { ...value, source: validateSource(value.source), text: value.text.trim(), importance: clamp01(value.importance ?? 0.5), sourceTrust: clamp01(value.sourceTrust ?? sourceTrust([value.source], !!value.explicit)) };
   } catch { return undefined; }
 }
@@ -615,6 +617,7 @@ function parseSnapshot(value: unknown): MemorySnapshot {
 
 function parseEntry(value: unknown): MemoryEntry {
   if (!value || typeof value !== 'object') throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Invalid memory entry');
+  if (SecretRedactionPolicy.containsManagedSecret(value)) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Managed secrets cannot be restored into Personal Memory');
   const entry = value as MemoryEntry;
   if (entry.version !== 1 || !safeId(entry.id) || !MEMORY_KINDS.includes(entry.kind) || !MEMORY_ASSERTIONS.includes(entry.assertion) || typeof entry.summary !== 'string' || !entry.summary.trim() || entry.summary.length > 4_000 || !validTimestamp(entry.createdAt) || !validTimestamp(entry.updatedAt) || !Array.isArray(entry.sources) || !entry.sources.length || !AI_DATA_CLASSES.includes(entry.privacyClass) || typeof entry.explicit !== 'boolean' || typeof entry.pinned !== 'boolean' || typeof entry.incorrect !== 'boolean' || !Array.isArray(entry.supersedes) || !Array.isArray(entry.supersededBy) || !Array.isArray(entry.conflictsWith) || !entry.supersedes.every(safeId) || !entry.supersededBy.every(safeId) || !entry.conflictsWith.every(safeId)) throw new MemoryPrivacyError('INVALID_CANDIDATE', 'Invalid memory entry');
   return clone({ ...entry, sources: uniqueSources(entry.sources.map(validateSource)), confidence: clamp01(entry.confidence), importance: clamp01(entry.importance), supersedes: uniqueIds(entry.supersedes), supersededBy: uniqueIds(entry.supersededBy), conflictsWith: uniqueIds(entry.conflictsWith) });
@@ -642,7 +645,7 @@ function clone<T>(value: T): T { return structuredClone(value); }
 function cloneValue(value: unknown): unknown { try { return structuredClone(value); } catch { return String(value); } }
 function normalizeVector(vector: readonly number[]): number[] { const values = vector.map(value => Number.isFinite(value) ? value : 0); const length = Math.sqrt(values.reduce((sum, value) => sum + value * value, 0)) || 1; return values.map(value => value / length); }
 function cosine(a: readonly number[], b: readonly number[]): number { if (a.length !== b.length) return 0; return Math.max(0, Math.min(1, a.reduce((sum, value, index) => sum + value * (b[index] ?? 0), 0))); }
-function randomId(): string { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function randomId(): string { return secureRandomId('memory'); }
 function fnv64(value: string): string { let hash = 14695981039346656037n; for (const byte of new TextEncoder().encode(value)) { hash ^= BigInt(byte); hash = BigInt.asUintN(64, hash * 1099511628211n); } return hash.toString(16).padStart(16, '0'); }
 function isPlainRecord(value: unknown): value is Record<string, unknown> { return Boolean(value) && typeof value === 'object' && !Array.isArray(value); }
 

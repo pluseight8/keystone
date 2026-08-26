@@ -1,6 +1,6 @@
 # Personal AI Mesh
 
-Phase 30 adds a private compute capability for trusted Keystone devices. A
+Personal AI Mesh provides a private compute capability for trusted Keystone devices. A
 model remains physically installed on the host (for example Ollama, LM Studio,
 or llama.cpp); a phone or tablet receives only model metadata and the signed,
 streamed inference result.
@@ -23,7 +23,7 @@ unchanged: a private task never falls back to OpenAI-compatible providers.
 
 ## Host and routing
 
-An advertisement contains only device identity, `AI_COMPUTE` capability, model
+The capability record contains only device identity, `AI_COMPUTE` capability, model
 references, context limits, vision/tool flags, online/busy state, queue length,
 and an expiry. It never contains model weights, prompts, context, API keys, or
 private database records. The host may load/unload a model through its local
@@ -53,5 +53,4 @@ The mobile AI settings screen separates:
 - `MY DEVICES` — `Trusted Personal Device` nodes discovered over Keystone P2P;
 - `EXTERNAL` — providers with no access to private Keystone context.
 
-No payments, ads, marketplace, compute economy, telemetry, mandatory cloud, or
-public stranger access is part of this layer.
+No public compute sharing, telemetry, or mandatory cloud is part of this layer.

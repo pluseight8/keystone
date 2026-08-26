@@ -20,9 +20,5 @@ public class KeystoneBrowserModule: Module {
       let script = """(() => { const values = (json); const selectors = {address:'[name="address"],#address',city:'[name="city"],#city',postalCode:'[name="postalCode"],#postalCode'}; for (const [key,value] of Object.entries(values)) { const el=document.querySelector(selectors[key]); if (!el) continue; el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); } })();"""
       try await webView?.evaluateJavaScript(script, in: nil, in: .page)
     }
-    AsyncFunction("evaluate") { (script: String) async throws -> Any? in
-      guard script.count <= 65536, !script.contains("document.cookie"), !script.contains("localStorage") else { throw NSError(domain:"KeystoneBrowser", code:6, userInfo:[NSLocalizedDescriptionKey:"Script is not allowed"]) }
-      return try await webView?.evaluateJavaScript(script, in: nil, in: .page)
-    }
   }
 }

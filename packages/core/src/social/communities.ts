@@ -26,6 +26,8 @@ import {
   unsignedObject,
 } from './object-model.js';
 import type { CommunityEvent, CommunityNotificationSettings, CommunityStorage } from './community-storage.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
 
 export interface CommunityMemberState { identity: NodeId; active: boolean; banned: boolean; muted: boolean; timeoutUntil?: string; roleIds: readonly string[]; }
 export interface CommunityProjection {
@@ -44,7 +46,19 @@ export interface CommunityChannelOptions { name: string; kind: 'text' | 'media' 
 /** Local-first, deterministic projection of signed community objects and moderation events. */
 export class CommunityService {
   private lastCreatedAt = 0;
-  constructor(private readonly storage: CommunityStorage, private readonly crypto: CryptoProvider, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now()) {}
+  private readonly storage: CommunityStorage;
+  constructor(storage: CommunityStorage, private readonly crypto: CryptoProvider, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now(), private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()))) {
+    this.storage = new Proxy(storage, {
+      get: (target, property, receiver) => {
+        if (property === 'save') return async (value: CommunityEvent): Promise<boolean> => {
+          if (!(await this.eventEligible(value))) throw new Error('Community object failed mandatory SafetySurfaceGate');
+          return target.save(value);
+        };
+        const resolved = Reflect.get(target, property, receiver);
+        return typeof resolved === 'function' ? resolved.bind(target) : resolved;
+      },
+    });
+  }
 
   async createCommunity(input: { name: string; description?: string; avatarUri?: string; bannerUri?: string; rules?: string; visibility?: 'private' | 'contacts' | 'public' }): Promise<CommunityObject> {
     const name = input.name.trim(); if (!name || name.length > 120) throw new Error('Invalid community name');
@@ -100,23 +114,23 @@ export class CommunityService {
       const projection = await this.projection(communityId); const community = projection?.community;
       if (!community) continue;
       if (community.deleted || await this.storage.isBlocked(community.author)) continue;
-      if (projection && (community.visibility === 'public' || projection.members.get(this.local.nodeId)?.active)) result.push(community);
+      if (projection && (community.visibility === 'public' || projection.members.get(this.local.nodeId)?.active) && await this.eventEligible(community)) result.push(community);
     }
     return result.sort((a, b) => a.payload.name.localeCompare(b.payload.name) || a.id.localeCompare(b.id));
   }
-  async event(eventId: string): Promise<CommunityEvent | undefined> { return (await this.storage.all()).find(value => value.id === eventId); }
+  async event(eventId: string): Promise<CommunityEvent | undefined> { const value = (await this.storage.all()).find(candidate => candidate.id === eventId); return value && await this.eventEligible(value) ? value : undefined; }
   /** Read-only event access for encrypted private-community bootstrap. */
-  async events(communityId: string): Promise<readonly CommunityEvent[]> { return this.storage.events(communityId); }
-  async invites(communityId: string): Promise<readonly CommunityInviteObject[]> { const projection = await this.requireProjection(communityId); await this.requireAnyPermission(projection, this.local.nodeId, ['invite_members', 'manage_members']); return (await this.storage.events(communityId)).filter((event): event is CommunityInviteObject => event.type === 'community_invite' && (!event.payload.expiresAt || Date.parse(event.payload.expiresAt) > this.now())).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)); }
+  async events(communityId: string): Promise<readonly CommunityEvent[]> { return this.safeEvents(communityId); }
+  async invites(communityId: string): Promise<readonly CommunityInviteObject[]> { const projection = await this.requireProjection(communityId); await this.requireAnyPermission(projection, this.local.nodeId, ['invite_members', 'manage_members']); return (await this.safeEvents(communityId)).filter((event): event is CommunityInviteObject => event.type === 'community_invite' && (!event.payload.expiresAt || Date.parse(event.payload.expiresAt) > this.now())).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)); }
   async pinnedMessages(communityId: string, channelId: string): Promise<readonly CommunityMessageObject[]> { const projection = await this.projection(communityId); if (!projection || !this.canViewProjection(projection, this.local.nodeId, channelId)) return []; const pins = projection.pinnedMessageIds; return (await this.messages(communityId, channelId)).filter(message => pins.has(message.payload.messageId) || pins.has(message.id)); }
-  async messages(communityId: string, channelId: string): Promise<readonly CommunityMessageObject[]> { const state = await this.derive(communityId); if (!state || !this.canViewProjection(state.projection, this.local.nodeId, channelId)) return []; return state.messages.filter(event => event.payload.channelId === channelId && !event.deleted); }
+  async messages(communityId: string, channelId: string): Promise<readonly CommunityMessageObject[]> { const state = await this.derive(communityId); if (!state || !this.canViewProjection(state.projection, this.local.nodeId, channelId)) return []; const values = state.messages.filter(event => event.payload.channelId === channelId && !event.deleted); return (await Promise.all(values.map(async event => await this.eventEligible(event) ? event : undefined))).filter((event): event is CommunityMessageObject => !!event); }
   async search(query: string, communityId?: string): Promise<readonly CommunitySearchResult[]> {
     const normalized = query.trim().toLocaleLowerCase(); if (!normalized) return [];
-    const values = await this.storage.all(); const ids = [...new Set(values.map(event => event.payload.communityId).filter((id): id is string => !communityId || id === communityId))];
+    const values = (await this.storage.all()).filter(value => !communityId || value.payload.communityId === communityId); const safeValues = (await Promise.all(values.map(async value => await this.eventEligible(value) ? value : undefined))).filter((value): value is CommunityEvent => !!value); const ids = [...new Set(safeValues.map(event => event.payload.communityId).filter((id): id is string => !communityId || id === communityId))];
     const visible = new Map<string, boolean>(); const blocked = new Set<NodeId>();
-    for (const event of values) if (await this.storage.isBlocked(event.author)) blocked.add(event.author);
+    for (const event of safeValues) if (await this.storage.isBlocked(event.author)) blocked.add(event.author);
     for (const id of ids) { const projection = await this.projection(id); visible.set(id, !!projection && (projection.community.visibility === 'public' || !!projection.members.get(this.local.nodeId)?.active)); }
-    return values
+    return safeValues
       .filter(event => (!communityId || event.payload.communityId === communityId) && visible.get(event.payload.communityId) === true && !event.deleted && !['community_member', 'community_moderation', 'community_report', 'community_invite'].includes(event.type))
       .filter(event => !blocked.has(event.author))
       .map(event => ({ event, haystack: JSON.stringify(event.payload).toLocaleLowerCase() }))
@@ -141,13 +155,15 @@ export class CommunityService {
       const root = existing.find(value => !value.supersedes);
       if (root && event.author !== root.author) return undefined;
     }
+    const eligible = await this.protectedSurfaces.evaluate('COMMUNITIES', { objectId: event.id, value: event, content: event.payload, text: JSON.stringify(event.payload), domain: event.visibility === 'public' ? 'PUBLIC' : 'COMMUNITY', sourceType: 'community', verified: true, authorized: true, sharing: true });
+    if (!eligible) return undefined;
     await this.storage.save(event); return event;
   }
   async projection(communityId: string): Promise<CommunityProjection | undefined> { return (await this.derive(communityId))?.projection; }
   async can(communityId: string, identity: NodeId, permission: CommunityPermission, channelId?: string): Promise<boolean> { const projection = await this.projection(communityId); return projection ? this.canProjection(projection, identity, permission, channelId) : false; }
 
   private async derive(communityId: string): Promise<{ projection: CommunityProjection; messages: readonly CommunityMessageObject[] } | undefined> {
-    const events = await this.storage.events(communityId); const communityEvents = events.filter((event): event is CommunityObject => event.type === 'community').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)); const root = communityEvents.find(event => !event.supersedes) ?? communityEvents[0]; const community = root ? communityEvents.filter(event => event.author === root.author).at(-1) : undefined; if (!community) return undefined;
+    const events = await this.safeEvents(communityId); const communityEvents = events.filter((event): event is CommunityObject => event.type === 'community').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)); const root = communityEvents.find(event => !event.supersedes) ?? communityEvents[0]; const community = root ? communityEvents.filter(event => event.author === root.author).at(-1) : undefined; if (!community) return undefined;
     const roles = new Map<string, RoleObject>(), channels = new Map<string, ChannelObject>(), categories = new Map<string, CommunityCategoryObject>(), members = new Map<NodeId, CommunityMemberState>(), messages: CommunityMessageObject[] = [], messageTombstones = new Set<string>(), pinnedMessageIds = new Set<string>(), auditLog: CommunityAuditEntry[] = []; members.set(community.author, { identity: community.author, active: !community.deleted, banned: false, muted: false, roleIds: [] });
     const allowed = (actor: NodeId, permission: CommunityPermission, channelId?: string) => this.canProjection({ community, roles, channels, categories, members, pinnedMessageIds, auditLog }, actor, permission, channelId);
     // Apply authority-bearing objects before dependent events. Peers may
@@ -189,6 +205,8 @@ export class CommunityService {
   private async publishMember(communityId: string, member: NodeId, action: CommunityMemberObject['payload']['action'], roleIds?: readonly string[], reason?: string, timeoutUntil?: string, inviteId?: string): Promise<CommunityMemberObject> { const createdAt = this.date(); const moderation = ['kick', 'ban', 'unban', 'mute', 'unmute', 'timeout'].includes(action); const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'community_member' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt, visibility: 'community' as const, references: [{ id: communityId, type: 'community' as const }], payload: { communityId, member, action, ...(roleIds ? { roleIds: [...roleIds] } : {}), ...(inviteId ? { inviteId } : {}), ...(reason ? { reason } : {}), ...(moderation ? { timestamp: createdAt } : {}), ...(timeoutUntil ? { timeoutUntil } : {}) } }; const object = communityMemberObjectSchema.parse({ ...unsigned, signature: await this.sign(unsigned) }); await this.storage.save(object); return object; }
   private async publishModeration(payload: CommunityModerationObject['payload']): Promise<CommunityModerationObject> { const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'community_moderation' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt: this.date(), visibility: 'community' as const, references: [{ id: payload.communityId, type: 'community' as const }, ...(payload.targetMessageId ? [{ id: payload.targetMessageId, type: 'community_message' as const }] : [])], payload: { ...payload, timestamp: payload.timestamp ?? this.date() } }; const object = communityModerationObjectSchema.parse({ ...unsigned, signature: await this.sign(unsigned) }); await this.storage.save(object); return object; }
   private async assertMessage(communityId: string, channelId: string, messageId: string): Promise<CommunityMessageObject> { const message = (await this.messages(communityId, channelId)).find(value => value.payload.messageId === messageId || value.id === messageId); if (!message) throw new Error('Unknown community message'); return message; }
+  private async safeEvents(communityId: string): Promise<readonly CommunityEvent[]> { const values = await this.storage.events(communityId); return (await Promise.all(values.map(async value => await this.eventEligible(value) ? value : undefined))).filter((value): value is CommunityEvent => !!value); }
+  private async eventEligible(event: CommunityEvent): Promise<boolean> { const domain = event.visibility === 'public' ? 'PUBLIC' as const : 'COMMUNITY' as const; return (await this.protectedSurfaces.evaluate('COMMUNITIES', { objectId: event.id, value: event, content: event.payload, text: JSON.stringify(event.payload), domain, sourceType: 'community', verified: true, authorized: true, sharing: true })) !== undefined; }
   private sign(value: object): Promise<string> { return this.crypto.sign(canonicalJson(value), this.local.privateKey); }
   private date(): string { this.lastCreatedAt = Math.max(this.now(), this.lastCreatedAt + 1); return new Date(this.lastCreatedAt).toISOString(); }
 }

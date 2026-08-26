@@ -1,6 +1,6 @@
 # Agent visits
 
-Phase 36 adds a small, additive visit protocol over the existing signed
+Agent visits provide a small, additive protocol over the existing signed
 Keystone `Transport` (Hyperswarm/Noise in production). It is not a new agent
 runtime, relay or server. `AgentVisitService` owns only the visit lifecycle and
 the capability boundary; a host can adapt its existing `AgentRuntime` and

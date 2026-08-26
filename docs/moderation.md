@@ -1,6 +1,6 @@
 # Community moderation
 
-Moderation is local-first and signed. There is no central moderation backend, global report queue, advertising, payment or monetization path.
+Moderation is local-first and signed. There is no central moderation backend or global report queue.
 
 `CommunityService` enforces owner/admin/mod/member permissions in core. Actions such as kick, ban, unban, mute, timeout, message deletion and pinning carry an actor (object author), target, reason and immutable timestamp. The owner cannot be removed or banned. An ordinary member cannot grant a role, invite, manage channels, pin, announce or moderate by constructing a UI request or replaying another event.
 

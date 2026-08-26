@@ -6,14 +6,19 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./sdk": "./src/sdk.ts",
     "./manifest.schema.json": "./manifest.schema.json"
   },
   "scripts": {
     "test": "vitest run",
+    "test:security": "vitest run src/plugin-platform.test.ts src/plugin-sandbox-supply-chain.test.ts src/plugin-security.test.ts src/plugin-distribution.test.ts src/engine.test.ts src/plugin-native-host.test.ts",
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@keystone/native-host": "workspace:*"
   }
 }

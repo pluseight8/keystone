@@ -1,9 +1,13 @@
-import type { Transport } from '../transport.js';
+import type { ConnectivityFabric, KeystoneDeliveryInterface } from '../connectivity.js';
 import { parseAIModelRef, type AIOrchestrationMode, type AISettingsModel } from '../ai/privacy.js';
+import type { OwnerAuthorityService, SettingsMutationIntent } from './owner-authority.js';
+import { DEFAULT_DAILY_LAYER_SETTINGS, DEFAULT_STARTUP_SURFACE, parseDailySettings, parseStartupSurfacePreference } from '../daily-layer.js';
+import type { DailyLayerSettings, StartupSurfacePreference } from '../daily-layer.js';
 
 export type SettingsLanguage = 'en' | 'ru';
 export type SettingsTheme = 'system' | 'light' | 'dark';
 export type ProfileVisibility = 'public' | 'contacts' | 'private';
+export type SettingsNearbyResourceProfile = 'BALANCED' | 'BATTERY_SAVER' | 'HIGH_AVAILABILITY';
 
 /**
  * User-controlled, device-local settings.  This state is deliberately kept
@@ -26,6 +30,7 @@ export interface KeystoneSettings {
     offlineMode: boolean;
     bandwidthLimitBytesPerSecond: number;
     maxParallelTransfers: number;
+    nearbyResourceProfile: SettingsNearbyResourceProfile;
   };
   notifications: {
     enabled: boolean;
@@ -46,6 +51,10 @@ export interface KeystoneSettings {
   };
   appearance: { language: SettingsLanguage; theme: SettingsTheme };
   storage: { quotaBytes: number };
+  /** Local-only Daily Layer projection preferences. */
+  daily: DailyLayerSettings;
+  /** Local-only startup preference; it never grants object access. */
+  startup: StartupSurfacePreference;
 }
 
 export interface SettingsStorage { read(): Promise<unknown | undefined>; write(value: unknown): Promise<void>; }
@@ -66,10 +75,13 @@ export interface SettingsRuntimeBindings {
   setMediaAutoplay?(enabled: boolean): void | Promise<void>;
   setMaxParallelTransfers?(value: number): void | Promise<void>;
   setBandwidthLimit?(value: number): void | Promise<void>;
+  setNearbyResourceProfile?(value: SettingsNearbyResourceProfile): void | Promise<void>;
   setNotificationsEnabled?(enabled: boolean): void | Promise<void>;
   setNotificationMutes?(value: KeystoneSettings['notifications']): void | Promise<void>;
   setStorageQuota?(value: number): void | Promise<void>;
   setAIOrchestrationMode?(mode: AIOrchestrationMode): void | Promise<void>;
+  setDailyLayerSettings?(value: DailyLayerSettings): void | Promise<void>;
+  setStartupSurface?(value: StartupSurfacePreference): void | Promise<void>;
 }
 
 export interface CoreSettingsTargets {
@@ -78,9 +90,12 @@ export interface CoreSettingsTargets {
   notifications?: { setEnabled(enabled: boolean): void; applySettings?(value: KeystoneSettings['notifications']): Promise<void> };
   transfers?: { setMaxParallelTransfers(value: number): void; setBandwidthLimit(value: number): void };
   transport?: { setOfflineMode(enabled: boolean): void };
+  nearby?: { setResourceProfile(profile: SettingsNearbyResourceProfile): void | Promise<void> };
   cache?: { setQuotaBytes(value: number): void };
   media?: { setAutoplay(enabled: boolean): void; setPrefetch(enabled: boolean): void };
   ai?: { setOrchestrationMode(mode: AIOrchestrationMode): void };
+  daily?: { setSettings(value: DailyLayerSettings): void | Promise<void> };
+  startup?: { setSurface(value: StartupSurfacePreference): void | Promise<void> };
 }
 
 /** Host-neutral media policy used by audio/video/short/live adapters. */
@@ -103,12 +118,15 @@ export function bindCoreSettings(settings: SettingsService, targets: CoreSetting
     setPresence: enabled => targets.messaging?.setPresenceEnabled(enabled),
     setMaxParallelTransfers: value => targets.transfers?.setMaxParallelTransfers(value),
     setBandwidthLimit: value => targets.transfers?.setBandwidthLimit(value),
+    setNearbyResourceProfile: value => targets.nearby?.setResourceProfile(value),
     setNotificationsEnabled: enabled => targets.notifications?.setEnabled(enabled),
     setNotificationMutes: value => targets.notifications?.applySettings?.(value),
     setStorageQuota: value => targets.cache?.setQuotaBytes(value),
     setMediaAutoplay: enabled => targets.media?.setAutoplay(enabled),
     setMediaPrefetch: enabled => targets.media?.setPrefetch(enabled),
     setAIOrchestrationMode: mode => targets.ai?.setOrchestrationMode(mode),
+    setDailyLayerSettings: value => targets.daily?.setSettings(value),
+    setStartupSurface: value => targets.startup?.setSurface(value),
   });
 }
 
@@ -116,14 +134,23 @@ export type SettingsPatch = {
   [K in keyof Omit<KeystoneSettings, 'version'>]?: Partial<KeystoneSettings[K]>;
 };
 
+export interface AuthorizedSettingsMutationOptions {
+  readonly authority: OwnerAuthorityService;
+  readonly intent: SettingsMutationIntent;
+  readonly confirmed?: boolean;
+  readonly doubleConfirmed?: boolean;
+}
+
 export const DEFAULT_KEYSTONE_SETTINGS: KeystoneSettings = {
   version: 1,
   privacy: { profileVisibility: 'public', discoveryParticipation: true, presence: true, typingIndicators: true, readReceipts: true, mediaAutoplay: true, mediaPrefetch: true, localHistory: true },
-  network: { offlineMode: false, bandwidthLimitBytesPerSecond: 0, maxParallelTransfers: 3 },
+  network: { offlineMode: false, bandwidthLimitBytesPerSecond: 0, maxParallelTransfers: 3, nearbyResourceProfile: 'BALANCED' },
   notifications: { enabled: true, mutedCategories: [], mutedUsers: [], mutedCommunities: [] },
   ai: { localEnabled: false, allowLocalIndexing: true, remoteEnabled: true, models: [], defaultModel: null, fallbacks: [], contextLimits: {}, personalTarget: 'automatic', orchestrationMode: 'balanced' },
   appearance: { language: 'en', theme: 'system' },
   storage: { quotaBytes: 512 * 1024 * 1024 },
+  daily: structuredClone(DEFAULT_DAILY_LAYER_SETTINGS),
+  startup: structuredClone(DEFAULT_STARTUP_SURFACE),
 };
 
 /** Validated local settings with an explicit adapter boundary into core. */
@@ -143,8 +170,16 @@ export class SettingsService {
   async bind(bindings: SettingsRuntimeBindings): Promise<void> { await this.ready(); this.binding = bindings; await this.apply(this.state); }
   async update(patch: SettingsPatch): Promise<Readonly<KeystoneSettings>> {
     await this.ready();
-    const next = parseSettings({ ...this.state, ...patch, privacy: { ...this.state.privacy, ...(patch.privacy ?? {}) }, network: { ...this.state.network, ...(patch.network ?? {}) }, notifications: { ...this.state.notifications, ...(patch.notifications ?? {}) }, ai: { ...this.state.ai, ...(patch.ai ?? {}) }, appearance: { ...this.state.appearance, ...(patch.appearance ?? {}) }, storage: { ...this.state.storage, ...(patch.storage ?? {}) } });
+    const next = parseSettings({ ...this.state, ...patch, privacy: { ...this.state.privacy, ...(patch.privacy ?? {}) }, network: { ...this.state.network, ...(patch.network ?? {}) }, notifications: { ...this.state.notifications, ...(patch.notifications ?? {}) }, ai: { ...this.state.ai, ...(patch.ai ?? {}) }, appearance: { ...this.state.appearance, ...(patch.appearance ?? {}) }, storage: { ...this.state.storage, ...(patch.storage ?? {}) }, daily: { ...this.state.daily, ...(patch.daily ?? {}), sources: { ...this.state.daily.sources, ...(patch.daily?.sources ?? {}) }, briefTimes: { ...this.state.daily.briefTimes, ...(patch.daily?.briefTimes ?? {}) } }, startup: { ...this.state.startup, ...(patch.startup ?? {}) } });
     this.state = next; await this.persist(); await this.apply(next); this.listeners.forEach(listener => listener(this.snapshot())); return this.snapshot();
+  }
+  /**
+   * Model/agent/plugin callers must use this explicit boundary. The legacy
+   * `update` method remains the owner-facing UI adapter; it is not an AI API.
+   */
+  async updateByAuthority(patch: SettingsPatch, options: AuthorizedSettingsMutationOptions): Promise<Readonly<KeystoneSettings>> {
+    await options.authority.assertMutation(options.intent, { confirmed: options.confirmed, doubleConfirmed: options.doubleConfirmed });
+    return this.update(patch);
   }
   async set<K extends keyof Omit<KeystoneSettings, 'version'>>(section: K, value: KeystoneSettings[K]): Promise<Readonly<KeystoneSettings>> { return this.update({ [section]: value } as SettingsPatch); }
   private async hydrate(): Promise<void> { const value = await this.storage.read(); this.state = parseSettings(value ? { ...DEFAULT_KEYSTONE_SETTINGS, ...(value as object) } : DEFAULT_KEYSTONE_SETTINGS); }
@@ -153,8 +188,8 @@ export class SettingsService {
     const b = this.binding; if (!b) return;
     await b.setOfflineMode?.(value.network.offlineMode); await b.setDiscoveryParticipation?.(value.privacy.discoveryParticipation); await b.setLocalHistory?.(value.privacy.localHistory);
     await b.setTypingIndicators?.(value.privacy.typingIndicators); await b.setReadReceipts?.(value.privacy.readReceipts); await b.setPresence?.(value.privacy.presence); await b.setMediaPrefetch?.(value.privacy.mediaPrefetch); await b.setMediaAutoplay?.(value.privacy.mediaAutoplay);
-    await b.setMaxParallelTransfers?.(value.network.maxParallelTransfers); await b.setBandwidthLimit?.(value.network.bandwidthLimitBytesPerSecond); await b.setNotificationsEnabled?.(value.notifications.enabled); await b.setNotificationMutes?.(value.notifications); await b.setStorageQuota?.(value.storage.quotaBytes);
-    await b.setAIOrchestrationMode?.(value.ai.orchestrationMode);
+    await b.setMaxParallelTransfers?.(value.network.maxParallelTransfers); await b.setBandwidthLimit?.(value.network.bandwidthLimitBytesPerSecond); await b.setNearbyResourceProfile?.(value.network.nearbyResourceProfile); await b.setNotificationsEnabled?.(value.notifications.enabled); await b.setNotificationMutes?.(value.notifications); await b.setStorageQuota?.(value.storage.quotaBytes);
+    await b.setAIOrchestrationMode?.(value.ai.orchestrationMode); await b.setDailyLayerSettings?.(value.daily); await b.setStartupSurface?.(value.startup);
   }
 }
 
@@ -168,10 +203,11 @@ export interface NetworkDiagnosticsSnapshot {
   bandwidthLimitBytesPerSecond: number;
 }
 export class NetworkDiagnosticsService {
-  constructor(private readonly transport: Pick<Transport, 'isPeerConnected'>, private readonly settings?: SettingsService, private readonly providers: () => readonly string[] = () => []) {}
+  constructor(private readonly transport: Pick<KeystoneDeliveryInterface, 'isPeerConnected'>, private readonly settings?: SettingsService, private readonly providers: () => readonly string[] = () => [], private readonly fabric?: ConnectivityFabric) {}
   async snapshot(knownPeers: readonly string[] = []): Promise<NetworkDiagnosticsSnapshot> {
     const settings = this.settings?.snapshot(); const connectedPeers = knownPeers.filter(peer => this.transport.isPeerConnected?.(peer));
-    return { state: settings?.network.offlineMode ? 'offline' : 'online', connectedPeers, hyperswarm: true, activeTransfers: this.providers().length, maxParallelTransfers: settings?.network.maxParallelTransfers ?? 3, bandwidthLimitBytesPerSecond: settings?.network.bandwidthLimitBytesPerSecond ?? 0 };
+    const fabricState = this.fabric?.snapshot();
+    return { state: settings?.network.offlineMode ? 'offline' : fabricState?.state === 'DEVICE_ONLY' ? 'offline' : 'online', connectedPeers, hyperswarm: fabricState?.availableProviders.some(id => this.fabric?.provider(id)?.type === 'InternetTransport') ?? false, activeTransfers: this.providers().length, maxParallelTransfers: settings?.network.maxParallelTransfers ?? 3, bandwidthLimitBytesPerSecond: settings?.network.bandwidthLimitBytesPerSecond ?? 0 };
   }
 }
 
@@ -187,11 +223,13 @@ export function parseSettings(value: unknown): KeystoneSettings {
     ai: { ...DEFAULT_KEYSTONE_SETTINGS.ai, ...(candidate.ai ?? {}) },
     appearance: { ...DEFAULT_KEYSTONE_SETTINGS.appearance, ...(candidate.appearance ?? {}) },
     storage: { ...DEFAULT_KEYSTONE_SETTINGS.storage, ...(candidate.storage ?? {}) },
+    daily: parseDailySettings(candidate.daily ?? DEFAULT_DAILY_LAYER_SETTINGS),
+    startup: parseStartupSurfacePreference(candidate.startup ?? DEFAULT_STARTUP_SURFACE),
   };
   if (merged.version !== 1) throw new Error('Unsupported Keystone settings version');
   if (!['public', 'contacts', 'private'].includes(merged.privacy.profileVisibility)) throw new Error('Invalid profile visibility');
   for (const key of ['discoveryParticipation', 'presence', 'typingIndicators', 'readReceipts', 'mediaAutoplay', 'mediaPrefetch', 'localHistory'] as const) if (typeof merged.privacy[key] !== 'boolean') throw new Error(`Invalid privacy setting: ${key}`);
-  if (typeof merged.network.offlineMode !== 'boolean' || !Number.isInteger(merged.network.maxParallelTransfers) || merged.network.maxParallelTransfers < 1 || merged.network.maxParallelTransfers > 16 || !Number.isFinite(merged.network.bandwidthLimitBytesPerSecond) || merged.network.bandwidthLimitBytesPerSecond < 0) throw new Error('Invalid network settings');
+  if (typeof merged.network.offlineMode !== 'boolean' || !Number.isInteger(merged.network.maxParallelTransfers) || merged.network.maxParallelTransfers < 1 || merged.network.maxParallelTransfers > 16 || !Number.isFinite(merged.network.bandwidthLimitBytesPerSecond) || merged.network.bandwidthLimitBytesPerSecond < 0 || !['BALANCED', 'BATTERY_SAVER', 'HIGH_AVAILABILITY'].includes(merged.network.nearbyResourceProfile)) throw new Error('Invalid network settings');
   if (typeof merged.notifications.enabled !== 'boolean' || !Array.isArray(merged.notifications.mutedCategories) || !Array.isArray(merged.notifications.mutedUsers) || !Array.isArray(merged.notifications.mutedCommunities)) throw new Error('Invalid notification settings');
   if (typeof merged.ai.localEnabled !== 'boolean' || typeof merged.ai.allowLocalIndexing !== 'boolean' || typeof merged.ai.remoteEnabled !== 'boolean' || typeof merged.ai.personalTarget !== 'string' || !merged.ai.personalTarget.trim() || !['private-only', 'balanced', 'local-preferred'].includes(merged.ai.orchestrationMode) || !Array.isArray(merged.ai.models) || !merged.ai.models.every(model => isAISettingsModel(model)) || !(merged.ai.defaultModel === null || (typeof merged.ai.defaultModel === 'string' && validModelRef(merged.ai.defaultModel))) || !Array.isArray(merged.ai.fallbacks) || !merged.ai.fallbacks.every(ref => typeof ref === 'string' && validModelRef(ref)) || !merged.ai.contextLimits || typeof merged.ai.contextLimits !== 'object' || Array.isArray(merged.ai.contextLimits) || !Object.values(merged.ai.contextLimits as Record<string, unknown>).every(value => Number.isSafeInteger(value) && (value as number) > 0) || !['en', 'ru'].includes(merged.appearance.language) || !['system', 'light', 'dark'].includes(merged.appearance.theme) || !Number.isInteger(merged.storage.quotaBytes) || merged.storage.quotaBytes < 0) throw new Error('Invalid settings');
   return structuredClone(merged) as KeystoneSettings;

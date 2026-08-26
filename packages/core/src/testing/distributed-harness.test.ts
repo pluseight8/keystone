@@ -28,6 +28,18 @@ class BytesProvider implements ContentProvider {
 }
 
 describe('distributed harness: production protocol services over a controlled transport boundary', () => {
+  it('replicates a generic shared Calendar with offline delivery, RSVP, privacy and restart state', async () => {
+    const network = await harness(['alice', 'bob', 'charlie', 'mallory']); const alice = network.node('alice'); const bob = network.node('bob'); const charlie = network.node('charlie'); const mallory = network.node('mallory');
+    const calendar = await alice.calendar.createCalendar({ id: 'calendar-phase51', name: 'Project schedule', visibility: 'shared', timezone: 'Europe/Moscow', members: [{ identityId: bob.keys.nodeId, role: 'editor', disclosure: 'FULL_EVENT' }, { identityId: charlie.keys.nodeId, role: 'viewer', disclosure: 'FREE_BUSY' }] }); await settle();
+    expect((await bob.calendar.getCalendar(calendar.id, bob.keys.nodeId))?.id).toBe(calendar.id);
+    const event = await alice.calendar.createEvent(calendar.id, { id: 'calendar-event-phase51', title: 'Design review', description: 'Shared details', start: '2026-08-20T10:00:00.000Z', end: '2026-08-20T11:00:00.000Z', visibility: 'shared', participants: [{ identityId: bob.keys.nodeId }] }); await settle();
+    expect((await bob.calendar.getEvent(event.id, bob.keys.nodeId))?.title).toBe('Design review'); expect((await charlie.calendar.getEvent(event.id, charlie.keys.nodeId))?.title).toBe('BUSY');
+    const rsvp = await bob.calendar.respond(event.id, 'ACCEPTED'); await settle(); await alice.calendarReplication.flush(bob.keys.nodeId); expect((await alice.calendar.getEvent(event.id))?.participants.find(value => value.identityId === bob.keys.nodeId)?.rsvp).toBe('ACCEPTED'); void rsvp;
+    network.network.setOnline(bob.keys.nodeId, false); const offlineEvent = await alice.calendar.createEvent(calendar.id, { id: 'calendar-event-offline', title: 'Offline delivery', start: '2026-08-21T10:00:00.000Z', end: '2026-08-21T11:00:00.000Z' }); expect(alice.calendarReplication.pendingCount(bob.keys.nodeId)).toBeGreaterThan(0); network.network.setOnline(bob.keys.nodeId, true); await alice.calendarReplication.flush(bob.keys.nodeId); await settle(); expect((await bob.calendar.getEvent(offlineEvent.id, bob.keys.nodeId))?.id).toBe(offlineEvent.id);
+    const replay = network.network.history().find(value => value.envelope.type === 'social.calendar' && (value.envelope.body as { targetId?: string }).targetId === offlineEvent.id); expect(replay).toBeDefined(); if (replay) network.network.inject(bob.keys.nodeId, replay.envelope); await settle(); expect((await bob.calendar.getEvent(offlineEvent.id, bob.keys.nodeId))?.title).toBe('Offline delivery');
+    const restartedBob = await network.restart('bob'); expect((await restartedBob.calendar.getEvent(offlineEvent.id, restartedBob.keys.nodeId))?.id).toBe(offlineEvent.id); await expect(charlie.calendar.getEvent(event.id, mallory.keys.nodeId)).resolves.toBeUndefined(); await network.close();
+  });
+
   it('resolves an authorized Alice context across a replicated DM and Shared Space task', async () => {
     const network = await harness(['alice', 'bob', 'mallory']); const alice = network.node('alice'), bob = network.node('bob'), mallory = network.node('mallory');
     const conversation = await alice.messages.createConversation(bob.keys.nodeId); await settle();
@@ -86,6 +98,18 @@ describe('distributed harness: production protocol services over a controlled tr
     const restartedBob = await network.restart('bob'); expect((await restartedBob.agentSocial.listInbox()).some(value => value.taskId === task.taskId)).toBe(true);
     await restartedBob.agentSocial.setTrustPolicy({ blockedIdentityIds: [mallory.keys.nodeId] }); const spoof = await mallory.agentSocial.createTask({ recipient: bobRef, taskType: 'custom', prompt: 'spoof', explicitContext: [{ id: 'x', label: 'x', value: 'x', dataClass: 'PUBLIC' }] }); await mallory.agentSocial.flush(bob.keys.nodeId); await settle(); expect((await restartedBob.agentSocial.listInbox()).some(value => value.taskId === spoof.taskId)).toBe(false); expect(restartedBob.agentSocial.audit().some(value => value.outcome === 'denied')).toBe(true);
     await network.close();
+  });
+
+  it('reaches a private-constraint consensus through the asynchronous negotiation service', async () => {
+    const network = await harness(['alice', 'bob', 'charlie', 'mallory']); const alice = network.node('alice'), bob = network.node('bob'), charlie = network.node('charlie');
+    network.network.setOnline(bob.keys.nodeId, false);
+    const session = await alice.agentNegotiation.createSession({ title: 'Common meeting window', category: 'coordination', participants: [{ agentId: 'bob-agent', identityId: bob.keys.nodeId }, { agentId: 'charlie-agent', identityId: charlie.keys.nodeId }], strategy: 'UNANIMOUS', disclosureDefault: 'BOOLEAN', constraints: [{ id: 'calendar', label: 'Local calendar availability', dataClass: 'PRIVATE', disclosure: 'RANGE', localOnly: true }] });
+    const proposal = await alice.agentNegotiation.propose(session.id, { options: [{ id: 'fri-18', label: 'Friday 18:00', dataClass: 'PUBLIC' }, { id: 'sat-18', label: 'Saturday 18:00', dataClass: 'PUBLIC' }] });
+    expect((await alice.agentSocial.snapshot()).outbox.length).toBeGreaterThan(0);
+    network.network.setOnline(bob.keys.nodeId, true); await alice.agentNegotiation.flush(); await eventually(async () => (await charlie.agentNegotiation.listResponses(session.id)).length === 1); await eventually(async () => (await bob.agentNegotiation.listResponses(session.id)).length === 1); await bob.agentNegotiation.flush(alice.keys.nodeId); await settle();
+    const result = await alice.agentNegotiation.finalize(session.id); expect(result.status).toBe('completed'); expect(result.selectedOptionIds).toEqual(['sat-18']); await settle();
+    expect((await bob.agentNegotiation.listResults()).some(value => value.id === result.id)).toBe(true); expect(JSON.stringify(network.network.history())).not.toContain('calendar-private-value'); expect(JSON.stringify(await bob.agentNegotiation.snapshot())).not.toContain('calendar-private-value');
+    const restartedBob = await network.restart('bob'); expect((await restartedBob.agentNegotiation.listResults()).some(value => value.id === result.id)).toBe(true); expect((await restartedBob.agentNegotiation.listProposals(session.id)).some(value => value.id === proposal.id)).toBe(true); await network.close();
   });
 
   it('replicates Shared Space CRDT edits, encrypted epochs, agent grants, and durable restart state', async () => {
@@ -381,5 +405,22 @@ describe('distributed harness: production protocol services over a controlled tr
     const partialCache = new ContentCache(source.length * 2); let onlyAlice = true; const partialDirectory: FileProviderDirectory = { async manifest() { return imported.manifest; }, async providers() { return onlyAlice ? [failingAlice] : [healthyCharlie]; } }; const partialTransfer = new FileTransferManager(partialCache, partialDirectory, undefined, 1); await expect(partialTransfer.download(received!, { maxParallel: 1 })).rejects.toThrow(); expect(partialCache.missing(imported.manifest)).toContain(2); onlyAlice = false; expect(await partialTransfer.resume(received!)).toEqual(source); expect(healthyCharlie.calls).toBeGreaterThan(0);
     const wire = network.network.history().find(value => value.envelope.type === 'social.file_object' && value.to === bob.keys.nodeId); expect(wire).toBeDefined(); if (wire) { network.network.inject(bob.keys.nodeId, wire.envelope); network.network.inject(bob.keys.nodeId, wire.envelope); await settle(); }
     const restartedBob = await network.restart('bob'); expect((await restartedBob.files.get(imported.file.id))?.id).toBe(imported.file.id); expect(await mallory.files.get(imported.file.id)).toBeUndefined(); await network.close();
+  });
+
+  it('runs durable Agent Workboard claims and offline reconnect through authenticated Transport', async () => {
+    const network = await harness(['alice', 'bob', 'charlie', 'mallory']); const alice = network.node('alice'), bob = network.node('bob'), mallory = network.node('mallory');
+    network.network.setOnline(bob.keys.nodeId, false);
+    const board = await alice.workboards.createWorkboard({ id: 'integration-workboard', title: 'Keystone release', members: [{ identityId: bob.keys.nodeId, role: 'editor', joinedAt: new Date().toISOString() }], allowedDataScopes: [{ dataClasses: ['PUBLIC'] }] });
+    const first = await alice.workboards.createWorkItem(board.id, { id: 'integration-prepare', title: 'Prepare', objective: 'prepare release notes', dataScopes: [{ dataClasses: ['PUBLIC'] }] });
+    const second = await alice.workboards.createWorkItem(board.id, { id: 'integration-publish', title: 'Publish', objective: 'publish after prepare', dataScopes: [{ dataClasses: ['PUBLIC'] }] });
+    await alice.workboards.addDependency(board.id, second.id, first.id);
+    expect(await bob.workboards.getBoard(board.id)).toBeUndefined();
+    network.network.setOnline(bob.keys.nodeId, true); await alice.workboardReplication.flush(bob.keys.nodeId); await settle();
+    expect((await bob.workboards.getBoard(board.id))?.id).toBe(board.id); expect((await bob.workboards.getWorkItem(board.id, second.id))?.status).toBe('BLOCKED');
+    const claim = await bob.workboards.claimWorkItem(board.id, first.id, { actor: { kind: 'human', id: bob.keys.nodeId }, executionKey: 'bob-release-1' }); await settle(); expect((await alice.workboards.listClaims(board.id)).some(value => value.id === claim.id)).toBe(true);
+    await bob.workboards.releaseClaim(claim.id, { kind: 'human', id: bob.keys.nodeId }, 'completed'); await settle(); expect((await alice.workboards.getWorkItem(board.id, second.id))?.status).toBe('READY');
+    const forged = { version: 1 as const, id: crypto.randomUUID(), boardId: board.id, actor: { kind: 'human' as const, id: mallory.keys.nodeId }, operation: 'item.upsert' as const, targetId: first.id, revision: 99, payload: { ...(await alice.workboards.getWorkItem(board.id, first.id))!, revision: 99 }, createdAt: new Date().toISOString(), signature: 'invalid' };
+    await expect(mallory.workboards.applyEvent(forged)).rejects.toMatchObject({ code: 'INVALID_SIGNATURE' });
+    const restarted = await network.restart('bob'); expect((await restarted.workboards.getBoard(board.id))?.id).toBe(board.id); expect((await restarted.workboards.getWorkItem(board.id, second.id))?.status).toBe('READY'); await network.close();
   });
 });

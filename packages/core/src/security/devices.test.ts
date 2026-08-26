@@ -31,4 +31,11 @@ describe('trusted devices and security center', () => {
     expect(await owner.acceptAuthorization(valid)).toBe(false);
     const summary = await owner.securitySummary(); expect(summary.recovery.revealRequired).toBe(true); expect('privateKey' in summary).toBe(false); expect((await owner.events.stats()).suspicious).toBeGreaterThan(0);
   });
+
+  it('redacts secret-shaped security-event metadata before durable audit', async () => {
+    const events = new SecurityEventLog(new InMemorySecurityEventStorage()); await events.ready();
+    await events.record({ kind: 'spoof_attempt', reason: 'invalid request', metadata: { apiKey: 'should-not-persist', detail: 'safe' } });
+    const value = (await events.list())[0]!;
+    expect(value.metadata).toEqual({ apiKey: '[REDACTED_SECRET]', detail: 'safe' });
+  });
 });

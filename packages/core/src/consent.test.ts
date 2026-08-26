@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { DoubleConfirmation, SodiumCryptoProvider } from './index.js';
+import { DoubleConfirmation } from './index.js';
+import { SodiumCryptoProvider } from './crypto.js';
 import { testCrypto } from './testing.js';
 describe('DoubleConfirmation', () => {
   it('requires valid Ed25519 signatures and consumes the nonce once', async () => { const now = Date.now(); const crypto = new SodiumCryptoProvider(); const owner = await crypto.generateIdentity(); const requester = await crypto.generateIdentity(); const flow = new DoubleConfirmation(crypto, [], () => now); const r = await flow.create({ requester: requester.publicKey, owner: owner.publicKey, fields: ['address'], purpose: 'delivery', actionHash: await crypto.actionHash({ product: 'pizza' }), expiresAt: new Date(now + 10_000).toISOString() }); const a = await flow.approveOwner(r, owner.publicKey, owner.privateKey); const b = await flow.approveRequester(r, requester.publicKey, requester.privateKey); expect(await flow.authorize(r, a, b)).toBe(true); expect(await flow.authorize(r, a, b)).toBe(false); });

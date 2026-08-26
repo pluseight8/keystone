@@ -1,4 +1,4 @@
-# Единая главная, discovery и ранжирование (Phase 21)
+# Единая главная, discovery и ранжирование
 
 `UnifiedDiscoveryService` использует один локальный граф объектов для Home, Following, Communities, Search, ссылок в чате и ссылок в сообществах. Один ID Track/Video/Short/Live не дублируется между поверхностями. Short — это Video с `shortForm.aspectRatio === "9:16"`.
 

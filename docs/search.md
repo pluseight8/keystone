@@ -4,7 +4,7 @@ Keystone Search is a local-first view over objects already known to the device. 
 
 ## Three scopes
 
-- **Local Search** — profiles, communities, Tracks, Albums, Playlists, Videos/Shorts, Live broadcasts, Posts, and permitted messages held locally. A private message can be indexed only by an already-authorized local caller; it is never put in the discovery index, durable discovery snapshot, advertisement, or P2P envelope.
+- **Local Search** — profiles, communities, Tracks, Albums, Playlists, Videos/Shorts, Live broadcasts, Posts, and permitted messages held locally. A private message can be indexed only by an already-authorized local caller; it is never put in the discovery index, durable discovery snapshot, or P2P envelope.
 - **Social Discovery** — an optional trusted-neighbour adapter supplies signed objects from known peers; each result is permission-checked and indexed locally.
 - **Public P2P Discovery** — `DiscoveryReplicationService` sends the original signed public object through the existing authenticated Transport. Media bytes are not copied into discovery envelopes.
 
@@ -20,4 +20,4 @@ Home, Following, and Communities use one `RankingProvider`. The default determin
 
 ## Privacy and failure handling
 
-Private DM bodies and live-chat messages never enter the index. Public replication rejects non-public visibility, malformed schemas, oversized objects, expired/replayed envelopes, and invalid object signatures. Block lists and search permissions are applied before a result is exposed. Public advertisements contain only minimal IDs/types/authors/timestamps and do not expose local interaction history.
+Private DM bodies and live-chat messages never enter the index. Public replication rejects non-public visibility, malformed schemas, oversized objects, expired/replayed envelopes, and invalid object signatures. Block lists and search permissions are applied before a result is exposed. Public discovery records contain only minimal IDs/types/authors/timestamps and do not expose local interaction history.

@@ -1,6 +1,7 @@
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import type { CommunityEvent } from './community-storage.js';
 import { CommunityService } from './communities.js';
@@ -518,7 +519,7 @@ export class PrivateCommunityReplicationService {
   private readonly unsubscribe: () => void;
   private readonly blocked = new Set<NodeId>();
   private acceptedCount = 0; private rejectedCount = 0; private duplicateCount = 0;
-  constructor(private readonly transport: Transport, private readonly privateCommunities: PrivateCommunityService, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now()) {
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly privateCommunities: PrivateCommunityService, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now()) {
     this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); });
   }
   close(): void { this.unsubscribe(); }

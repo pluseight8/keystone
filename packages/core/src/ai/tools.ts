@@ -18,6 +18,21 @@ import {
   type AIModelRef,
 } from './privacy.js';
 import { z } from 'zod';
+import type { ImmutableCore } from '../security/immutable-core.js';
+import type {
+  SkillCandidate,
+  SkillIndexEntry,
+  SkillInstallation,
+  SkillPackage,
+  SkillPackageInstallOptions,
+  SkillPackageRegistry,
+  SkillPackageRegistryOptions,
+  SkillReview,
+  SkillRevisionProposal,
+  SkillSource,
+} from './skill-packages.js';
+import { isDangerousFileTool, isQuarantinedContent } from '../security/untrusted-content.js';
+import { SecretRedactionPolicy } from '../security/secrets.js';
 
 export const TOOL_SYSTEM_VERSION = 1 as const;
 
@@ -244,6 +259,7 @@ export class ToolRegistry {
     if (!tool) throw new ToolSecurityError('invalid_tool', `Unknown tool ${input.toolId}`);
     const parsed = tool.inputSchema.safeParse(input.arguments);
     if (!parsed.success) throw new ToolSecurityError('invalid_arguments', `Invalid arguments for ${input.toolId}`);
+    if (SecretRedactionPolicy.containsManagedSecret(parsed.data)) throw new ToolSecurityError('invalid_arguments', 'Managed secrets cannot be embedded in a ToolIntent');
     const expected = [...tool.capabilities];
     const requested = uniqueCapabilities(input.requestedCapabilities ?? expected);
     if (!capabilityListEqual(requested, expected)) throw new ToolSecurityError('invalid_tool', 'Requested capabilities do not match tool capabilities');
@@ -295,11 +311,17 @@ export async function computeSkillIntegrityHash(skill: Pick<Skill, 'version' | '
 export class SkillRegistry {
   private readonly skills = new Map<string, Skill>();
   private readonly verifyHash: (canonicalManifest: string) => Promise<string>;
+  private packageDelegate?: Promise<SkillPackageRegistry>;
   constructor(options: SkillInstallOptions = {}) {
     this.verifyHash = async value => options.verifyHash ? await options.verifyHash(value) : await sha256(new TextEncoder().encode(value));
   }
 
-  async install(skill: Skill, approval: SkillApprovalOptions = {}): Promise<Skill> {
+  install(skill: Skill, approval?: SkillApprovalOptions): Promise<Skill>;
+  install(pkg: SkillPackage, options?: SkillPackageInstallOptions): Promise<SkillInstallation>;
+  async install(skillOrPackage: Skill | SkillPackage, approvalOrOptions: SkillApprovalOptions | SkillPackageInstallOptions = {}): Promise<Skill | SkillInstallation> {
+    if (isSkillPackageLike(skillOrPackage)) return this.installPackage(skillOrPackage, approvalOrOptions as SkillPackageInstallOptions);
+    const skill = skillOrPackage as Skill;
+    const approval = approvalOrOptions as SkillApprovalOptions;
     const parsed = skillManifestSchema.parse(skill) as Skill;
     if (this.skills.has(parsed.id)) throw new ToolSecurityError('invalid_tool', `Skill ${parsed.id} is already installed`);
     const declared = uniqueCapabilities(parsed.declaredCapabilities);
@@ -313,10 +335,28 @@ export class SkillRegistry {
   }
 
   /** Compatibility alias for hosts that call manifest installation registration. */
-  register(skill: Skill, approval: SkillApprovalOptions = {}): Promise<Skill> { return this.install(skill, approval); }
+  register(skill: Skill, approval?: SkillApprovalOptions): Promise<Skill>;
+  register(pkg: SkillPackage, options?: SkillPackageInstallOptions): Promise<SkillInstallation>;
+  register(skillOrPackage: Skill | SkillPackage, approvalOrOptions: SkillApprovalOptions | SkillPackageInstallOptions = {}): Promise<Skill | SkillInstallation> { return this.install(skillOrPackage as Skill, approvalOrOptions as SkillApprovalOptions); }
 
   get(id: string): Skill | undefined { const skill = this.skills.get(id); return skill ? clone(skill) : undefined; }
   list(): readonly Skill[] { return [...this.skills.values()].map(skill => clone(skill)); }
+  /** Remove a projected/installable skill without weakening ToolPolicy. */
+  remove(id: string): void { this.skills.delete(id); }
+  /**
+   * Update the legacy projection used by ToolExecutor after a declarative
+   * SkillPackage install/update.  Package review and integrity checks happen
+   * in SkillPackageRegistry; this method only replaces the bounded projection.
+   */
+  upsertProjected(skill: Skill): Skill {
+    const parsed = skillManifestSchema.parse(skill) as Skill;
+    const declared = uniqueCapabilities(parsed.declaredCapabilities);
+    const approved = uniqueCapabilities(parsed.approvedCapabilities);
+    if (declared.length !== parsed.declaredCapabilities.length || !containsAll(declared, approved)) throw new ToolSecurityError('invalid_tool', 'Projected Skill capabilities are invalid');
+    const normalized = Object.freeze({ ...parsed, toolIds: Object.freeze([...new Set(parsed.toolIds)]), declaredCapabilities: Object.freeze(declared), approvedCapabilities: Object.freeze(approved) });
+    this.skills.set(parsed.id, normalized);
+    return clone(normalized);
+  }
   setEnabled(id: string, enabled: boolean): Skill { return this.update(id, { enabled }); }
   enable(id: string): Skill { return this.setEnabled(id, true); }
   disable(id: string): Skill { return this.setEnabled(id, false); }
@@ -345,9 +385,31 @@ export class SkillRegistry {
     this.skills.set(id, next);
     return clone(next);
   }
+
+  /** Lazy package facade keeps the historical SkillRegistry constructor/API intact. */
+  async packageRegistry(options: Omit<SkillPackageRegistryOptions, 'legacyRegistry'> = {}): Promise<SkillPackageRegistry> {
+    if (!this.packageDelegate) this.packageDelegate = import('./skill-packages.js').then(({ SkillPackageRegistry: Registry }) => new Registry({ ...options, legacyRegistry: this }));
+    return this.packageDelegate;
+  }
+  async installPackage(pkg: SkillPackage, options: { readonly userApproved?: boolean; readonly enabled?: boolean; readonly approvedCapabilities?: readonly ToolCapability[]; readonly approvedDataScopes?: readonly string[] } = {}): Promise<SkillInstallation> { return (await this.packageRegistry()).install(pkg, options); }
+  async reviewPackage(pkg: SkillPackage): Promise<SkillReview> { return (await this.packageRegistry()).prepareReview(pkg); }
+  async listInstalledPackages(): Promise<readonly SkillInstallation[]> { return (await this.packageRegistry()).list(); }
+  async enablePackage(skillId: string): Promise<SkillInstallation> { return (await this.packageRegistry()).enable(skillId); }
+  async disablePackage(skillId: string): Promise<SkillInstallation> { return (await this.packageRegistry()).disable(skillId); }
+  async updatePackage(pkg: SkillPackage, options: { readonly userApproved?: boolean; readonly enabled?: boolean; readonly approvedCapabilities?: readonly ToolCapability[]; readonly approvedDataScopes?: readonly string[] } = {}): Promise<SkillInstallation> { return (await this.packageRegistry()).update(pkg, options); }
+  async rollbackPackage(skillId: string, revisionId?: string, options: { readonly userApproved?: boolean; readonly enabled?: boolean } = {}): Promise<SkillInstallation> { return (await this.packageRegistry()).rollback(skillId, revisionId, options); }
+  async uninstallPackage(skillId: string): Promise<void> { return (await this.packageRegistry()).uninstall(skillId); }
+  async skillIndex(): Promise<readonly SkillIndexEntry[]> { return (await this.packageRegistry()).index(); }
+  async listSkillCandidates(): Promise<readonly SkillCandidate[]> { return (await this.packageRegistry()).candidatesList(); }
+  async listSkillRevisionProposals(skillId?: string): Promise<readonly SkillRevisionProposal[]> { return (await this.packageRegistry()).proposalsList(skillId); }
+  async installPackageFromSource(source: SkillSource, fetchPackage: (source: SkillSource) => Promise<SkillPackage>, options: { readonly userApproved?: boolean; readonly enabled?: boolean; readonly approvedCapabilities?: readonly ToolCapability[]; readonly approvedDataScopes?: readonly string[] } = {}): Promise<SkillInstallation> {
+    const { SkillInstaller } = await import('./skill-packages.js');
+    return new SkillInstaller({ registry: await this.packageRegistry(), fetchPackage }).installFromSource(source, options);
+  }
 }
 
 function skillWithout(values: readonly ToolCapability[], revoked: ReadonlySet<ToolCapability>): ToolCapability[] { return values.filter(value => !revoked.has(value)); }
+function isSkillPackageLike(value: Skill | SkillPackage): value is SkillPackage { return Boolean(value && typeof value === 'object' && 'manifest' in value && 'source' in value); }
 
 export interface ToolPolicyInput {
   readonly intent: ToolIntent;
@@ -366,6 +428,10 @@ export interface ToolPolicyDecision {
 export interface ToolPolicyOptions {
   /** Adapter to existing Keystone authorization/consent policy for mutations. */
   readonly authorize?: (input: ToolPolicyInput) => Promise<boolean> | boolean;
+  /** Optional immutable-core gate for privileged agent/plugin execution. */
+  readonly immutableCore?: ImmutableCore;
+  /** Optional host hook for stricter file/process policy. It can only deny. */
+  readonly authorizeQuarantinedFile?: (input: { readonly toolId: string; readonly intent: ToolIntent }) => Promise<boolean> | boolean;
 }
 
 const mutationCapabilities = new Set<ToolCapability>(['WRITE_PRIVATE', 'NETWORK_SEND', 'DEVICE_ACTION', 'DESTRUCTIVE', 'SECURITY_SENSITIVE']);
@@ -378,6 +444,11 @@ export class ToolPolicy {
     const requiresConfirmation = capabilities.some(capability => mutationCapabilities.has(capability));
     const requiresDoubleConfirmation = input.tool.sensitive === true || capabilities.some(capability => doubleConfirmationCapabilities.has(capability));
     const base = { requiresConfirmation, requiresDoubleConfirmation, requestedCapabilities: capabilities } as const;
+    if (isQuarantinedContent(input.intent.arguments) && isDangerousFileTool(input.tool.id)) return { ...base, allowed: false, reason: 'policy_denied' };
+    if (isQuarantinedContent(input.intent.arguments) && this.options.authorizeQuarantinedFile && !(await this.options.authorizeQuarantinedFile({ toolId: input.tool.id, intent: input.intent }))) return { ...base, allowed: false, reason: 'policy_denied' };
+    if (this.options.immutableCore) {
+      try { this.options.immutableCore.assertPrivileged('AGENT_EXECUTION'); } catch { return { ...base, allowed: false, reason: 'policy_denied' }; }
+    }
     if (!input.skill.enabled) return { ...base, allowed: false, reason: 'skill_disabled' };
     if (!input.skill.toolIds.includes(input.tool.id)) return { ...base, allowed: false, reason: 'tool_not_declared' };
     if (!containsAll(input.skill.declaredCapabilities, capabilities)) return { ...base, allowed: false, reason: 'capability_not_declared' };
@@ -411,23 +482,28 @@ export interface ToolExecutorOptions {
   readonly policy?: ToolPolicy;
   readonly confirmation?: ToolConfirmationBoundary;
   readonly audit?: ToolAuditLog;
+  /** Optional immutable-core gate; lockdown prevents tool/plugin execution. */
+  readonly immutableCore?: ImmutableCore;
 }
 
 export class ToolExecutor {
   readonly audit: ToolAuditLog;
   private readonly policy: ToolPolicy;
   private readonly confirmation?: ToolConfirmationBoundary;
+  private readonly immutableCore?: ImmutableCore;
   constructor(private readonly registry: ToolRegistry, private readonly skills: SkillRegistry, options: ToolExecutorOptions = {}) {
-    this.policy = options.policy ?? new ToolPolicy();
+    this.policy = options.policy ?? new ToolPolicy({ immutableCore: options.immutableCore });
     this.confirmation = options.confirmation;
+    this.immutableCore = options.immutableCore;
     this.audit = options.audit ?? new ToolAuditLog();
   }
 
   async execute<O = unknown>(intent: ToolIntent, options: { readonly signal?: AbortSignal } = {}): Promise<ToolResult<O>> {
-    if (!this.registry.claim(intent)) {
-      const code: Extract<ToolErrorCode, 'forged_intent' | 'duplicate_intent'> = this.registry.isIssued(intent) ? 'duplicate_intent' : 'forged_intent';
-      throw new ToolSecurityError(code, code === 'duplicate_intent' ? 'Tool intent was already consumed' : 'Tool intent was not issued by ToolRegistry');
+    if (!this.registry.isIssued(intent)) throw new ToolSecurityError('forged_intent', 'Tool intent was not issued by ToolRegistry');
+    if (this.immutableCore) {
+      try { this.immutableCore.assertPrivileged('AGENT_EXECUTION'); } catch { return this.denied<O>(intent, 'policy_denied', false); }
     }
+    if (!this.registry.claim(intent)) throw new ToolSecurityError('duplicate_intent', 'Tool intent was already consumed');
     const tool = this.registry.get(intent.toolId);
     const skill = this.skills.get(intent.skillId);
     if (!tool) throw new ToolSecurityError('invalid_tool', 'Registered tool disappeared');
@@ -467,6 +543,10 @@ export class ToolExecutor {
       }
       const dataClass = typeof tool.resultClass === 'function' ? tool.resultClass(validated.data) : tool.resultClass;
       if (!AI_DATA_CLASSES.includes(dataClass)) throw new Error('Invalid tool result classification');
+      if (SecretRedactionPolicy.containsManagedSecret(validated.data)) {
+        this.audit.append({ model: intent.model, source: intent.source, skillId: intent.skillId, toolId: intent.toolId, intentId: intent.intentId, requestedCapabilities: decision.requestedCapabilities, policyDecision: 'failed', confirmation: confirmationState, errorCode: 'invalid_tool_result' });
+        return this.result<O>(intent, false, 'PUBLIC', 'invalid_tool_result', false);
+      }
       this.audit.append({ model: intent.model, source: intent.source, skillId: intent.skillId, toolId: intent.toolId, intentId: intent.intentId, requestedCapabilities: decision.requestedCapabilities, policyDecision: 'executed', confirmation: confirmationState, resultClassification: dataClass });
       return this.result<O>(intent, true, dataClass, undefined, decision.requiresConfirmation, clone(validated.data) as O);
     } catch {
@@ -482,7 +562,8 @@ export class ToolExecutor {
 /** Explicit opt-in bridge; no ToolResult is ever sent to a provider automatically. */
 export function prepareToolResultForExternal<O>(result: ToolResult<O>): ToolResult<O> {
   if (result.dataClass === 'PRIVATE' || result.dataClass === 'SECRET') throw new ToolSecurityError('invalid_tool', 'Private tool results cannot cross the external AI boundary');
-  return clone(result);
+  if (SecretRedactionPolicy.containsManagedSecret(result)) throw new ToolSecurityError('invalid_tool', 'Managed secret tool results cannot cross the external AI boundary');
+  return SecretRedactionPolicy.redact(clone(result));
 }
 
 export interface KeystoneToolHost {

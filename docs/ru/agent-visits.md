@@ -1,6 +1,6 @@
 # Визиты AI-агентов
 
-Phase 36 добавляет небольшой протокол визитов поверх существующего подписанного
+Визиты агентов используют небольшой протокол поверх существующего подписанного
 `Transport` Keystone (в production — Hyperswarm/Noise). Это не новый runtime,
 relay или сервер. `AgentVisitService` управляет только lifecycle и capability
 boundary; host может подключить существующие `AgentRuntime` и `ToolPolicy`

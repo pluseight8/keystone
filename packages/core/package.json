@@ -1,1 +1,39 @@
-{"name":"@keystone/core","version":"0.1.0","type":"module","main":"src/index.ts","scripts":{"test":"vitest run --exclude=src/testing/**","test:integration":"vitest run src/testing/distributed-harness.test.ts","test:network":"vitest run src/testing/real-network.test.ts --testTimeout=120000 --hookTimeout=120000","lint":"tsc --noEmit"},"dependencies":{"@keystone/addons":"workspace:*","@orama/orama":"^3.1.14","@xenova/transformers":"^2.17.2","hyperdht":"^6.20.0","hyperswarm":"^4.11.0","libsodium-wrappers":"^0.8.4","@scure/bip39":"^1.5.4","yjs":"^13.6.27","zod":"^3.24.2"},"devDependencies":{"@types/node":"^22.10.2","typescript":"^5.6.3","vitest":"^2.1.8"}}
+{
+  "name": "@keystone/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run --exclude=src/testing/**",
+    "test:subscriptions": "vitest run src/subscriptions.test.ts src/subscriptions-security.test.ts src/subscriptions-inbox.test.ts src/testing/subscriptions-real-network.test.ts src/testing/subscriptions-scale.test.ts --testTimeout=60000 --hookTimeout=60000",
+    "test:media": "vitest run src/media-library.test.ts src/media-library-security.test.ts src/testing/media-library-integration.test.ts src/testing/media-library-physical-evidence.test.ts --testTimeout=60000 --hookTimeout=60000",
+    "test:files": "vitest run src/shared-folders.test.ts src/shared-folders-security.test.ts src/testing/shared-folders-real-filesystem.test.ts src/testing/shared-folders-real-network.test.ts src/testing/shared-folders-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:tasks": "vitest run src/tasks.test.ts src/tasks-security.test.ts src/testing/tasks-integration.test.ts src/testing/tasks-real-network.test.ts src/testing/tasks-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:contacts": "vitest run src/contacts.test.ts src/contacts-security.test.ts src/testing/contacts-integration.test.ts src/testing/contacts-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:documents": "vitest run src/documents.test.ts src/documents-security.test.ts src/testing/documents-integration.test.ts src/testing/documents-real-runtime.test.ts src/testing/documents-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:capture": "vitest run src/capture.test.ts src/capture-security.test.ts src/testing/capture-integration.test.ts src/testing/capture-real-runtime.test.ts src/testing/capture-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:integration": "vitest run src/testing/distributed-harness.test.ts src/testing/continuity-integration.test.ts src/testing/nearby-exchange-integration.test.ts src/testing/media-library-integration.test.ts src/testing/web-library-browser-evidence.test.ts src/testing/inbox-integration.test.ts src/testing/tasks-integration.test.ts src/testing/contacts-integration.test.ts src/testing/subscriptions-real-network.test.ts src/testing/shared-folders-real-filesystem.test.ts src/testing/documents-integration.test.ts src/testing/capture-integration.test.ts",
+    "test:network": "vitest run src/testing/distributed-content-real-network.test.ts src/testing/personal-device-mesh-real-network.test.ts src/testing/real-network.test.ts src/testing/gateway-real-network.test.ts src/testing/fabric-network.test.ts src/testing/hostile-network.test.ts src/testing/secret-network.test.ts src/testing/collaboration-real-network.test.ts src/testing/maps-real-network.test.ts src/testing/mail-real-protocol.test.ts src/testing/nearby-exchange-real-network.test.ts src/testing/nearby-physical-evidence.test.ts src/testing/tasks-real-network.test.ts src/testing/subscriptions-real-network.test.ts src/testing/shared-folders-real-network.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:performance": "vitest run src/testing/scale-endurance.test.ts src/testing/collaboration-scale.test.ts src/testing/maps-scale.test.ts src/testing/mail-scale.test.ts src/testing/continuity-scale.test.ts src/testing/nearby-exchange-scale.test.ts src/testing/media-library-scale.test.ts src/testing/web-library-scale.test.ts src/testing/inbox-scale.test.ts src/testing/subscriptions-scale.test.ts src/testing/shared-folders-scale.test.ts src/testing/tasks-scale.test.ts src/testing/contacts-scale.test.ts src/testing/documents-scale.test.ts src/testing/capture-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:security": "vitest run src/security/content-safety.test.ts src/security/safety-surfaces.test.ts src/security/immutable-core.test.ts src/security/owner-authority.test.ts src/security/protocol-security.test.ts src/security/untrusted-content.test.ts src/security/secrets.test.ts src/security/legacy-secrets.test.ts src/security/devices.test.ts src/connectivity-authority.test.ts src/connectivity-architecture.test.ts src/location-architecture.test.ts src/location.test.ts src/maps-architecture.test.ts src/maps.test.ts src/nearby.test.ts src/nearby-exchange-security.test.ts src/nearby-exchange-architecture.test.ts src/mesh-routing.test.ts src/delay-tolerant.test.ts src/gateway.test.ts src/mail-architecture.test.ts src/mail.test.ts src/continuity-architecture.test.ts src/continuity.test.ts src/media-library-security.test.ts src/web-library-security.test.ts src/inbox-security.test.ts src/subscriptions-security.test.ts src/shared-folders-security.test.ts src/tasks-security.test.ts src/contacts-security.test.ts src/documents-security.test.ts src/capture-security.test.ts",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@keystone/addons": "workspace:*",
+    "@keystone/browser-engine": "workspace:*",
+    "@orama/orama": "^3.1.14",
+    "@xenova/transformers": "^2.17.2",
+    "hyperdht": "^6.20.0",
+    "hyperswarm": "^4.11.0",
+    "libsodium-wrappers": "^0.8.4",
+    "@scure/bip39": "^1.5.4",
+    "yjs": "^13.6.27",
+    "zod": "^3.24.2",
+    "@keystone/native-host": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

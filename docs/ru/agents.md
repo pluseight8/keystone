@@ -1,6 +1,6 @@
 # Агенты
 
-Phase 33 добавляет local-first runtime поверх существующих
+Runtime агентов предоставляет local-first слой поверх существующих
 `AIOrchestrator`, privacy firewall, Personal AI Mesh и типизированных Tools.
 Новый provider, transport или отдельная permission-система не создаются.
 

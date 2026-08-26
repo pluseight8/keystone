@@ -1,6 +1,6 @@
-# Platform readiness (Phase 14)
+# Platform readiness evidence
 
-This document is generated from [`docs/platform-readiness.json`](platform-readiness.json). `PASS` is evidence from the current repository checks; `PARTIAL`, `BLOCKED`, `NOT TESTED`, and `NOT IMPLEMENTED` are deliberately not release claims.
+This generated matrix is derived from [`docs/platform-readiness.json`](platform-readiness.json). `PASS` is evidence from the current repository checks; `PARTIAL`, `BLOCKED`, `NOT TESTED`, and `NOT IMPLEMENTED` are deliberately not release claims. The Linux (Flatpak) row describes a packaging target, not the current development distribution.
 
 | Platform | Architecture | Typecheck | Unit tests | Integration tests | Compile | Package | Install | Launch | Network/P2P | WebRTC | Secure storage | Permissions | Updater | Signing | Physical device | Release ready |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -12,8 +12,8 @@ This document is generated from [`docs/platform-readiness.json`](platform-readin
 
 ## Release credential model
 
-Development builds keep the Tauri updater and Expo OTA disabled unless configured. A production release requires KEYSTONE_TAURI_UPDATER_PUBLIC_KEY; signed desktop release also requires TAURI_SIGNING_PRIVATE_KEY, while Android signing requires an owner-provided keystore. See [docs/release](release).
+Development builds keep the Tauri updater and Expo OTA disabled unless configured. A production release requires KEYSTONE_TAURI_UPDATER_PUBLIC_KEY; signed desktop release also requires TAURI_SIGNING_PRIVATE_KEY, while Android signing requires an owner-provided keystore. See [Release and evidence](release.md).
 
 ## Security boundary
 
-Desktop IPC has no arbitrary JavaScript execution, shell passthrough, or generic OS input. The future typed automation contract is documented in [OS_AUTOMATION.md](../apps/desktop/src-tauri/OS_AUTOMATION.md).
+Desktop IPC has no arbitrary JavaScript execution, shell passthrough, or generic OS input. The typed automation contract is documented in [OS_AUTOMATION.md](../apps/desktop/src-tauri/OS_AUTOMATION.md).

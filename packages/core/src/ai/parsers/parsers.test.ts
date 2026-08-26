@@ -10,6 +10,13 @@ describe('document parsers', () => {
     expect(looksLikeBinary(Uint8Array.from([65, 0, 66]))).toBe(true);
     await expect(new DocumentParser().parse({ path: 'bad.txt', bytes: Uint8Array.from([65, 0, 66]) })).rejects.toThrow('Binary');
   });
+
+  it('passes only a basename to the host PDF boundary', async () => {
+    let receivedPath = '';
+    const parser = new DocumentParser({ extract: async (_bytes, path) => { receivedPath = path; return 'bounded text'; } });
+    await expect(parser.parse({ path: '../../report.pdf', bytes: Uint8Array.from([0x25, 0x50, 0x44, 0x46]) })).resolves.toMatchObject({ text: 'bounded text' });
+    expect(receivedPath).toBe('report.pdf');
+  });
 });
 
 describe('RecursiveCharacterTextSplitter', () => {

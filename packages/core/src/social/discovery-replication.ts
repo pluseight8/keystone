@@ -1,9 +1,12 @@
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import { parseDiscoveryObject, type UnifiedDiscoveryService } from './discovery.js';
 import { unsignedObject, type KeystoneObject } from './object-model.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
 
 export const DISCOVERY_OBJECT_ENVELOPE = 'social.discovery_object';
 const MAX_LIFETIME_MS = 10 * 60_000;
@@ -23,13 +26,14 @@ export class DiscoveryReplicationService {
   private acceptedCount = 0;
   private rejectedCount = 0;
   constructor(
-    private readonly transport: Transport,
+    private readonly transport: KeystoneDeliveryInterface,
     private readonly discovery: UnifiedDiscoveryService,
     private readonly crypto: CryptoProvider,
     private readonly security: EnvelopeSecurity,
     private readonly local: DeviceSessionKeys,
     private readonly now: () => number = () => Date.now(),
     private readonly options: DiscoveryReplicationOptions = {},
+    private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime())),
   ) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
   close(): void { this.unsubscribe(); }
   block(peer: NodeId): void { this.blocked.add(peer); }
@@ -39,6 +43,7 @@ export class DiscoveryReplicationService {
     if (object.visibility !== 'public') throw new Error('Public discovery accepts only public objects');
     const parsed = parseDiscoveryObject(object);
     if (!parsed || !(await this.crypto.verify(canonicalJson(unsignedObject(parsed)), parsed.signature, parsed.author))) throw new Error('Invalid signed discovery object');
+    if (!(await this.protectedSurfaces.evaluate('DISCOVERY', { objectId: parsed.id, value: parsed, content: parsed.payload, text: JSON.stringify(parsed.payload), domain: 'PUBLIC', sourceType: 'discovery', verified: true, authorized: true, sharing: true }))) throw new Error('Discovery object failed mandatory SafetySurfaceGate');
     const encoded = canonicalJson(parsed);
     if (new TextEncoder().encode(encoded).byteLength > MAX_OBJECT_BYTES) throw new Error('Discovery object exceeds protocol limit');
     const unsigned: UnsignedEnvelope = { version: 1, type: DISCOVERY_OBJECT_ENVELOPE, id: crypto.randomUUID(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + MAX_LIFETIME_MS).toISOString(), body: { object: parsed } };

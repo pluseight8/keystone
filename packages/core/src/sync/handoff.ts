@@ -1,5 +1,7 @@
 import type { NodeId } from '../types.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
+import type { ClipboardCopyIntent } from '../security/secrets.js';
 
 export type HandoffPayload =
   | { kind: 'clipboard'; text: string }
@@ -12,12 +14,12 @@ export type HandoffHandler = (payload: HandoffPayload, sender: NodeId) => void |
 /** Cross-device context handoff. Only explicitly registered Self peers are routable. */
 export class DeviceSync {
   private readonly seenNonces = new Set<string>(); private readonly peers = new Set<NodeId>(); private readonly handlers = new Set<HandoffHandler>(); private readonly chunkHandlers = new Set<(chunk: FileChunk, sender: NodeId) => void | Promise<void>>(); private readonly unsubscribe: () => void;
-  constructor(private readonly transport: Transport, private readonly options: DeviceSyncOptions) { (options.selfPeers ?? []).forEach(peer => this.peers.add(peer)); this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope).catch(() => undefined); }); }
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly options: DeviceSyncOptions) { (options.selfPeers ?? []).forEach(peer => this.peers.add(peer)); this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope).catch(() => undefined); }); }
   addSelfPeer(peer: NodeId): void { this.peers.add(peer); }
   onPayload(handler: HandoffHandler): () => void { this.handlers.add(handler); return () => this.handlers.delete(handler); }
   onFileChunk(handler: (chunk: FileChunk, sender: NodeId) => void | Promise<void>): () => void { this.chunkHandlers.add(handler); return () => this.chunkHandlers.delete(handler); }
-  async send(peer: NodeId, payload: HandoffPayload): Promise<void> { this.assertPeer(peer); validatePayload(payload); await this.transport.connect(peer); await this.sendEnvelope(peer, 'handoff.request', payload); }
-  sendClipboard(peer: NodeId, text: string): Promise<void> { return this.send(peer, { kind: 'clipboard', text }); }
+  async send(peer: NodeId, payload: HandoffPayload, authorization?: ClipboardCopyIntent): Promise<void> { this.assertPeer(peer); validatePayload(payload); if (payload.kind === 'clipboard' && (!authorization || authorization.kind !== 'CLIPBOARD_COPY_INTENT' || authorization.ownerConfirmed !== true || authorization.text !== payload.text)) throw new Error('Clipboard handoff requires explicit owner confirmation'); await this.transport.connect(peer); await this.sendEnvelope(peer, 'handoff.request', payload); }
+  sendClipboard(peer: NodeId, text: string, authorization: Omit<ClipboardCopyIntent, 'kind' | 'text'> & { readonly kind?: 'CLIPBOARD_COPY_INTENT' }): Promise<void> { const intent = { kind: 'CLIPBOARD_COPY_INTENT' as const, text, ...authorization }; return this.send(peer, { kind: 'clipboard', text }, intent); }
   sendBrowserTab(peer: NodeId, url: string, title?: string): Promise<void> { return this.send(peer, { kind: 'browser_tab', url, ...(title ? { title } : {}) }); }
   sendFileOffer(peer: NodeId, offer: Extract<HandoffPayload, { kind: 'file_offer' }>): Promise<void> { return this.send(peer, offer); }
   async sendFileChunk(peer: NodeId, chunk: FileChunk): Promise<void> { this.assertPeer(peer); validateChunk(chunk); await this.transport.connect(peer); await this.sendEnvelope(peer, 'handoff.file_chunk', chunk); }

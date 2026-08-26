@@ -1,6 +1,6 @@
 # AI-инструменты и capability policy
 
-Phase 32 добавляет типизированную границу действий между AI-моделью и
+AI-инструменты предоставляют типизированную границу действий между AI-моделью и
 Keystone. Она дополняет `AIOrchestrator`, `AIEgressFirewall` и Personal AI
 Mesh и не заменяет их.
 
@@ -42,4 +42,3 @@ public result можно передать наружу только явным �
 capability, policy, confirmation и класс результата. Prompt, аргументы,
 имена файлов и значения результатов не записываются. Forged/replayed intent
 отклоняется до запуска handler.
-

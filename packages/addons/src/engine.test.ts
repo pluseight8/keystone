@@ -63,4 +63,12 @@ describe('AddonEngine', () => {
     expect(prompts).toEqual(['Аддон Review запрашивает доступ...', 'Аддон Review запрашивает доступ...']);
     expect(audits).toEqual(['addon_life_map_read', 'addon_life_map_read']);
   });
+
+  it('never passes legacy secret-shaped input into an addon sandbox', async () => {
+    const sandbox = runtime({ apiVersion: 1, hooks: { tools: [{ id: 'inspect', name: 'Inspect', description: 'Inspect input', parameters: { type: 'object' } }] } }, input => input);
+    const engine = new AddonEngine({ runtime: sandbox, confirmation: { async confirm() { return true; } } });
+    await engine.install(manifest, new Uint8Array([1]));
+    await expect(engine.executeTool('org.example.review:inspect', { masterSeed: 'not-for-addons' })).rejects.toMatchObject({ code: 'INVALID_SANDBOX_REQUEST' } satisfies Partial<AddonSecurityError>);
+    await expect(sandbox.hostCall?.({ capability: 'ai_prompt', operation: 'inspect', input: { privateKey: 'not-for-addons' }, reason: 'unsafe' })).rejects.toMatchObject({ code: 'INVALID_SANDBOX_REQUEST' } satisfies Partial<AddonSecurityError>);
+  });
 });
