@@ -1,0 +1,11 @@
+import { ScrollView, Text, View } from 'react-native';
+import { useState } from 'react';
+import { i18n } from '@keystone/core';
+import { tokens } from '@keystone/theme';
+import { Label, Surface } from '@keystone/ui';
+
+export default function Plugins() {
+  const [locale, setLocale] = useState(i18n.getLocale); const ru = locale === 'ru';
+  return <ScrollView contentContainerStyle={styles.screen}><Label>{ru ? 'Плагины и аддоны' : 'Plugins & add-ons'}</Label><Text style={styles.muted}>{ru ? 'Отдельный класс доверия. Получен ≠ установлен ≠ включён ≠ доверен.' : 'Separate trust class. Received ≠ installed ≠ enabled ≠ trusted.'}</Text><Surface style={styles.card}><Text style={styles.title}>{ru ? 'Обзор' : 'Discover'}</Text><Text style={styles.muted}>{ru ? 'Независимые источники: Local, File, URL, P2P, content-address, USB и личные устройства.' : 'Independent sources: Local, File, URL, P2P, content-address, USB and owned devices.'}</Text></Surface><Surface style={styles.card}><Text style={styles.title}>{ru ? 'Установленные' : 'Installed'}</Text><Text style={styles.muted}>RECEIVED → QUARANTINED → REVIEW → INSTALLED_DISABLED → ENABLED → RUNNING</Text></Surface><Surface style={styles.card}><Text style={styles.title}>{ru ? 'Обновления и восстановление' : 'Updates & recovery'}</Text><Text style={styles.muted}>{ru ? 'Скачивание не равно применению. Расширение capabilities требует явного review; repair использует exact content address.' : 'Downloaded is not applied. Capability expansion requires explicit review; repair uses the exact content address.'}</Text></Surface><Surface style={styles.card}><Text style={styles.title}>{ru ? 'Граница безопасности' : 'Security boundary'}</Text><Text style={styles.muted}>{ru ? 'PluginHost выдаёт только scoped capabilities. Shared/public публикация проходит SafetySurfaceGate. Источник не является authority.' : 'PluginHost exposes scoped capabilities only. Shared/public output passes SafetySurfaceGate. A source never grants authority.'}</Text></Surface></ScrollView>;
+}
+const styles = { screen: { padding: 18, gap: 12, backgroundColor: tokens.colors.background }, card: { padding: 14, gap: 8 }, title: { color: tokens.colors.text, fontSize: 16, fontWeight: '700' as const }, muted: { color: tokens.colors.muted } };

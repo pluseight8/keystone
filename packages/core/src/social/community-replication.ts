@@ -1,5 +1,6 @@
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import type { CommunityEvent } from './community-storage.js';
 import { CommunityService } from './communities.js';
@@ -24,7 +25,7 @@ export class CommunityReplicationService {
   private duplicateCount = 0;
 
   constructor(
-    private readonly transport: Transport,
+    private readonly transport: KeystoneDeliveryInterface,
     private readonly communities: CommunityService,
     private readonly security: EnvelopeSecurity,
     private readonly local: DeviceSessionKeys,

@@ -1,6 +1,6 @@
 # AI tools and capability policy
 
-Phase 32 adds a typed action boundary between an AI model and Keystone. The
+The AI tools layer provides a typed action boundary between an AI model and Keystone. The
 boundary is additive to `AIOrchestrator`, `AIEgressFirewall` and the Personal
 AI Mesh; it does not replace any of them.
 
@@ -33,7 +33,7 @@ filesystem or unrestricted network capabilities.
 The available capability identifiers are `READ_PRIVATE`, `WRITE_PRIVATE`,
 `NETWORK_SEND`, `DEVICE_ACTION`, `DESTRUCTIVE` and `SECURITY_SENSITIVE`.
 `READ_PRIVATE` is allowed only for `local` or `personal_trusted` execution.
-An `external` intent must be explicitly created by the Phase 31 orchestrator,
+An `external` intent must be explicitly created by the  orchestrator,
 but it still cannot use a private tool or return a `PRIVATE`/`SECRET` result.
 
 Mutating, sending and device actions require a host `ToolPolicy` adapter and a
@@ -56,4 +56,3 @@ opaque object references issued by the registry and can be claimed once;
 forged or replayed objects are rejected before a handler runs.
 
 See [skills](skills.md) for manifest integrity and user approval.
-

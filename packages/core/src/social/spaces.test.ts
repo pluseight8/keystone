@@ -64,4 +64,13 @@ describe('SharedSpace', () => {
     const raw = JSON.stringify(await backend.read()); expect(raw).not.toContain('At-rest secret'); expect(raw).not.toContain('never plaintext'); service.close();
     const restored = new SharedSpaceService({ transport: alice.transport, crypto: new SodiumCryptoProvider(), security: alice.security, local: alice.keys, peers: [values.bob!.keys], storage: new PersistentSharedSpaceStateStore(backend, alice.keys) }); await restored.ready(); expect(restored.getSpace(space.id)?.title).toBe('At-rest secret'); restored.close(); values.alice!.service.close(); values.bob!.service.close();
   });
+
+  it('never serializes a private epoch key into a Shared Space snapshot', async () => {
+    const { values } = await peers(['alice', 'bob']); const alice = values.alice!;
+    const storage = new InMemorySharedSpaceStateStore(); const service = new SharedSpaceService({ transport: alice.transport, crypto: new SodiumCryptoProvider(), security: alice.security, local: alice.keys, peers: [values.bob!.keys], storage }); await service.ready();
+    const space = await service.createSpace({ title: 'Opaque epoch', visibility: 'private', members: [{ identityId: values.bob!.keys.nodeId }] });
+    const snapshot = await storage.read(); const serialized = JSON.stringify(snapshot);
+    expect(serialized).not.toMatch(/"privateKey"\s*:/); expect(serialized).toContain('epochSecretCiphertext'); expect(serialized).not.toContain(space.id + ':1:');
+    service.close(); values.alice!.service.close(); values.bob!.service.close();
+  });
 });

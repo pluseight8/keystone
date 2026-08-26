@@ -10,7 +10,8 @@
 import { canonicalJson } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { NodeId } from '../types.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import {
   formatAIModelRef,
   LocalAIContextPolicy,
@@ -250,7 +251,7 @@ function validModelRef(value: unknown): value is AIModelRef { if (!isObject(valu
 function validContextItem(value: unknown): value is AIContextItem { return isObject(value) && safeString(value.id, 256) && ['PUBLIC', 'USER_EXPLICIT', 'PRIVATE', 'SECRET'].includes(String(value.dataClass)) && 'value' in value; }
 function validEnvelope(envelope: Envelope, local: NodeId, types: readonly string[], now: () => number): boolean { const expiry = Date.parse(envelope.expiresAt); return envelope.recipient === local && types.includes(envelope.type) && Number.isFinite(expiry) && expiry > now(); }
 
-async function makeEnvelope(transport: Transport, security: EnvelopeSecurity, local: DeviceSessionKeys, recipient: NodeId, type: string, body: unknown, now: () => number, expiresInMs = 60_000): Promise<Envelope> {
+async function makeEnvelope(transport: KeystoneDeliveryInterface, security: EnvelopeSecurity, local: DeviceSessionKeys, recipient: NodeId, type: string, body: unknown, now: () => number, expiresInMs = 60_000): Promise<Envelope> {
   const unsigned: UnsignedEnvelope = { version: 1, type, id: crypto.randomUUID(), sender: local.nodeId, recipient, nonce: crypto.randomUUID(), expiresAt: expires(now, expiresInMs), body };
   return { ...unsigned, signature: await security.sign(unsigned) };
 }
@@ -284,7 +285,7 @@ export class PersonalAIHost {
   private loadedModel?: AIModelRef;
 
   constructor(
-    private readonly transport: Transport,
+    private readonly transport: KeystoneDeliveryInterface,
     private readonly security: EnvelopeSecurity,
     private readonly local: DeviceSessionKeys,
     private readonly provider: AIProvider,
@@ -499,7 +500,7 @@ export class RemoteLocalAIRuntime {
   private latest?: AIComputeAdvertisement;
   private disposed = false;
 
-  constructor(private readonly transport: Transport, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, readonly peer: NodeId, private readonly options: RemoteLocalAIRuntimeOptions) {
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, readonly peer: NodeId, private readonly options: RemoteLocalAIRuntimeOptions) {
     this.id = `personal-${peer}`;
     this.now = options.now ?? (() => Date.now());
     this.discoveryTimeoutMs = Math.max(100, options.discoveryTimeoutMs ?? 5_000);
@@ -608,7 +609,7 @@ export class AIInferenceSession {
   private lastEventAt = Date.now();
   private requestBody: WireRequest;
 
-  constructor(private readonly transport: Transport, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly peer: NodeId, request: PersonalAIProviderRequest, options: { timeoutMs: number; reconnectIntervalMs: number; isAuthorized?: () => boolean | Promise<boolean> }) {
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly peer: NodeId, request: PersonalAIProviderRequest, options: { timeoutMs: number; reconnectIntervalMs: number; isAuthorized?: () => boolean | Promise<boolean> }) {
     this.timeoutMs = options.timeoutMs; this.reconnectIntervalMs = options.reconnectIntervalMs; this.isAuthorized = options.isAuthorized;
     this.requestBody = { version: 1, sessionId: this.sessionId, requestId: this.requestId, model: { ...request.model }, systemPrompt: request.systemPrompt.slice(0, 32_000), userText: request.userText.slice(0, 1_000_000), context: cloneContext(request.context), requestedTools: request.requestedTools.map(tool => ({ ...tool })), timeoutAt: new Date(Date.now() + options.timeoutMs).toISOString() };
     if (request.signal) { if (request.signal.aborted) this.controller.abort(); else request.signal.addEventListener('abort', () => { void this.cancel(); }, { once: true }); }

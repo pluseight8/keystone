@@ -4,7 +4,7 @@ Keystone backup is a local, encrypted export for recovering an installation with
 
 ## Container
 
-The Phase 28 container is `keystone.backup` version 2. The outer manifest contains only:
+The backup container is `keystone.backup` version 2. The outer manifest contains only:
 
 - format/version;
 - creation time;
@@ -43,6 +43,6 @@ The old installation should be revoked from the recovered device list after the 
 
 ## Non-goals
 
-There is no mandatory cloud backup, central account recovery, telemetry, payment, advertising, marketplace, or server-side media cache. Media bytes are optional user-owned data; excluding cache does not remove the content-addressed references needed to retrieve them over P2P.
+There is no mandatory cloud backup, central account recovery, telemetry, or server-side media cache. Media bytes are optional user-owned data; excluding cache does not remove the content-addressed references needed to retrieve them over P2P.
 
 The core implementation is `packages/core/src/sync/backup-recovery.ts`. The older cold-backup API remains unchanged for existing Yjs/config archives.

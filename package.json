@@ -4,7 +4,11 @@
   "version": "0.1.0",
   "description": "Privacy-first peer-to-peer AI superapp",
   "packageManager": "pnpm@9.15.0",
-  "workspaces": ["apps/*", "apps/mobile/modules/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "apps/mobile/modules/*",
+    "packages/*"
+  ],
   "scripts": {
     "dev": "pnpm --filter @keystone/web dev",
     "build": "pnpm -r build",
@@ -12,9 +16,21 @@
     "build:desktop": "pnpm --filter @keystone/desktop build",
     "build:extension": "pnpm --filter @keystone/extension build",
     "build:mobile": "pnpm --filter @keystone/mobile lint",
+    "docs:check": "node scripts/docs-check.mjs",
     "test": "pnpm -r test",
-    "test:integration": "pnpm --filter @keystone/core test:integration",
+  "test:media": "pnpm --filter @keystone/native-host test:media && pnpm --filter @keystone/core test:media",
+  "test:subscriptions": "pnpm --filter @keystone/core test:subscriptions",
+    "test:tasks": "pnpm --filter @keystone/core test:tasks",
+    "test:contacts": "pnpm --filter @keystone/core test:contacts",
+    "test:documents": "pnpm --filter @keystone/native-host test:documents && pnpm --filter @keystone/core test:documents",
+    "test:capture": "pnpm --filter @keystone/native-host test:capture && pnpm --filter @keystone/core test:capture",
+    "test:files": "pnpm --filter @keystone/core test:files",
+    "test:web-library": "pnpm --filter @keystone/core exec vitest run src/web-library.test.ts src/web-library-security.test.ts src/testing/web-library-browser-evidence.test.ts src/testing/web-library-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:inbox": "pnpm --filter @keystone/core exec vitest run src/inbox.test.ts src/inbox-security.test.ts src/testing/inbox-integration.test.ts src/testing/inbox-scale.test.ts --testTimeout=180000 --hookTimeout=180000 --pool=threads --maxWorkers=1 --minWorkers=1",
+    "test:integration": "pnpm --filter @keystone/core test:integration && pnpm --filter @keystone/browser-engine test:integration",
     "test:network": "pnpm --filter @keystone/core test:network",
+    "test:performance": "pnpm --filter @keystone/core test:performance",
+    "test:security": "pnpm --filter @keystone/native-host test:security && pnpm --filter @keystone/core test:security && pnpm --filter @keystone/addons test:security",
     "test:release-tools": "node --test scripts/*.node-test.mjs",
     "lint": "pnpm -r lint",
     "tsc": "pnpm -r --if-present lint",
@@ -22,6 +38,8 @@
     "release:check": "node scripts/release-check.mjs",
     "release:prepare-desktop": "node scripts/prepare-tauri-release-config.mjs"
   },
-  "engines": {"node": ">=22 <23"},
+  "engines": {
+    "node": ">=22 <23"
+  },
   "license": "SEE LICENSE IN LICENSE.md"
 }

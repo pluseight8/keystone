@@ -11,9 +11,12 @@
 
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import type { AIDataClass } from './privacy.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
 
 export const AGENT_VISIT_VERSION = 1 as const;
 export const AGENT_VISIT_ENVELOPE = 'ai.agent_visit';
@@ -186,7 +189,7 @@ export interface AgentVisitHost {
 }
 
 export interface AgentVisitServiceOptions {
-  readonly transport: Transport;
+  readonly transport: KeystoneDeliveryInterface;
   readonly crypto: CryptoProvider;
   readonly security: EnvelopeSecurity;
   readonly local: DeviceSessionKeys;
@@ -197,6 +200,7 @@ export interface AgentVisitServiceOptions {
   readonly host?: AgentVisitHost;
   readonly onResult?: (visitId: string, result: AgentVisitResult) => void | Promise<void>;
   readonly onRoomMessage?: (message: AgentRoomMessage, room: AgentRoom) => void | Promise<void>;
+  readonly protectedSurfaces?: MandatorySafetySurfaceRegistry;
 }
 
 export interface AgentVisitAuditRecord {
@@ -298,7 +302,7 @@ interface PendingRequest {
 }
 
 export class AgentVisitService {
-  private readonly transport: Transport;
+  private readonly transport: KeystoneDeliveryInterface;
   private readonly crypto: CryptoProvider;
   private readonly security: EnvelopeSecurity;
   private readonly local: DeviceSessionKeys;
@@ -309,6 +313,7 @@ export class AgentVisitService {
   private readonly host?: AgentVisitHost;
   private readonly onResult?: AgentVisitServiceOptions['onResult'];
   private readonly onRoomMessage?: AgentVisitServiceOptions['onRoomMessage'];
+  private readonly protectedSurfaces: MandatorySafetySurfaceRegistry;
   private readonly invitations = new Map<string, AgentInvitation>();
   private readonly visits = new Map<string, AgentVisit>();
   private readonly tokens = new Map<string, AgentDelegationToken>();
@@ -336,6 +341,7 @@ export class AgentVisitService {
     this.host = options.host;
     this.onResult = options.onResult;
     this.onRoomMessage = options.onRoomMessage;
+    this.protectedSurfaces = options.protectedSurfaces ?? new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()));
     this.unsubscribe = this.transport.onMessage(envelope => { void this.receive(envelope).catch(() => { this.rejectedCount += 1; }); });
     this.readyPromise = this.hydrate();
   }
@@ -344,10 +350,10 @@ export class AgentVisitService {
   close(): void { this.unsubscribe(); for (const value of this.pending.values()) { clearTimeout(value.timer); value.reject(new AgentVisitError('TRANSPORT', 'Agent visit service closed')); } this.pending.clear(); }
   stats(): { accepted: number; rejected: number; pending: number; activeVisits: number; rooms: number } { return { accepted: this.acceptedCount, rejected: this.rejectedCount, pending: this.pending.size, activeVisits: [...this.visits.values()].filter(value => this.effectiveStatus(value) === 'active').length, rooms: [...this.rooms.values()].filter(value => this.effectiveRoomStatus(value) === 'active').length }; }
   audit(): readonly AgentVisitAuditRecord[] { return this.auditEntries.map(clone); }
-  async listInvitations(): Promise<readonly AgentInvitation[]> { await this.ready(); return [...this.invitations.values()].map(value => ({ ...value })); }
-  async listVisits(): Promise<readonly AgentVisit[]> { await this.ready(); return [...this.visits.values()].map(value => this.withEffectiveStatus(value)); }
-  async listSessions(): Promise<readonly GuestAgentSession[]> { await this.ready(); return [...this.sessions.values()].map(value => ({ ...value })); }
-  async listRooms(): Promise<readonly AgentRoom[]> { await this.ready(); return [...this.rooms.values()].map(value => this.withEffectiveRoomStatus(value)); }
+  async listInvitations(): Promise<readonly AgentInvitation[]> { await this.ready(); const safe: AgentInvitation[] = []; for (const value of this.invitations.values()) if (await this.surfaceEligible(value.id, value)) safe.push({ ...value }); return safe; }
+  async listVisits(): Promise<readonly AgentVisit[]> { await this.ready(); const safe: AgentVisit[] = []; for (const value of this.visits.values()) if (await this.surfaceEligible(value.id, value)) safe.push(this.withEffectiveStatus(value)); return safe; }
+  async listSessions(): Promise<readonly GuestAgentSession[]> { await this.ready(); const safe: GuestAgentSession[] = []; for (const value of this.sessions.values()) if (await this.surfaceEligible(value.id, value)) safe.push({ ...value }); return safe; }
+  async listRooms(): Promise<readonly AgentRoom[]> { await this.ready(); const safe: AgentRoom[] = []; for (const value of this.rooms.values()) if (await this.surfaceEligible(value.id, value, 'AGENT_ROOMS')) safe.push(this.withEffectiveRoomStatus(value)); return safe; }
 
   async createInvitation(host: AgentRef, requestedCapabilities: readonly AgentCapabilityRequest[], options: { expiresAt?: string } = {}): Promise<AgentInvitation> {
     await this.ready();
@@ -484,6 +490,7 @@ export class AgentVisitService {
     this.seenIds.add(envelope.id); this.seenIds.add(envelope.nonce); trimSet(this.seenIds, 8_192);
     const body = parseMessage(envelope.body);
     if (!body) { this.rejectedCount += 1; return; }
+    if (!(await this.surfaceEligible(envelope.id, body, this.surfaceForMessage(body)))) { this.rejectedCount += 1; return; }
     switch (body.kind) {
       case 'invitation': await this.receiveInvitation(envelope, body.invitation); break;
       case 'accept': await this.receiveAccept(envelope, body.visit, body.token); break;
@@ -581,10 +588,14 @@ export class AgentVisitService {
   }
 
   private async send(peer: NodeId, body: VisitMessage): Promise<void> {
+    if (!(await this.surfaceEligible(`agent-visit:${peer}`, body, this.surfaceForMessage(body)))) throw new AgentVisitError('UNSHAREABLE_DATA', 'Agent Visit payload failed mandatory safety gating');
     const unsigned: UnsignedEnvelope = { version: 1, type: AGENT_VISIT_ENVELOPE, id: randomId(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + AGENT_VISIT_MAX_LIFETIME_MS).toISOString(), body };
     if (new TextEncoder().encode(canonicalJson(body)).byteLength > AGENT_VISIT_MAX_OBJECT_BYTES) throw new AgentVisitError('INVALID_ARGUMENT', 'Agent visit message is too large');
     await this.transport.connect(peer); await this.transport.send(peer, { ...unsigned, signature: await this.security.sign(unsigned) });
   }
+
+  private surfaceForMessage(body: VisitMessage): 'AGENT_VISITS' | 'AGENT_ROOMS' { return body.kind === 'room' || body.kind === 'room_message' ? 'AGENT_ROOMS' : 'AGENT_VISITS'; }
+  private async surfaceEligible(objectId: string, value: unknown, surface: 'AGENT_VISITS' | 'AGENT_ROOMS' = 'AGENT_VISITS'): Promise<boolean> { return (await this.protectedSurfaces.evaluate(surface, { objectId, domain: 'DIRECT_SHARED', value, content: value, sourceType: 'agent', verified: true, authorized: true, sharing: true })) !== undefined; }
 
   private async resignVisit(value: Omit<AgentVisit, 'signature'>): Promise<AgentVisit> { const { signature: _signature, ...unsigned } = value as Omit<AgentVisit, 'signature'> & { signature?: string }; return { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) }; }
   private sessionsForVisit(id: string): GuestAgentSession[] { return [...this.sessions.values()].filter(value => value.visitId === id); }
@@ -656,7 +667,7 @@ function assertId(value: string): string { if (!safeId(value)) throw new AgentVi
 // Identity IDs are URL-safe base64 public keys and may begin with '-' or '_'.
 // Keep the bounded identifier grammar while accepting those canonical keys.
 function safeId(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}$/.test(value); }
-function randomId(): string { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function randomId(): string { return `${globalThis.crypto.randomUUID()}`; }
 function safeClone<T>(value: T): T { try { return structuredClone(value); } catch { return String(value) as T; } }
 function clone<T>(value: T): T { return structuredClone(value); }
 function stringify(value: unknown): string { try { return JSON.stringify(value) ?? String(value); } catch { return '[unserializable]'; } }

@@ -1,14 +1,27 @@
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { protocolSignedPayload } from '../security/protocol-security.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import { KEYSTONE_OBJECT_VERSION, type ConversationEventObject, type FileObject, type MessageAttachment, type MessageObject, type MessagePayload, conversationEventObjectSchema, messageObjectSchema, unsignedObject } from './object-model.js';
 import { contentUri } from './content.js';
 import type { PeerAbuseGuard } from './safety.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
 
 const MAX_CIPHERTEXT_BYTES = 128 * 1024;
 const MAX_ENVELOPE_LIFETIME_MS = 10 * 60_000;
+/** Durable admission bound for undelivered envelopes per local store. */
+export const MAX_PENDING_ENVELOPES = 8_192;
 const MESSAGE_TYPES = new Set(['social.message', 'social.conversation_event', 'social.delivery_ack', 'social.read_ack', 'social.typing', 'social.presence']);
+
+/** Bounded real-network diagnostics; disabled for normal application runs. */
+function messageDiagnostic(event: string, fields: Readonly<Record<string, unknown>> = {}): void {
+  if ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.KEYSTONE_NETWORK_TIMELINE !== '1') return;
+  const payload = Object.entries(fields).map(([key, value]) => `${key}=${typeof value === 'string' ? value : JSON.stringify(value)}`).join(' ');
+  console.error(`[R0P67-TIMELINE] ${new Date().toISOString()} messaging.${event}${payload ? ` ${payload}` : ''}`);
+}
 
 export interface SocialContact {
   /** Existing Keystone device identity. No username registry is involved. */
@@ -78,9 +91,9 @@ export class InMemorySocialStorage implements SocialStorage {
   async getMessage(id: string) { const value = this.values.get(id); return value ? structuredClone(value) : undefined; }
   async messages(conversationId: string) { return [...this.values.values()].filter(value => value.payload.conversationId === conversationId).sort(compareMessages).map(value => structuredClone(value)); }
   async nextLogicalClock(conversationId: string) { const next = (this.clocks.get(conversationId) ?? 0) + 1; this.clocks.set(conversationId, next); return next; }
-  async enqueue(value: PendingEnvelope) { this.outbox.set(value.id, structuredClone(value)); }
+  async enqueue(value: PendingEnvelope) { if (!this.outbox.has(value.id) && this.outbox.size >= MAX_PENDING_ENVELOPES) throw new Error('Outbox capacity exceeded'); this.outbox.set(value.id, structuredClone(value)); }
   async pending(peer?: NodeId) { return [...this.outbox.values()].filter(value => !peer || value.peer === peer).map(value => structuredClone(value)); }
-  async replacePending(value: PendingEnvelope) { this.outbox.set(value.id, structuredClone(value)); }
+  async replacePending(value: PendingEnvelope) { if (!this.outbox.has(value.id) && this.outbox.size >= MAX_PENDING_ENVELOPES) throw new Error('Outbox capacity exceeded'); this.outbox.set(value.id, structuredClone(value)); }
   async removePending(id: string) { this.outbox.delete(id); }
   async hasSeen(nonce: string) { return this.nonces.has(nonce); }
   async markSeen(nonce: string) { this.nonces.add(nonce); }
@@ -99,8 +112,18 @@ export class DirectMessageService {
   private readonly presence = new Map<NodeId, 'online' | 'offline'>();
   private typingEnabled = true; private readReceiptsEnabled = true; private presenceEnabled = true;
   private conversationPolicy?: (conversationId: string, sender: NodeId) => Promise<boolean>;
+  private flushPromise?: Promise<void>;
+  /**
+   * Flush requests are coalesced while one pass is in flight.  A burst of
+   * offline sends must not enqueue one full outbox scan per message (which
+   * turns a bounded retry queue into O(n²) work).  The set stores either a
+   * concrete peer or `*` for an explicit all-peers flush.
+   */
+  private readonly flushRequests = new Set<string>();
+  private readonly retryTimers = new Map<NodeId, ReturnType<typeof setTimeout>>();
+  private closed = false;
   constructor(
-    private readonly transport: Transport,
+    private readonly transport: KeystoneDeliveryInterface,
     private readonly storage: SocialStorage,
     private readonly crypto: CryptoProvider,
     private readonly local: DeviceSessionKeys,
@@ -109,15 +132,16 @@ export class DirectMessageService {
     private readonly cipher: DirectMessageCipher,
     private readonly now: () => number = () => Date.now(),
     private readonly abuse?: PeerAbuseGuard,
-  ) { contacts.forEach(contact => this.contacts.set(contact.nodeId, contact)); this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
-  close(): void { this.unsubscribe(); for (const peers of this.typing.values()) for (const timer of peers.values()) clearTimeout(timer); this.typing.clear(); }
+    private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime())),
+  ) { contacts.forEach(contact => this.contacts.set(contact.nodeId, contact)); this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); if (transport.isDeterministic?.() !== true) void this.rearmPending(); }
+  close(): void { this.closed = true; this.flushRequests.clear(); this.unsubscribe(); for (const peers of this.typing.values()) for (const timer of peers.values()) clearTimeout(timer); this.typing.clear(); for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear(); }
   get localNodeId(): NodeId { return this.local.nodeId; }
   subscribe(listener: (event: DirectMessageEvent) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   setConversationPolicy(policy: ((conversationId: string, sender: NodeId) => Promise<boolean>) | undefined): void { this.conversationPolicy = policy; }
   setTypingIndicatorsEnabled(enabled: boolean): void { this.typingEnabled = enabled; if (!enabled) { for (const peers of this.typing.values()) for (const timer of peers.values()) clearTimeout(timer); this.typing.clear(); } }
   setReadReceiptsEnabled(enabled: boolean): void { this.readReceiptsEnabled = enabled; }
   setPresenceEnabled(enabled: boolean): void { this.presenceEnabled = enabled; if (!enabled) this.presence.clear(); }
-  async conversations(): Promise<readonly DirectConversation[]> { return this.storage.listConversations(); }
+  async conversations(): Promise<readonly DirectConversation[]> { const values = await this.storage.listConversations(); const safe: DirectConversation[] = []; for (const value of values) if (await this.conversationEligible(value)) safe.push(value); return safe; }
   async createConversation(peer: NodeId): Promise<DirectConversation> {
     this.contact(peer); const id = await directConversationId(this.local.nodeId, peer); const existing = await this.storage.getConversation(id); if (existing) return existing;
     const participants = [this.local.nodeId, peer].sort() as [NodeId, NodeId]; const conversation = { id, participants, createdAt: new Date(this.now()).toISOString() };
@@ -154,15 +178,18 @@ export class DirectMessageService {
     return this.publish(peer, { ...original.payload, logicalClock: await this.storage.nextLogicalClock(conversation.id) }, { supersedes: original.id, deleted: true, updatedAt: new Date(this.now()).toISOString() });
   }
   async history(conversationId: string, options: { limit?: number; before?: string } = {}): Promise<readonly MessageObject[]> {
-    const values = await this.storage.messages(conversationId); const before = options.before ? values.findIndex(value => value.id === options.before) : -1;
+    const conversation = await this.storage.getConversation(conversationId); const values = await this.filterMessages(await this.storage.messages(conversationId), conversation?.kind === 'group' ? 'GROUP_CHAT' : 'DIRECT_CHAT'); const before = options.before ? values.findIndex(value => value.id === options.before) : -1;
     const bounded = before >= 0 ? values.slice(0, before) : values; const limit = Math.max(1, Math.min(500, options.limit ?? 500)); return bounded.slice(Math.max(0, bounded.length - limit));
   }
   async searchMessages(query: string, conversationId?: string): Promise<readonly MessageObject[]> {
     const normalized = query.trim().toLocaleLowerCase(); if (!normalized) return [];
     const conversations = conversationId ? [conversationId] : (await this.storage.listConversations()).map(value => value.id); const values: MessageObject[] = [];
-    for (const id of conversations) for (const value of await this.storage.messages(id)) {
+    for (const id of conversations) {
+      const conversation = await this.storage.getConversation(id); const safe = await this.filterMessages(await this.storage.messages(id), conversation?.kind === 'group' ? 'GROUP_CHAT' : 'DIRECT_CHAT');
+      for (const value of safe) {
       const haystack = value.payload.kind === 'reaction' ? value.payload.emoji : `${value.payload.kind === 'attachment' ? value.payload.text ?? '' : value.payload.text} ${value.references.map(reference => reference.id).join(' ')}`;
       if (haystack.toLocaleLowerCase().includes(normalized)) values.push(value);
+      }
     }
     return values;
   }
@@ -180,11 +207,41 @@ export class DirectMessageService {
   async sendConversationMessage(conversationId: string, recipients: readonly NodeId[], payload: MessagePayload, revision: Pick<MessageObject, 'supersedes' | 'updatedAt' | 'deleted'> = {}, references: MessageObject['references'] = []): Promise<MessageObject> {
     if (payload.conversationId !== conversationId) throw new Error('Message conversation mismatch'); const conversation = await this.ensureLocalParticipant(conversationId); const members = conversation.kind === 'group' ? conversation.members ?? conversation.participants : conversation.participants; const peers = uniquePeers(recipients, this.local.nodeId); if (!peers.length) throw new Error('Conversation has no recipients'); peers.forEach(peer => { this.contact(peer); if (!members.includes(peer)) throw new Error('Recipient is not a conversation member'); }); return this.publishToPeers(peers, payload, revision, references);
   }
-  async sendConversationEvent(recipients: readonly NodeId[], event: ConversationEventObject): Promise<void> { conversationEventObjectSchema.parse(event); if (event.author !== this.local.nodeId || !event.payload.members.includes(this.local.nodeId)) throw new Error('Conversation event author mismatch'); for (const peer of uniquePeers(recipients, this.local.nodeId)) { this.contact(peer); await this.queue(peer, 'social.conversation_event', { event }); await this.flush(peer); } }
+  async sendConversationEvent(recipients: readonly NodeId[], event: ConversationEventObject): Promise<void> { conversationEventObjectSchema.parse(event); if (event.author !== this.local.nodeId || !event.payload.members.includes(this.local.nodeId)) throw new Error('Conversation event author mismatch'); if (!(await this.conversationEventEligible(event))) throw new Error('Conversation event failed mandatory SafetySurfaceGate'); for (const peer of uniquePeers(recipients, this.local.nodeId)) { this.contact(peer); await this.queue(peer, 'social.conversation_event', { event }); await this.flush(peer); } }
   async block(peer: NodeId): Promise<void> { await this.storage.setBlocked(peer, true); }
   async unblock(peer: NodeId): Promise<void> { await this.storage.setBlocked(peer, false); }
   async flush(peer?: NodeId): Promise<void> {
-    for (const item of await this.storage.pending(peer)) {
+    // A local send may start a background retry while the caller (or a
+    // reconnect hook) explicitly asks for a flush.  Serialize those attempts
+    // so the second caller waits for the first route observation and then
+    // gets a fresh retry instead of racing into Fabric's duplicate-request
+    // guard and silently leaving the durable item pending.
+    if (peer) this.cancelRetry(peer);
+    this.flushRequests.add(peer ?? '*');
+    if (this.flushPromise) return this.flushPromise;
+    const run = (async () => {
+      while (!this.closed && this.flushRequests.size) {
+        const requested = [...this.flushRequests];
+        this.flushRequests.clear();
+        const flushAll = requested.includes('*');
+        const peers = flushAll ? undefined : new Set<NodeId>(requested as NodeId[]);
+        await this.flushNow(undefined, peers);
+      }
+    })();
+    this.flushPromise = run;
+    try { await run; } finally {
+      if (this.flushPromise === run) this.flushPromise = undefined;
+      // The coalesced pass may have included several peers even though the
+      // first caller supplied only one.  Re-arm from the durable store once
+      // so no peer loses its retry timer after a mixed burst.
+      void this.rearmPending().catch(() => undefined);
+    }
+  }
+  private async flushNow(peer?: NodeId, peers?: ReadonlySet<NodeId>): Promise<void> {
+    const pending = await this.storage.pending(peer);
+    const selected = peers ? pending.filter(item => peers.has(item.peer)) : pending;
+    for (const item of selected) {
+      if (Date.parse(item.envelope.expiresAt) <= this.now()) { await this.storage.removePending(item.id); continue; }
       try { await this.transport.connect(item.peer); await this.transport.send(item.peer, item.envelope); if (item.envelope.type === 'social.message') await this.storage.replacePending({ ...item, attempts: item.attempts + 1, nextAttemptAt: this.now() + retryDelay(item.attempts) }); else await this.storage.removePending(item.id); }
       catch { await this.storage.replacePending({ ...item, attempts: item.attempts + 1, nextAttemptAt: this.now() + retryDelay(item.attempts) }); }
     }
@@ -224,30 +281,94 @@ export class DirectMessageService {
     for (const peer of peers) if (await this.storage.isBlocked(peer)) throw new Error('Cannot send to a blocked identity'); const createdAt = new Date(this.now()).toISOString();
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'message' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt, visibility: 'private' as const, references, payload, ...revision };
     const message: MessageObject = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const conversation = await this.storage.getConversation(payload.conversationId);
+    const surface = conversation?.kind === 'group' ? 'GROUP_CHAT' as const : 'DIRECT_CHAT' as const;
+    if (!await this.messageEligible(message, surface, conversation?.kind === 'group' ? 'GROUP_SHARED' : 'DIRECT_SHARED')) throw new Error('Message failed mandatory SafetySurfaceGate');
     await this.storage.upsertMessage(message); await this.touchConversation(message, false); this.emit({ kind: 'message', peer: peers[0]!, conversationId: payload.conversationId, messageId: message.id, message });
-    for (const peer of peers) { await this.queue(peer, 'social.message', { message }); await this.flush(peer); } return message;
+    for (const peer of peers) { await this.queue(peer, 'social.message', { message }); await this.flushQueued(peer); } return message;
   }
+  /**
+   * Enqueueing is the durable part of a send.  If the transport has already
+   * told us that no live session exists, do not make the caller wait through
+   * the transport's bounded discovery timeout; retry in the background from
+   * the durable outbox instead.  Because the observation can be stale, all
+   * application sends use the same non-blocking path; callers that require a
+   * delivery attempt can invoke the explicit `flush` API.
+   */
+  private async flushQueued(peer: NodeId): Promise<void> {
+    // ControlledTransport is deliberately deterministic: its integration
+    // tests use the pending queue to inject physical reordering. Preserve
+    // that ordering contract without making production transports wait on a
+    // stale route or discovery timeout.
+    if (this.transport.isDeterministic?.() === true) {
+      await this.flush(peer);
+      return;
+    }
+    // A liveness observation is only a hint.  A peer can disappear between
+    // `isPeerConnected` and `connect` (and a provider may briefly retain a
+    // stale socket), so application sends must never wait on the transport's
+    // discovery timeout.  The durable outbox is the source of truth; an
+    // explicit flush/reconnect operation can still await delivery when the
+    // caller asks for it.
+    void this.flush(peer).catch(() => undefined);
+  }
+  /** Re-arm durable outbox delivery after a failed/background attempt. */
+  private async rearmPending(peer?: NodeId): Promise<void> {
+    if (this.closed) return;
+    const pending = await this.storage.pending(peer);
+    const grouped = new Map<NodeId, PendingEnvelope[]>();
+    for (const item of pending) { const values = grouped.get(item.peer) ?? []; values.push(item); grouped.set(item.peer, values); }
+    if (peer && !grouped.has(peer)) this.cancelRetry(peer);
+    for (const [target, values] of grouped) {
+      const nextAttemptAt = Math.min(...values.map(value => Number.isFinite(value.nextAttemptAt) ? value.nextAttemptAt : this.now()));
+      this.scheduleRetry(target, Math.max(0, nextAttemptAt - this.now()));
+    }
+  }
+  private scheduleRetry(peer: NodeId, delayMs: number): void {
+    if (this.closed || this.retryTimers.has(peer)) return;
+    const timer = setTimeout(() => { this.retryTimers.delete(peer); void this.flush(peer).catch(() => undefined); }, Math.max(25, Math.min(delayMs, 60_000)));
+    timer.unref?.(); this.retryTimers.set(peer, timer);
+  }
+  private cancelRetry(peer: NodeId): void { const timer = this.retryTimers.get(peer); if (timer) clearTimeout(timer); this.retryTimers.delete(peer); }
   private async ensureLocalParticipant(conversationId: string): Promise<DirectConversation> { const conversation = await this.storage.getConversation(conversationId); if (!conversation) throw new Error('Unknown conversation'); const members = conversation.kind === 'group' ? conversation.members ?? conversation.participants : conversation.participants; if (!members.includes(this.local.nodeId)) throw new Error('Not a conversation member'); return conversation; }
   private async assertConversationMessage(conversationId: string, messageId: string): Promise<MessageObject> { const message = await this.storage.getMessage(messageId); if (!message || message.payload.conversationId !== conversationId) throw new Error('Unknown conversation message'); return message; }
   private async ownTextMessage(messageId: string): Promise<MessageObject & { payload: Extract<MessagePayload, { kind: 'text' }> }> { const message = await this.storage.getMessage(messageId); if (!message || message.author !== this.local.nodeId || message.payload.kind !== 'text' || message.deleted) throw new Error('Message cannot be changed'); return message as MessageObject & { payload: Extract<MessagePayload, { kind: 'text' }> }; }
   private async receive(envelope: Envelope): Promise<void> {
+    if (envelope.type === 'social.message') messageDiagnostic('receive.start', { id: envelope.id, sender: envelope.sender, recipient: envelope.recipient, nonce: envelope.nonce });
     if (!MESSAGE_TYPES.has(envelope.type) || envelope.recipient !== this.local.nodeId || Date.parse(envelope.expiresAt) <= this.now() || Date.parse(envelope.expiresAt) - this.now() > MAX_ENVELOPE_LIFETIME_MS) return;
-    if (!this.contacts.has(envelope.sender) || await this.storage.isBlocked(envelope.sender) || await this.storage.hasSeen(envelope.nonce) || !(await this.security.verify(envelope))) return;
+    if (!this.contacts.has(envelope.sender)) { messageDiagnostic('receive.reject', { id: envelope.id, reason: 'unknown_contact' }); return; }
+    if (await this.storage.isBlocked(envelope.sender)) { messageDiagnostic('receive.reject', { id: envelope.id, reason: 'blocked' }); return; }
+    if (await this.storage.hasSeen(envelope.nonce)) { messageDiagnostic('receive.reject', { id: envelope.id, reason: 'replay_nonce' }); return; }
+    if (!(await this.security.verify(envelope))) { messageDiagnostic('receive.reject', { id: envelope.id, reason: 'signature' }); return; }
+    if (envelope.type === 'social.message') messageDiagnostic('receive.verified', { id: envelope.id });
     if (this.abuse && !this.abuse.allow({ peer: envelope.sender, kind: envelope.type, bytes: ciphertextBytes(envelope.body), knownContact: true })) return;
     if (!hasBoundedCiphertext(envelope.body)) { this.abuse?.malformed(envelope.sender); return; }
     const body = await this.cipher.decrypt(envelope.body, this.local.encryptionPrivateKey, this.contact(envelope.sender).encryptionPublicKey).catch(() => undefined); if (!body) { this.abuse?.malformed(envelope.sender); return; }
-    let payload: any; try { payload = JSON.parse(body); } catch { this.abuse?.malformed(envelope.sender); return; }
+    let payload: any; try { payload = JSON.parse(body); } catch { this.abuse?.malformed(envelope.sender); messageDiagnostic('receive.reject', { id: envelope.id, reason: 'json' }); return; }
     await this.storage.markSeen(envelope.nonce);
     if (envelope.type === 'social.conversation_event') {
       let event: ConversationEventObject; try { event = conversationEventObjectSchema.parse(payload.event); } catch { this.abuse?.malformed(envelope.sender); return; }
-      if (event.author !== envelope.sender || !(await this.crypto.verify(canonicalJson(unsignedObject(event)), event.signature, this.contact(envelope.sender).signingPublicKey))) { this.abuse?.malformed(envelope.sender); return; }
+      if (event.author !== envelope.sender || !(await this.crypto.verify(canonicalJson(unsignedObject(event)), event.signature, this.contact(envelope.sender).signingPublicKey)) || !(await this.conversationEventEligible(event))) { this.abuse?.malformed(envelope.sender); return; }
       if (await this.storage.hasSeenObject(event.id)) return; await this.storage.markSeenObject(event.id); this.emit({ kind: 'conversation', peer: envelope.sender, conversationId: event.payload.conversationId, conversation: event }); return;
     }
     if (envelope.type === 'social.message') {
       let message: MessageObject; try { message = messageObjectSchema.parse(payload.message); } catch { this.abuse?.malformed(envelope.sender); return; }
       if (message.author !== envelope.sender || !(await this.crypto.verify(canonicalJson(unsignedObject(message)), message.signature, this.contact(envelope.sender).signingPublicKey))) { this.abuse?.malformed(envelope.sender); return; }
       if (this.conversationPolicy && !(await this.conversationPolicy(message.payload.conversationId, envelope.sender))) return;
-      if (await this.storage.upsertMessage(message)) { await this.touchConversation(message, true); this.emit({ kind: 'message', peer: envelope.sender, conversationId: message.payload.conversationId, messageId: message.id, message }); await this.queue(envelope.sender, 'social.delivery_ack', { messageId: message.id, deliveryEnvelopeId: envelope.id }); await this.flush(envelope.sender); }
+      const conversation = await this.storage.getConversation(message.payload.conversationId);
+      // An authenticated message is not enough to infer that an unknown
+      // conversation is a direct chat.  Only the deterministic direct-chat
+      // id may take the direct path; group/community messages must first have
+      // their conversation membership materialized, otherwise they are
+      // rejected before any renderer/index adapter can see them.
+      if (!conversation && message.payload.conversationId !== await directConversationId(this.local.nodeId, message.author)) return;
+      const surface = conversation?.kind === 'group' ? 'GROUP_CHAT' as const : 'DIRECT_CHAT' as const;
+      const text = message.payload.kind === 'reaction' ? message.payload.emoji : message.payload.kind === 'attachment' ? message.payload.text ?? JSON.stringify(message.payload.attachments) : message.payload.text;
+      const eligible = await this.protectedSurfaces.evaluate(surface, { objectId: message.id, value: message, content: message.payload, text, domain: conversation?.kind === 'group' ? 'GROUP_SHARED' : 'DIRECT_SHARED', sourceType: conversation?.kind === 'group' ? 'group' : 'chat', verified: true, authorized: true, sharing: true });
+      if (!eligible) return;
+      const applied = await this.storage.upsertMessage(message);
+      messageDiagnostic('receive.application', { id: message.id, envelopeId: envelope.id, applied });
+      if (applied) { await this.touchConversation(message, true); this.emit({ kind: 'message', peer: envelope.sender, conversationId: message.payload.conversationId, messageId: message.id, message }); await this.queue(envelope.sender, 'social.delivery_ack', { messageId: message.id, deliveryEnvelopeId: envelope.id }); await this.flush(envelope.sender); }
       return;
     }
     if (envelope.type === 'social.typing') { if (typeof payload.isTyping !== 'boolean') return; const conversationId = typeof payload.conversationId === 'string' ? payload.conversationId : undefined; this.updateTyping(conversationId, envelope.sender, payload.isTyping); this.emit({ kind: 'typing', peer: envelope.sender, conversationId, isTyping: payload.isTyping }); return; }
@@ -271,6 +392,30 @@ export class DirectMessageService {
     peers.set(peer, setTimeout(() => { peers?.delete(peer); if (peers && !peers.size) this.typing.delete(conversationId); this.emit({ kind: 'typing', peer, conversationId, isTyping: false }); }, 8_000));
   }
   private contact(peer: NodeId): SocialContact { const contact = this.contacts.get(peer); if (!contact) throw new Error('Unknown social identity'); return contact; }
+  private async filterMessages(values: readonly MessageObject[], surface: 'DIRECT_CHAT' | 'GROUP_CHAT'): Promise<readonly MessageObject[]> {
+    const domain = surface === 'GROUP_CHAT' ? 'GROUP_SHARED' as const : 'DIRECT_SHARED' as const;
+    return (await Promise.all(values.map(async value => {
+      const known = await this.storage.getConversation(value.payload.conversationId);
+      if (!known && value.payload.conversationId !== await directConversationId(this.local.nodeId, value.author)) return undefined;
+      return await this.messageEligible(value, known?.kind === 'group' ? 'GROUP_CHAT' : surface, known?.kind === 'group' ? 'GROUP_SHARED' : domain) ? value : undefined;
+    }))).filter((value): value is MessageObject => !!value);
+  }
+  private async messageEligible(message: MessageObject, surface: 'DIRECT_CHAT' | 'GROUP_CHAT', domain: 'DIRECT_SHARED' | 'GROUP_SHARED'): Promise<boolean> {
+    const text = message.payload.kind === 'reaction' ? message.payload.emoji : message.payload.kind === 'attachment' ? message.payload.text ?? JSON.stringify(message.payload.attachments) : message.payload.text;
+    return (await this.protectedSurfaces.evaluate(surface, { objectId: message.id, value: message, content: message.payload, text, domain, sourceType: surface === 'GROUP_CHAT' ? 'group' : 'chat', verified: true, authorized: true, sharing: true })) !== undefined;
+  }
+  private async conversationEligible(value: DirectConversation): Promise<boolean> {
+    const group = value.kind === 'group';
+    return (await this.protectedSurfaces.evaluate(group ? 'GROUP_CHAT' : 'DIRECT_CHAT', { objectId: value.id, value, content: value, text: JSON.stringify(value), domain: group ? 'GROUP_SHARED' : 'DIRECT_SHARED', sourceType: group ? 'group-conversation' : 'direct-conversation', verified: true, authorized: true, sharing: true })) !== undefined;
+  }
+  private async conversationEventEligible(event: ConversationEventObject): Promise<boolean> {
+    // Conversation events are emitted only by GroupConversationService.  A
+    // two-member group must still use GROUP_CHAT (it is not a direct chat just
+    // because its membership happens to have two identities).
+    const known = await this.storage.getConversation(event.payload.conversationId);
+    const group = known?.kind === 'group' || event.payload.members.length >= 2;
+    return (await this.protectedSurfaces.evaluate(group ? 'GROUP_CHAT' : 'DIRECT_CHAT', { objectId: event.id, value: event, content: event.payload, text: JSON.stringify(event.payload), domain: group ? 'GROUP_SHARED' : 'DIRECT_SHARED', sourceType: 'conversation-event', verified: true, authorized: true, sharing: true })) !== undefined;
+  }
   private emit(event: DirectMessageEvent): void { this.listeners.forEach(listener => listener(event)); }
 }
 
@@ -286,8 +431,8 @@ export class SodiumDirectMessageCipher implements DirectMessageCipher {
 export class ContactEnvelopeSecurity implements EnvelopeSecurity {
   private readonly ready = import('libsodium-wrappers').then(async ({ default: sodium }) => { await sodium.ready; return sodium; }); private readonly keys = new Map<NodeId, string>();
   constructor(private readonly local: DeviceSessionKeys, contacts: readonly SocialContact[]) { this.keys.set(local.nodeId, local.publicKey); contacts.forEach(contact => this.keys.set(contact.nodeId, contact.signingPublicKey)); }
-  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another identity'); const s = await this.ready; return s.to_base64(s.crypto_sign_detached(s.from_string(canonicalJson(envelope)), s.from_base64(this.local.privateKey, s.base64_variants.URLSAFE_NO_PADDING)), s.base64_variants.URLSAFE_NO_PADDING); }
-  async verify(envelope: Envelope): Promise<boolean> { const key = this.keys.get(envelope.sender); if (!key || !envelope.signature) return false; const s = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; return s.crypto_sign_verify_detached(s.from_base64(envelope.signature, s.base64_variants.URLSAFE_NO_PADDING), s.from_string(canonicalJson(unsigned)), s.from_base64(key, s.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
+  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another identity'); const s = await this.ready; return s.to_base64(s.crypto_sign_detached(s.from_string(protocolSignedPayload(envelope.type, envelope)), s.from_base64(this.local.privateKey, s.base64_variants.URLSAFE_NO_PADDING)), s.base64_variants.URLSAFE_NO_PADDING); }
+  async verify(envelope: Envelope): Promise<boolean> { const key = this.keys.get(envelope.sender); if (!key || !envelope.signature) return false; const s = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; return s.crypto_sign_verify_detached(s.from_base64(envelope.signature, s.base64_variants.URLSAFE_NO_PADDING), s.from_string(protocolSignedPayload(envelope.type, unsigned)), s.from_base64(key, s.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
 }
 export async function directConversationId(a: NodeId, b: NodeId): Promise<string> { const material = `keystone:direct-conversation:v1:${[a, b].sort().join(':')}`; const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material)); return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''); }
 /** Deterministic group identity: membership, not a mutable title, defines the conversation. */

@@ -1,19 +1,23 @@
-/// <reference path="../../types/hyperswarm.d.ts" />
-/// <reference path="../../types/hyperdht.d.ts" />
 import * as Y from 'yjs';
-import Hyperswarm from 'hyperswarm';
-import DHT from 'hyperdht';
-import { createHash, randomBytes } from 'node:crypto';
-import type { SwarmConnection } from 'hyperswarm';
-import type { DHTServer, KeyPair, RelaySocket } from 'hyperdht';
+import { randomBytes } from 'node:crypto';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
+import type { NodeId } from '../types.js';
+import { BoundedFrameDecoder, encodeBoundedFrame, parseBoundedJson } from '../security/protocol-security.js';
 
 export interface CapsuleInvitation { version: 1; capsuleId: string; seed: Uint8Array; ephemeralPublicKey: Uint8Array }
 export interface CapsuleCursor { type: 'cursor'; capsuleId: string; participantId: string; name: string; x: number; y: number; sentAt: number }
 export interface CapsuleDocument { id: string; document: Y.Doc; nodes: Y.Map<unknown>; edges: Y.Map<unknown>; resources: Y.Map<unknown> }
 export interface CapsuleNetworkOptions {
   participant: { id: string; name: string };
-  swarmFactory?: () => Hyperswarm;
-  dhtFactory?: () => DHT;
+  /** Canonical Keystone-to-Keystone delivery authority. */
+  transport?: KeystoneDeliveryInterface;
+  /** Application envelope authentication for the Fabric delivery path. */
+  security?: EnvelopeSecurity;
+  /** The participant's authenticated Keystone node id. */
+  localNodeId?: NodeId;
+  /** Explicit capsule peers. Routing/physical provider choice remains in Fabric. */
+  peers?: readonly NodeId[];
   now?: () => number;
 }
 
@@ -54,7 +58,7 @@ export function parseCapsuleInvitation(tokenOrLink: string): CapsuleInvitation {
   const token = tokenOrLink.startsWith('keystone://') ? decodeURIComponent(tokenOrLink.split('/join/')[1]?.split(/[?#]/)[0] ?? '') : tokenOrLink.trim();
   if (!token.startsWith(TOKEN_PREFIX) || token.length > 2_000) throw new Error('Invalid capsule invitation token');
   let raw: unknown;
-  try { raw = JSON.parse(Buffer.from(token.slice(TOKEN_PREFIX.length), 'base64url').toString('utf8')); } catch { throw new Error('Invalid capsule invitation token'); }
+  try { raw = parseBoundedJson(Buffer.from(token.slice(TOKEN_PREFIX.length), 'base64url'), { maxDepth: 4, maxCollectionItems: 8, maxStringBytes: 512, maxNodes: 32 }); } catch { throw new Error('Invalid capsule invitation token'); }
   if (!raw || typeof raw !== 'object') throw new Error('Invalid capsule invitation token');
   const value = raw as Record<string, unknown>; const seed = decode32(value.s); const ephemeralPublicKey = decode32(value.e);
   if (value.v !== 1 || typeof value.c !== 'string' || !validId(value.c)) throw new Error('Invalid capsule invitation token');
@@ -68,20 +72,29 @@ export function capsuleInvitationLink(token: string): string { parseCapsuleInvit
  * presence uses a short-lived HyperDHT stream and is never written to Yjs.
  */
 export class CapsuleNetwork {
-  private readonly swarm: Hyperswarm; private readonly dht: DHT; private readonly now: () => number;
-  private readonly connections = new Set<SwarmConnection>(); private readonly cursorHandlers = new Set<(cursor: CapsuleCursor) => void>();
-  private readonly ephemeralSockets = new Set<RelaySocket>(); private server?: DHTServer; private ownerKeys?: KeyPair; private topic?: Buffer;
+  private readonly now: () => number;
+  private readonly cursorHandlers = new Set<(cursor: CapsuleCursor) => void>();
+  private readonly peers: readonly NodeId[];
+  private readonly transport?: KeystoneDeliveryInterface;
+  private readonly security?: EnvelopeSecurity;
+  private readonly localNodeId?: NodeId;
+  private unsubscribe?: () => void;
   private invitation?: CapsuleInvitation; private started = false;
   constructor(readonly capsule: CapsuleDocument, private readonly options: CapsuleNetworkOptions) {
     if (!options.participant.id.trim() || !options.participant.name.trim()) throw new Error('Participant identity is required');
-    this.swarm = options.swarmFactory?.() ?? new Hyperswarm(); this.dht = options.dhtFactory?.() ?? new DHT(); this.now = options.now ?? Date.now;
+    this.transport = options.transport; this.security = options.security; this.localNodeId = options.localNodeId;
+    this.peers = [...new Set(options.peers ?? [])].filter(peer => peer !== this.localNodeId);
+    this.now = options.now ?? Date.now;
+    if (this.transport && (!this.security || !this.localNodeId)) throw new Error('Fabric-backed CapsuleNetwork requires localNodeId and EnvelopeSecurity');
   }
 
   /** Starts an owner session and returns its bearer invitation token. */
   async host(seed: Uint8Array = randomBytes(32)): Promise<string> {
     if (this.started) throw new Error('Capsule network is already started');
-    this.ownerKeys = DHT.keyPair();
-    const token = createCapsuleInvitation(this.capsule.id, this.ownerKeys.publicKey, seed);
+    // The second key in the invitation remains an opaque, per-session
+    // bootstrap nonce for link compatibility. It is not a route or identity;
+    // Fabric peers are authenticated by the application envelope instead.
+    const token = createCapsuleInvitation(this.capsule.id, randomBytes(32), seed);
     await this.start(parseCapsuleInvitation(token), true);
     return token;
   }
@@ -94,57 +107,61 @@ export class CapsuleNetwork {
   broadcastCursor(position: { x: number; y: number }): void {
     if (!this.invitation || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return;
     const message: CapsuleCursor = { type: 'cursor', capsuleId: this.capsule.id, participantId: this.options.participant.id.slice(0, 128), name: this.options.participant.name.slice(0, 80), x: position.x, y: position.y, sentAt: this.now() };
-    this.cursorHandlers.forEach(handler => handler(message)); this.broadcastEphemeral(message);
+    this.cursorHandlers.forEach(handler => handler(message)); void this.broadcast({ t: 'cursor', cursor: message });
   }
 
   async close(): Promise<void> {
-    this.started = false; this.capsule.document.off('update', this.onDocumentUpdate);
-    for (const socket of this.ephemeralSockets) (socket as RelaySocket & { destroy?: () => void }).destroy?.(); this.ephemeralSockets.clear();
-    await this.server?.close(); await this.swarm.destroy({ force: true }); await this.dht.destroy();
+    this.started = false; this.capsule.document.off('update', this.onDocumentUpdate); this.unsubscribe?.(); this.unsubscribe = undefined;
   }
 
   private async start(invitation: CapsuleInvitation, owner: boolean): Promise<void> {
     if (invitation.capsuleId !== this.capsule.id) throw new Error('Invitation does not match capsule');
-    this.invitation = invitation; this.started = true; this.topic = topicFor(invitation.seed);
-    this.swarm.on('connection', connection => this.attachSync(connection));
-    this.swarm.join(this.topic, { server: true, client: true });
+    this.invitation = invitation; this.started = true;
     this.capsule.document.on('update', this.onDocumentUpdate);
-    if (owner) {
-      this.server = this.dht.createServer(socket => this.attachEphemeral(socket, true));
-      await this.server.listen(this.ownerKeys);
-    } else this.attachEphemeral(this.dht.connect(Buffer.from(invitation.ephemeralPublicKey)), false);
-    await this.swarm.flush();
+    if (!this.transport) return;
+    if (!this.security || !this.localNodeId) throw new Error('Fabric-backed CapsuleNetwork is missing authentication');
+    this.unsubscribe = this.transport.onMessage(envelope => { void this.receive(envelope); });
+    // Fabric has no implicit socket/bearer connection. A participant asks
+    // each explicitly supplied peer for the current state after joining.
+    await this.broadcast({ t: 'sv', s: base64url(Y.encodeStateVector(this.capsule.document)), owner });
   }
 
-  private readonly onDocumentUpdate = (update: Uint8Array, origin: unknown): void => { if (origin === this) return; this.broadcastSync({ t: 'u', u: base64url(update) }); };
-  private attachSync(connection: SwarmConnection): void {
-    this.connections.add(connection); const reader = new FrameReader(message => {
+  private readonly onDocumentUpdate = (update: Uint8Array, origin: unknown): void => { if (origin === this || !this.started) return; void this.broadcast({ t: 'u', u: base64url(update) }); };
+
+  private async broadcast(message: Record<string, unknown>): Promise<void> {
+    if (!this.transport || !this.security || !this.localNodeId) return;
+    for (const peer of this.peers) {
+      try { await this.send(peer, message); } catch { /* local-first: the next explicit sync retries */ }
+    }
+  }
+
+  private async send(peer: NodeId, message: Record<string, unknown>): Promise<void> {
+    if (!this.transport || !this.security || !this.localNodeId) return;
+    const unsigned: UnsignedEnvelope = { version: 1, type: 'sync.context_capsule', id: crypto.randomUUID(), sender: this.localNodeId, recipient: peer, nonce: crypto.randomUUID(), expiresAt: new Date(this.now() + 60_000).toISOString(), body: { capsuleId: this.capsule.id, message } };
+    await this.transport.connect(peer); await this.transport.send(peer, { ...unsigned, signature: await this.security.sign(unsigned) });
+  }
+
+  private async receive(envelope: Envelope): Promise<void> {
+    if (!this.started || !this.transport || !this.security || !this.localNodeId || envelope.type !== 'sync.context_capsule' || envelope.recipient !== this.localNodeId) return;
+    if (this.peers.length && !this.peers.includes(envelope.sender)) return;
+    if (Date.parse(envelope.expiresAt) <= this.now() || !(await this.security.verify(envelope))) return;
+    const body = envelope.body && typeof envelope.body === 'object' ? envelope.body as { capsuleId?: unknown; message?: unknown } : {};
+    if (body.capsuleId !== this.capsule.id || !body.message || typeof body.message !== 'object') return;
+    const message = body.message as Record<string, unknown>;
+    try {
       if (message.t === 'u' && typeof message.u === 'string') Y.applyUpdate(this.capsule.document, decodeBytes(message.u), this);
-      if (message.t === 'sv' && typeof message.s === 'string') writeFrame(connection, { t: 'u', u: base64url(Y.encodeStateAsUpdate(this.capsule.document, decodeBytes(message.s))) });
-    });
-    connection.on('data', chunk => reader.push(Buffer.from(chunk))); connection.on('close', () => this.connections.delete(connection)); connection.on('error', () => this.connections.delete(connection));
-    writeFrame(connection, { t: 'sv', s: base64url(Y.encodeStateVector(this.capsule.document)) });
+      else if (message.t === 'sv' && typeof message.s === 'string') await this.send(envelope.sender, { t: 'u', u: base64url(Y.encodeStateAsUpdate(this.capsule.document, decodeBytes(message.s))) });
+      else if (message.t === 'cursor' && message.cursor && typeof message.cursor === 'object') { const cursor = validateCursor(message.cursor as Record<string, unknown>, this.capsule.id, this.now()); if (cursor) this.cursorHandlers.forEach(handler => handler(cursor)); }
+    } catch { /* malformed/untrusted capsule updates are discarded */ }
   }
-  private broadcastSync(message: Record<string, unknown>): void { for (const connection of this.connections) writeFrame(connection, message); }
-  private attachEphemeral(socket: RelaySocket, relay: boolean): void {
-    this.ephemeralSockets.add(socket); const reader = new FrameReader(value => {
-      const cursor = validateCursor(value, this.capsule.id, this.now()); if (!cursor) return;
-      this.cursorHandlers.forEach(handler => handler(cursor));
-      if (relay) for (const peer of this.ephemeralSockets) if (peer !== socket) writeFrame(peer, cursor);
-    });
-    socket.on('data', chunk => reader.push(Buffer.from(chunk))); socket.on('close', () => this.ephemeralSockets.delete(socket)); socket.on('error', () => this.ephemeralSockets.delete(socket));
-  }
-  private broadcastEphemeral(cursor: CapsuleCursor): void { for (const socket of this.ephemeralSockets) writeFrame(socket, cursor); }
 }
 
 class FrameReader {
-  private buffer = Buffer.alloc(0);
+  private readonly decoder = new BoundedFrameDecoder({ maxFrameBytes: MAX_FRAME_BYTES, maxPendingBytes: MAX_FRAME_BYTES * 2 });
   constructor(private readonly receive: (value: Record<string, unknown>) => void) {}
-  push(chunk: Buffer): void { this.buffer = Buffer.concat([this.buffer, chunk]); while (this.buffer.length >= 4) { const length = this.buffer.readUInt32BE(0); if (length > MAX_FRAME_BYTES) { this.buffer = Buffer.alloc(0); return; } if (this.buffer.length < length + 4) return; const body = this.buffer.subarray(4, length + 4); this.buffer = this.buffer.subarray(length + 4); try { const value = JSON.parse(body.toString('utf8')); if (value && typeof value === 'object' && !Array.isArray(value)) this.receive(value); } catch { /* discard malformed untrusted frames */ } } }
+  push(chunk: Buffer): void { if (chunk.byteLength > MAX_FRAME_BYTES * 2) return; let frames; try { frames = this.decoder.push(chunk); } catch { return; } for (const frame of frames) { try { const value = parseBoundedJson<Record<string, unknown>>(frame.bytes, { maxDepth: 16, maxCollectionItems: 512, maxStringBytes: MAX_FRAME_BYTES * 2, maxNodes: 4096 }); if (value && typeof value === 'object' && !Array.isArray(value)) this.receive(value); } catch { /* discard malformed untrusted frames */ } } }
 }
-function writeFrame(stream: NodeJS.WritableStream, value: unknown): void { const body = Buffer.from(JSON.stringify(value), 'utf8'); if (body.length > MAX_FRAME_BYTES) throw new Error('Capsule frame is too large'); const frame = Buffer.allocUnsafe(body.length + 4); frame.writeUInt32BE(body.length, 0); body.copy(frame, 4); stream.write(frame); }
 function capsuleDocument(id: string, document: Y.Doc): CapsuleDocument { return { id, document, nodes: document.getMap('nodes'), edges: document.getMap('edges'), resources: document.getMap('resources') }; }
-function topicFor(seed: Uint8Array): Buffer { return createHash('sha256').update('keystone/context-capsule/v1').update(seed).digest(); }
 function validId(value: string): boolean { return value.length > 0 && value.length <= 160 && /^[a-zA-Z0-9._:-]+$/.test(value); }
 function base64url(value: Uint8Array): string { return Buffer.from(value).toString('base64url'); }
 function decodeBytes(value: string): Uint8Array { if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error('Invalid base64url value'); return new Uint8Array(Buffer.from(value, 'base64url')); }

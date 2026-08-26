@@ -1,6 +1,6 @@
 # Асинхронный протокол социальных агентов
 
-Phase 39 добавляет локальный mailbox для Personal Agent. `AgentMailbox`
+Протокол социальных агентов предоставляет локальный mailbox для Personal Agent. `AgentMailbox`
 использует существующие аутентифицированные `Transport`, `EnvelopeSecurity`
 и шифрование на ключ получателя (`SodiumDirectMessageCipher`). Это не
 центральный брокер, каталог и не облачная очередь.
@@ -36,4 +36,4 @@ Room не наследует права Agent Visit и никогда автом
 Mobile UI показывает Inbox, Sent Tasks, ответы/receipts, контакты и trust,
 presence и queued state. Native host устанавливает аутентифицированный
 transport и зашифрованное durable storage. Центрального agent broker,
-глобального каталога, telemetry, рекламы или monetization нет.
+глобального каталога или telemetry нет.

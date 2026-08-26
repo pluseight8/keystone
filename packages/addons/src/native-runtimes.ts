@@ -14,10 +14,24 @@ export interface NativeSandboxBridge {
       process: 'deny';
       clipboard: 'deny';
     };
+    /** The bridge must not inherit the host environment. */
+    environment?: Readonly<Record<string, string>>;
+    /** Optional content-addressed artifact identifier, never an ambient path. */
+    artifactHash?: string;
   }): Promise<{
     invoke(method: string, input: JsonValue): Promise<JsonValue>;
     destroy(): Promise<void>;
   }>;
+}
+
+/**
+ * A production bridge is expected to implement this contract with a separate
+ * OS process/worker or WASM runtime. The adapter intentionally exposes no
+ * `process`, filesystem, environment or native module handles to Plugin code.
+ */
+export interface ProcessSandboxBridge extends NativeSandboxBridge {
+  readonly processIsolated: true;
+  readonly hardLimits?: { readonly memoryBytes?: number; readonly cpuMillis?: number; readonly maxChildren: 0 };
 }
 
 /**
@@ -49,6 +63,7 @@ function createNativeRuntime(bridge: NativeSandboxBridge, isolation: AddonSandbo
         bundle,
         onHostCall: hostCall,
         policy: { network: 'deny', filesystem: 'deny', process: 'deny', clipboard: 'deny' },
+        environment: {},
       });
       return { invoke: (method, input) => native.invoke(method, input), dispose: () => native.destroy() };
     },

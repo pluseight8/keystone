@@ -77,7 +77,7 @@ The same API supports “each morning summarize unread Communities”, “when a
 arrives classify it locally”, “when a followed creator starts Live create a
 local notification”, and “each evening create a local daily summary”. These
 examples use existing typed tools and Chronos; they do not add a cloud
-scheduler, shell access, marketplace, advertising, payments, or monetization.
+scheduler, shell access, or unrestricted external execution.
 
 The mobile `Automations` screen is host-neutral: it shows configuration, next
 run, job history, enabled state, and pending approvals. Durable execution and

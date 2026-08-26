@@ -39,5 +39,4 @@ ContextBuilder. Public discovery для локальной автоматиза�
 
 Поддерживаются примеры: утренняя сводка непрочитанных Communities, локальная
 классификация нового файла, локальное уведомление о начале Live у followed
-creator и вечерняя daily summary. Нет cloud scheduler, shell, marketplace,
-рекламы, платежей или монетизации.
+creator и вечерняя daily summary. Нет cloud scheduler или shell.

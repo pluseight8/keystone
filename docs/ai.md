@@ -1,69 +1,113 @@
-<p align="center"><img src="../branding/logos/logo+text-of-logo.png" alt="Keystone" width="420"></p>
+# Personal AI
 
-# AI providers and command processing
+Keystone fully works without generative Local AI. Local AI is optional, but
+strongly recommended when the owner wants richer search, summaries, planning
+or assistance. Deterministic product behavior, policy checks and ordinary
+local search do not depend on a model.
 
-For local/trusted-first planning and isolated external subtasks, see
-[AI orchestration](ai-orchestration.md).
+The permanent rule is:
 
-For typed tools, capability approval and source-available skills, see
-[AI tools](ai-tools.md) and [skills](skills.md).
+> Models propose. Policy decides. The user authorizes consequences.
 
-For local-first agents, durable sessions/runs and bounded context, see
-[agents](agents.md), [agent sessions](agent-sessions.md) and
-[context engine](context-engine.md).
+A model is always **untrusted compute**. Compatibility is not a vendor
+allowlist or a trust decision.
 
-For safe scheduled/event-driven Agent jobs, see
-[Agent automation](agent-automation.md) and [Chronos + Agents](chronos-agents.md).
+## Model providers
 
-For durable, provenance-aware Personal Memory and local consolidation, see
-[memory](memory.md) and [memory consolidation](memory-consolidation.md).
+The owner may use a built-in local runtime, llama.cpp, Ollama, LM Studio, a
+localhost OpenAI-compatible endpoint or another compatible local model/fine-
+tune. The host owns model files, memory, acceleration, loading and unloading;
+the core owns request identity, bounds, cancellation and policy. Remote or
+external providers are optional adapters, never a silent replacement for
+private Local AI.
 
-`AICommandProcessor` separates intent routing from execution. `AIModelAdapter`
-supports three user-selected provider classes: `local` (OpenAI-compatible local
-runtime), `oauth` (short-lived access-token callback) and `api` (user API key).
-Secrets are supplied at call time and must live in the OS keychain, never in the
-prompt or repository.
+Model output is schema-checked, bounded and treated as a proposal. Invalid
+nodes, fields, actions or tool calls fail closed. A model cannot create an
+authority by naming a tool, inventing an object ID or claiming that a user
+approved something.
 
-The model can call only `create_node_action`. Its output is schema-checked
-against the trusted-node registry and each node's field allowlist. Invalid or
-invented nodes fail closed. The resulting canonical action receives a BLAKE2b
-hash and always has `requiresConfirmation: true`.
+## Context and Memory
 
-Example:
+The context resolver starts from an explicit object, tab, workspace, task or
+user selection. It checks source permission, deletion, visibility and data
+class before returning bounded citations. “Not found” and “not available” are
+valid results.
 
-```ts
-const model = new OpenAICompatibleAdapter({
-  kind: 'local',
-  endpoint: 'http://127.0.0.1:11434/v1/chat/completions',
-  model: 'user-selected-model'
-});
-const processor = new AICommandProcessor(model, new SodiumCryptoProvider());
-```
+Personal Memory is an owner-managed source with provenance and retention
+controls. Mail, Contacts, Documents, Capture, Tasks and feeds are not an
+automatic dumping ground for Memory. Ingestion and consolidation follow the
+source's explicit policy and can be reviewed locally.
 
-## Local RAG
+RAG indexes local objects and derived text in a bounded local index. Retrieved
+text is context, not authority. A note, filename, webpage, email, message,
+OCR result, feed entry or task can contain prompt injection; it cannot expand
+the model's tools, permissions or native capabilities.
 
-`RAGManager` indexes Life Map nodes, notes, and Context Capsules from a
-`PersonalEcosystemDocument` or `Y.Doc`. The default
-`TransformersEmbeddingProvider` downloads its quantized model once and performs
-later inference locally; `OllamaEmbeddingProvider` can instead use a local
-Ollama process. Documents and vectors live in an in-memory Orama database and
-are never uploaded by the RAG layer.
+## What Local AI may do
 
-```ts
-const rag = new RAGManager();
-const detach = rag.attach(yDoc); // also indexes nested remote Yjs updates
-const context = await rag.search('documents related to the garden project');
-// Call detach() when the document is no longer active.
-```
+Local AI can answer, summarize, classify or propose edits within the selected
+scope. It may suggest a Task, Calendar time, Vault note, Capture destination,
+document annotation or browser action, but each write or external effect uses
+the owning service's authorization and confirmation flow.
 
-If model initialization fails, the manager uses a deterministic local hash
-embedding so offline startup remains functional. Security-sensitive hosts can
-set `fallbackToHash: false` and surface the model error instead. Private
-credential-like fields are excluded from indexed text and result metadata.
+Local AI does not automatically:
 
-## Phase 29 runtime and privacy boundary
+- send Mail or Messages, place Calls, publish, share or invite;
+- change Contact/Identity links, permissions, device trust or security policy;
+- read all Vault, Memory, Contacts, Mail, Tasks, Documents, Capture, Location
+  or private Files because one object was selected;
+- execute remote content, run a command, open an unsafe URL or install a
+  Plugin/Skill;
+- infer a person's location, relationship, identity or consent.
 
-For the provider/model router, local lifecycle and external egress rules, see
-[`ai-runtime.md`](ai-runtime.md) and [`ai-privacy.md`](ai-privacy.md). The
-mandatory `AIEgressFirewall` sends only `PUBLIC`/`USER_EXPLICIT` data to an
-external provider, redacts `PRIVATE` context and denies `SECRET` data.
+## External AI and egress
+
+External AI is an untrusted egress. It never silently substitutes for Local AI
+when private context is involved. Vault, Memory, Contacts, Mail, Tasks,
+Documents, Capture, Location, private Files, credentials and browser session
+material are not sent implicitly.
+
+An explicit external request passes through `AIEgressFirewall`, which applies
+the data class, selected fields, destination, purpose and confirmation policy.
+Only safe public or deliberately user-supplied material may leave the local
+boundary. A provider's response is still untrusted content and cannot approve
+its own action.
+
+## Settings authority
+
+AI can follow a clear owner request only within the current policy category:
+
+| Setting class | AI behavior |
+| --- | --- |
+| `USER_PREFERENCE` | May follow a clear explicit owner request. |
+| `PRIVACY_SETTING` | Must preview and confirm when the choice changes disclosure. |
+| `SECURITY_SETTING` | Requires strong or double confirmation. |
+| `IMMUTABLE_POLICY` | Is never writable by AI, plugins or remote content. |
+
+Remote pages, mail, messages, documents, OCR text, feed entries and captured
+content cannot mutate owner settings. A Settings or policy action is proposed
+through a typed interface and rechecked immediately before execution.
+
+## Agents, tools and automation
+
+Agents have an identity, session, state, context and capabilities; they are not
+an unrestricted model wrapper. Workers, visits, rooms and delegation receive
+only explicit scopes. Tool requests pass through `ToolPolicy`, capability
+checks, bounds and the applicable owner confirmation.
+
+Chronos schedules a bounded approved effect and records its result. A reminder
+is not permission to execute a task. Browser actions, file operations,
+publication, Mail sending, sharing and device placement remain separate typed
+actions.
+
+## Product boundaries
+
+- [Capture](capture.md) offers a destination proposal; captured text, URLs,
+  files and references do not become AI context automatically.
+- [Documents](documents.md), [Photos](photos.md), [Web Library](web-library.md),
+  [Mail](mail.md), [Subscriptions](subscriptions.md) and [Contacts](contacts.md)
+  expose only selected, bounded projections.
+- [Plugins](plugins.md) and [Security](security.md) define the execution and
+  egress boundaries; a provider or Skill cannot widen them.
+- [Memory](memory.md), [Agents](agents.md) and [AI privacy](ai-privacy.md)
+  describe durable context, sessions and external data classes.

@@ -1,24 +1,71 @@
 # Документация Keystone на русском
 
-Это русская точка входа в документацию. Английские страницы остаются каноническими для имён API, схем, URI и фрагментов кода; технические термины в обратных кавычках не переводятся.
+Это русская точка входа в документацию. Канонические страницы ниже описывают
+одну и ту же систему; английские версии остаются источником истины для имён
+API, схем, URI и фрагментов кода. Технические названия в обратных кавычках не
+переводятся.
 
-| Раздел | Русский материал | Английский первоисточник |
-| --- | --- | --- |
-| Архитектура, узлы и границы доверия | [Краткий обзор](social-media.md#общие-принципы) | [ARCHITECTURE](../ARCHITECTURE.md) |
-| Подписи, идентичность и транспорт | [Краткий обзор](social-media.md#общие-принципы) | [protocol](../protocol.md) |
-| Профили, подписки и связи | [Социальный протокол](social-media.md#социальный-граф) | [social-protocol](../social-protocol.md) |
-| Личные сообщения | [Сообщения](social-media.md#личные-сообщения) | [messaging](../messaging.md) |
-| Сообщества и модерация | [Сообщества](communities.md), [модерация](moderation.md) | [communities](../communities.md), [moderation](../moderation.md) |
-| Контент, вложения и P2P медиа | [Контент и медиа](social-media.md#контент-и-вложения) | [content addressing](../content-addressing.md), [attachments](../attachments.md), [media P2P](../media-p2p.md) |
-| Музыка, видео, короткие видео и streams | [Медиа](social-media.md#музыка-видео-короткие-видео-и-стримы) | [music](../music.md), [video](../video.md), [short videos](../short-videos.md), [streams](../streams.md) |
-| Язык интерфейса | [Локализация](../i18n.md#русский) | [Localization](../i18n.md) |
-| Лента, поиск и discovery | [Лента](social-media.md#лента-поиск-и-discovery) | [discovery](../discovery.md) |
-| Hardening, хранение и review | [Hardening](social-media.md#hardening-и-хранение) | [hardening](../hardening.md), [Phase 12 review](../PHASE12_REVIEW.md) |
-| Распределённые тесты и отказы | [Harness](testing/distributed-harness.md), [модель сбоев](testing/failure-model.md), [совместимость](testing/protocol-compatibility.md) | [English testing guides](../testing) |
-| Реальная P2P сеть | [Network harness](testing/real-network.md) | [English network guide](../testing/real-network.md) |
-| Готовность платформ | [Platform readiness](platform-readiness.md) | [English matrix](../PLATFORM_READINESS.md) |
-| Релиз платформ | [Android](release/android.md), [Windows](release/windows.md), [macOS](release/macos.md), [iOS](release/ios.md) | [English release guides](../release) |
-| Безопасность, угрозы и дополнения | [Краткий обзор](social-media.md#безопасность-и-границы) | [security](../security.md), [threat model](../threat-model.md), [addons](../addons.md) |
-| AI, память, агенты, relay и CI | [Краткий обзор](social-media.md#эксплуатация-и-платформы) | [ai](../ai.md), [AI runtime](ai-runtime.md), [AI privacy](ai-privacy.md), [Personal AI Mesh](personal-ai-mesh.md), [AI orchestration](ai-orchestration.md), [memory](memory.md), [memory consolidation](memory-consolidation.md), [AI tools](ai-tools.md), [skills](skills.md), [agents](agents.md), [agent sessions](agent-sessions.md), [context engine](context-engine.md), [automations](agent-automation.md), [Chronos + Agents](chronos-agents.md), [Agent visits](agent-visits.md), [Agent Rooms](agent-rooms.md), [Shared Spaces](shared-spaces.md), [Shared Workspace protocol](shared-workspaces.md), [relay](../relay.md), [ci](../ci.md), [WebRTC permissions](../webrtc-platform-permissions.md) |
+## Продукт
 
-Интерфейс настраивается в Settings → General → Language. Выбор сохраняется локально как `keystone.locale` и применяется на web и mobile поверхностях.
+- [Продукт Keystone](product.md) · [English](../product.md)
+- [Карты, места и навигация](maps.md) · [English](../maps.md)
+- [Почта](mail.md) · [English](../mail.md)
+- [Continuity устройств](continuity.md) · [English](../continuity.md)
+- [Обмен рядом](nearby-exchange.md) · [English](../nearby-exchange.md)
+- [Photos](photos.md) · [English](../photos.md)
+- [Web Library](web-library.md) · [English](../web-library.md)
+- [Universal Inbox](inbox.md) · [English](../inbox.md)
+- [Ленты и подкасты](subscriptions.md) · [English](../subscriptions.md)
+- [Files](files.md) · [English](../files.md)
+- [Tasks](tasks.md) · [English](../tasks.md)
+- [Contacts](contacts.md) · [English](../contacts.md)
+- [Documents](documents.md) · [English](../documents.md)
+- [Capture](capture.md) · [English](../capture.md)
+- [Calendar](calendar.md) · [English](../calendar.md)
+- [Vaults](vaults.md) · [English](../vaults.md)
+- [Messages](messaging.md) · [English](../messaging.md)
+- [Collaboration](collaboration.md) · [English](../collaboration.md)
+
+## Архитектура и сеть
+
+- [Архитектура](architecture.md) · [English](../architecture.md)
+- [Сеть Keystone](connectivity.md) · [English](../connectivity.md)
+- [Протокол](../protocol.md)
+- [Content addressing](../content-addressing.md)
+- [Devices](devices.md) и [NativeHost](native-host.md)
+- [Desktop shell](desktop-shell.md)
+- [Browser](browser-agent-runtime.md), [browser security](browser-security.md)
+  и [WebRTC permissions](../webrtc-platform-permissions.md)
+
+## Безопасность и доверие
+
+- [Безопасность](security.md) · [English](../security.md)
+- [Threat model](threat-model.md) · [English](../threat-model.md)
+- [Security invariants](security-invariants.md), [Security Center](security-center.md)
+- [Untrusted content](untrusted-content.md), [Content safety](content-safety.md)
+- [Secrets](secrets-architecture.md), [OwnerAuthority](owner-authority.md)
+- [Add-ons and plugins](plugins.md) · [English](../plugins.md)
+
+## ИИ, агенты и Skills
+
+- [Персональный ИИ](ai.md) · [English](../ai.md)
+- [AI runtime](ai-runtime.md), [AI privacy](ai-privacy.md), [AI tools](ai-tools.md)
+- [Agents](agents.md), [Agent sessions](agent-sessions.md), [Context engine](context-engine.md)
+- [Memory](memory.md), [Memory consolidation](memory-consolidation.md)
+- [Automation](agent-automation.md), [Chronos](chronos-agents.md)
+- [Пакеты Skills](skill-packages.md), [Skill security](skill-security.md), [Skills](skills.md)
+- [Agent workers](agent-workers.md), [Worker delegation](worker-delegation.md)
+- [Shared Spaces](shared-spaces.md), [Collaboration](collaboration.md)
+
+## Разработка и релиз
+
+- [Разработка](development.md) · [English](../development.md)
+- [Релиз и доказательства](release.md) · [English](../release.md)
+- [Таблица готовности платформ](../PLATFORM_READINESS.md)
+- [Testing: distributed harness](testing/distributed-harness.md), [failure model](testing/failure-model.md),
+  [protocol compatibility](testing/protocol-compatibility.md), [real network](testing/real-network.md)
+- [Android](release/android.md), [Windows](release/windows.md), [macOS](release/macos.md), [iOS](release/ios.md)
+- [Локализация](../i18n.md)
+
+Английская документация содержит дополнительные узкие developer references;
+их ссылки находятся на соответствующих канонических страницах.

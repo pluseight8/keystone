@@ -160,6 +160,37 @@ describe('local-first agent runtime', () => {
     expect((await setup.runtime.getSession(session.id))!.history.some(message => message.role === 'tool')).toBe(true);
   });
 
+  it('compiles and executes a model-proposed ToolFlow through the AgentRun policy boundary', async () => {
+    let count = 0;
+    const local = gateway(async () => {
+      count += 1;
+      if (count === 1) return {
+        text: '',
+        toolProposals: [],
+        toolFlow: {
+          id: 'agent-flow',
+          allowedTools: ['agent.read'],
+          allowedCapabilities: ['READ_PRIVATE'],
+          allowedDataScopes: [{ dataClasses: ['PUBLIC', 'USER_EXPLICIT', 'PRIVATE'] }],
+          steps: [
+            { id: 'read', op: 'CALL_TOOL', toolId: 'agent.read', skillId: 'agent-skill', args: { query: 'flow' }, as: 'value' },
+            { id: 'return', op: 'RETURN', value: { path: 'value', from: { ref: 'value' } } },
+          ],
+        },
+      };
+      return { text: 'flow answer', toolProposals: [] };
+    });
+    const setup = await runtimeWith({ gateway: local, toolIds: ['agent.read'] });
+    const agent = await setup.runtime.createAgent({ id: 'flow-agent', name: 'Flow', toolIds: ['agent.read'], skillIds: ['agent-skill'], contextCapabilities: ['HISTORY'] });
+    const session = await setup.runtime.createSession({ agentId: agent.id });
+    const run = await setup.runtime.run(session.id, { text: 'use a flow' });
+    expect(run.state).toBe('completed');
+    expect(run.output).toBe('flow answer');
+    expect(run.toolCallCount).toBe(1);
+    expect(setup.calls).toEqual(['flow']);
+    expect((await setup.runtime.getSession(session.id))!.history.some(message => message.toolId === 'toolflow:agent-flow')).toBe(true);
+  });
+
   it('stops identical tool loops before an unbounded retry', async () => {
     const local = gateway(async () => ({ text: '', toolProposals: [{ toolId: 'agent.read', skillId: 'agent-skill', arguments: { query: 'repeat' } }] }));
     const setup = await runtimeWith({ gateway: local, toolIds: ['agent.read'] });

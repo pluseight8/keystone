@@ -1,6 +1,6 @@
 # Групповые чаты
 
-Группы Keystone — local-first проекция существующих Identity, encrypted messaging и content-addressed storage. Центрального message server, обязательного cloud push, рекламы, marketplace, платежей и monetization нет.
+Группы Keystone — local-first проекция существующих Identity, encrypted messaging и content-addressed storage. Центрального message server и обязательного cloud push нет.
 
 ## Identity и состав
 

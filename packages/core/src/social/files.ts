@@ -19,6 +19,9 @@ import {
   contentUri,
   sha256,
 } from './content.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
+import { FileContainmentService } from '../security/untrusted-content.js';
 
 /** A writable local content provider. LocalContentStore and host adapters can implement this boundary. */
 export interface WritableFileContentStore {
@@ -93,6 +96,9 @@ export class FileService {
     private readonly content: WritableFileContentStore,
     private readonly now: () => number = () => Date.now(),
     private readonly storagePolicy?: FileStorageManager,
+    private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime())),
+    /** Received/shared bytes always enter quarantine; local import never calls this boundary. */
+    private readonly containment = new FileContainmentService(),
   ) {}
 
   async import(input: FileImportInput): Promise<FileImportResult> {
@@ -116,6 +122,7 @@ export class FileService {
     const payload: FilePayload = { ...payloadWithoutId, fileId };
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'file_object' as const, id: fileId, author: this.local.nodeId, createdAt: new Date(this.now()).toISOString(), visibility, references: input.communityId ? [{ id: input.communityId, type: 'community' as const }] : [], payload };
     const file = fileObjectSchema.parse({ ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) });
+    if (visibility !== 'private' && !(await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: visibility === 'public' ? 'PUBLIC' : visibility === 'community' ? 'COMMUNITY' : 'DIRECT_SHARED', sourceType: 'file', verified: true, authorized: true, sharing: true }))) throw new Error('File failed mandatory SafetySurfaceGate');
     const saved = await this.storage.save(file);
     if (!saved) { const existing = await this.storage.get(fileId); if (existing) { await this.storagePolicy?.register(existing, { userOwned: true }); return { file: existing, manifest }; } }
     await this.storagePolicy?.register(file, { userOwned: true });
@@ -124,6 +131,13 @@ export class FileService {
 
   async importEncrypted(input: Omit<FileImportInput, 'bytes' | 'encrypted' | 'visibility'> & { ciphertext: Uint8Array; encrypted: EncryptedFileMetadata; visibility?: 'private' | 'community' }): Promise<FileImportResult> {
     return this.import({ ...input, bytes: input.ciphertext, visibility: input.visibility ?? 'private' });
+  }
+
+  /** Materialize bytes received from P2P/browser/shared storage only through
+   * the R0P59 quarantine boundary. Metadata-only ingest intentionally does not
+   * classify ciphertext or a manifest as plaintext content. */
+  async receiveBytes(file: FileObject, bytes: Uint8Array, sourceIdentity = file.payload.uploader): Promise<import('../security/untrusted-content.js').QuarantineEntry | undefined> {
+    return this.containment.receive({ version: 1, transferId: `file:${file.id}:${file.payload.contentId}`, sourceIdentity, objectId: file.id, contentId: file.payload.contentId, filename: file.payload.filename, mimeType: file.payload.mimeType, size: bytes.byteLength, visibility: file.visibility, encrypted: Boolean(file.payload.encrypted), provenance: [{ kind: 'P2P_TRANSFER', contentHash: file.payload.contentId, objectId: file.id, transferId: `file:${file.id}:${file.payload.contentId}`, sourceIdentity, at: new Date(this.now()).toISOString() }] }, bytes);
   }
   async importWithEncryption(input: Omit<FileImportInput, 'bytes' | 'encrypted' | 'visibility'> & { plaintext: Uint8Array; visibility?: 'private' | 'community' }, adapter: FileEncryptionAdapter): Promise<FileImportResult> {
     const encrypted = await adapter.encrypt(input.plaintext, { mimeType: input.mimeType, name: input.filename, communityId: input.communityId, chunkSize: input.chunkSize });
@@ -135,11 +149,13 @@ export class FileService {
     const file = parsed.data;
     if (file.payload.fileId !== file.id || file.payload.uploader !== file.author || `sha256-${file.payload.contentId.replace(/^sha256-/, '')}` !== file.payload.contentId) return undefined;
     if (!(await this.crypto.verify(canonicalJson(unsignedObject(file)), file.signature, file.author))) return undefined;
+    if (file.visibility !== 'private' && !await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: file.visibility === 'public' ? 'PUBLIC' : 'COMMUNITY', sourceType: 'file', verified: true, authorized: true, sharing: true })) return undefined;
     await this.storage.save(file); return file;
   }
-  async get(id: string): Promise<FileObject | undefined> { return this.storage.get(id); }
-  async list(): Promise<readonly FileObject[]> { return this.storage.list(); }
-  async manifest(file: FileObject): Promise<ContentManifest | undefined> { return (await this.content.manifest(file.payload.contentId as ContentId)); }
+  async get(id: string): Promise<FileObject | undefined> { const value = await this.storage.get(id); if (!value || value.visibility === 'private') return value; return await this.eligible(value) ? value : undefined; }
+  async list(): Promise<readonly FileObject[]> { const values = await this.storage.list(); const safe: FileObject[] = []; for (const value of values) if (value.visibility === 'private' || await this.eligible(value)) safe.push(value); return safe; }
+  async manifest(file: FileObject): Promise<ContentManifest | undefined> { if (file.visibility !== 'private' && !(await this.eligible(file))) return undefined; return (await this.content.manifest(file.payload.contentId as ContentId)); }
+  private async eligible(file: FileObject): Promise<boolean> { return (await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: file.visibility === 'public' ? 'PUBLIC' : file.visibility === 'community' ? 'COMMUNITY' : 'DIRECT_SHARED', sourceType: 'file', verified: true, authorized: true, sharing: true })) !== undefined; }
 }
 
 export async function deterministicFileId(payload: Omit<FilePayload, 'fileId'>, visibility: ObjectVisibility): Promise<string> {
@@ -203,7 +219,7 @@ export class FileTransferManager {
   private readonly listeners = new Set<(state: FileTransferState) => void>();
   private maxParallelTransfers: number;
   private bandwidthLimitBytesPerSecond = 0;
-  constructor(private readonly cache: ContentCache, private readonly directory: FileProviderDirectory, private readonly storage?: FileStorageManager, defaultParallel = 3) { this.maxParallelTransfers = Math.max(1, Math.min(16, Math.floor(defaultParallel))); }
+  constructor(private readonly cache: ContentCache, private readonly directory: FileProviderDirectory, private readonly storage?: FileStorageManager, defaultParallel = 3, private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime())), private readonly containment: FileContainmentService = new FileContainmentService()) { this.maxParallelTransfers = Math.max(1, Math.min(16, Math.floor(defaultParallel))); }
   setMaxParallelTransfers(value: number): void { if (!Number.isInteger(value) || value < 1 || value > 16) throw new Error('Invalid transfer parallelism'); this.maxParallelTransfers = value; }
   getMaxParallelTransfers(): number { return this.maxParallelTransfers; }
   setBandwidthLimit(value: number): void { if (!Number.isFinite(value) || value < 0) throw new Error('Invalid bandwidth limit'); this.bandwidthLimitBytesPerSecond = value; }
@@ -211,12 +227,13 @@ export class FileTransferManager {
   subscribe(listener: (state: FileTransferState) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   state(file: FileObject): FileTransferState { return this.states.get(file.id) ?? { file, status: 'idle' }; }
   async download(file: FileObject, options: FileTransferOptions = {}): Promise<Uint8Array> {
+    if (file.visibility !== 'private' && !(await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: file.visibility === 'public' ? 'PUBLIC' : file.visibility === 'community' ? 'COMMUNITY' : 'DIRECT_SHARED', sourceType: 'file', verified: true, authorized: true, sharing: true }))) throw new Error('File failed mandatory SafetySurfaceGate');
     this.pauseRequested.delete(file.id); this.cancelRequested.delete(file.id); this.controllers.get(file.id)?.abort(); const controller = new AbortController(); this.controllers.set(file.id, controller); if (options.signal) { if (options.signal.aborted) controller.abort(); else options.signal.addEventListener('abort', () => controller.abort(), { once: true }); }
     const contentId = file.payload.contentId as ContentId; let manifest: ContentManifest | undefined; try { manifest = options.manifest ?? await this.directory.manifest(contentId); } catch (error) { this.set({ file, status: 'failed', error: error instanceof Error ? error.message : String(error) }); throw error; } if (!manifest || manifest.contentId !== contentId || manifest.byteLength !== file.payload.size) { const error = new Error('File manifest is unavailable or mismatched'); this.set({ file, status: 'failed', error: error.message }); throw error; } await this.cache.putManifest(manifest); const record = this.storage?.record(file.id); if (record) await this.storage!.register(file, { userOwned: record.userOwned, pinned: record.pinned, storageClass: record.storageClass }); const maxParallel = Math.max(1, Math.min(16, Math.floor(options.maxParallel ?? this.maxParallelTransfers)));
     const setAvailability = async (downloading: boolean, providers: readonly ContentProvider[] = []) => { const availability = this.storage?.availability(file, manifest, providers, downloading); const current = this.states.get(file.id); this.set({ file, status: current?.status ?? 'downloading', ...(current?.progress ? { progress: current.progress } : {}), ...(availability ? { availability } : {}) }); };
     this.set({ file, status: 'downloading' });
     try {
-      const queue = this.cache.missing(manifest); if (!queue.length) { const result = await this.cache.read(contentId); if (!result) throw new Error('File download incomplete'); this.set({ file, status: 'complete', availability: this.storage?.availability(file, manifest, [], false) }); return result; }
+      const queue = this.cache.missing(manifest); if (!queue.length) { const result = await this.cache.read(contentId); if (!result) throw new Error('File download incomplete'); await this.quarantineCompletedTransfer(file, contentId, result); this.set({ file, status: 'complete', availability: this.storage?.availability(file, manifest, [], false) }); return result; }
       let cursor = 0; let failure: unknown;
       const worker = async (): Promise<void> => {
         while (true) {
@@ -235,7 +252,11 @@ export class FileTransferManager {
         }
       };
       await Promise.all(Array.from({ length: Math.min(maxParallel, queue.length) }, () => worker())); if (failure) throw failure;
-      const result = await this.cache.read(contentId); if (!result) throw new Error('File download incomplete'); const finalProviders = await this.directory.providers(contentId); const progress: FileDownloadProgress = { fileId: file.id, contentId, completedChunks: manifest.chunks.length, totalChunks: manifest.chunks.length, completedBytes: manifest.byteLength, totalBytes: manifest.byteLength, providerIds: finalProviders.map(provider => provider.id) }; this.set({ file, status: 'complete', progress, availability: this.storage?.availability(file, manifest, finalProviders, false) }); options.onProgress?.(progress); return result;
+      const result = await this.cache.read(contentId); if (!result) throw new Error('File download incomplete');
+      // A completed network transfer is still untrusted bytes. It is placed in
+      // quarantine before the caller may choose an explicit inspection path.
+      await this.quarantineCompletedTransfer(file, contentId, result);
+      const finalProviders = await this.directory.providers(contentId); const progress: FileDownloadProgress = { fileId: file.id, contentId, completedChunks: manifest.chunks.length, totalChunks: manifest.chunks.length, completedBytes: manifest.byteLength, totalBytes: manifest.byteLength, providerIds: finalProviders.map(provider => provider.id) }; this.set({ file, status: 'complete', progress, availability: this.storage?.availability(file, manifest, finalProviders, false) }); options.onProgress?.(progress); return result;
     } catch (error) {
       const paused = this.pauseRequested.has(file.id); const cancelled = this.cancelRequested.has(file.id) || !paused && error instanceof DOMException && error.name === 'AbortError'; const state: FileTransferState = { file, status: paused ? 'paused' : cancelled ? 'cancelled' : 'failed', ...(cancelled || paused ? {} : { error: error instanceof Error ? error.message : String(error) }) }; this.set(state); throw error;
     } finally { if (this.controllers.get(file.id) === controller) this.controllers.delete(file.id); }
@@ -244,9 +265,15 @@ export class FileTransferManager {
   cancel(file: FileObject): void { this.cancelRequested.add(file.id); this.pauseRequested.delete(file.id); this.controllers.get(file.id)?.abort(); }
   resume(file: FileObject, options: FileTransferOptions = {}): Promise<Uint8Array> { this.pauseRequested.delete(file.id); this.cancelRequested.delete(file.id); return this.download(file, options); }
   retry(file: FileObject, options: FileTransferOptions = {}): Promise<Uint8Array> { return this.resume(file, options); }
+  private async quarantineCompletedTransfer(file: FileObject, contentId: ContentId, bytes: Uint8Array): Promise<void> {
+    if (!this.containment) return;
+    const transferId = `p2p:${file.id}:${contentId}`;
+    await this.containment.receive({ version: 1, transferId, sourceIdentity: file.payload.uploader, objectId: file.id, contentId, filename: file.payload.filename, mimeType: file.payload.mimeType, size: bytes.byteLength, visibility: file.visibility, encrypted: Boolean(file.payload.encrypted), provenance: [{ kind: 'P2P_TRANSFER', contentHash: contentId, objectId: file.id, transferId, sourceIdentity: file.payload.uploader, at: new Date().toISOString() }] }, bytes);
+  }
   private async throttle(bytes: number): Promise<void> { if (!this.bandwidthLimitBytesPerSecond) return; await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, Math.ceil(bytes * 1_000 / this.bandwidthLimitBytesPerSecond)))); }
   private set(state: FileTransferState): void { this.states.set(state.file.id, state); this.listeners.forEach(listener => listener(structuredClone(state))); }
 }
+
 
 export function fileReference(file: FileObject): { id: string; type: 'file_object' } { return { id: file.id, type: 'file_object' }; }
 function chunkLength(manifest: ContentManifest, index: number): number { return index === manifest.chunks.length - 1 ? manifest.byteLength - manifest.chunkSize * index : manifest.chunkSize; }

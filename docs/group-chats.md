@@ -1,6 +1,6 @@
 # Group chats
 
-Group chats are local-first projections over Keystone's existing identity, encrypted messaging and content-addressed storage primitives. There is no central message server, cloud push requirement, marketplace, advertising or monetization path.
+Group chats are local-first projections over Keystone's existing identity, encrypted messaging and content-addressed storage primitives. There is no central message server or cloud push requirement.
 
 ## Identity and membership
 

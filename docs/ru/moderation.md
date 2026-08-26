@@ -1,6 +1,6 @@
 # Модерация сообществ
 
-Moderation в Keystone — local-first и подписанная. Центрального moderation backend, глобальной очереди reports, рекламы, платежей и monetization нет.
+Moderation в Keystone — local-first и подписанная. Центрального moderation backend и глобальной очереди reports нет.
 
 `CommunityService` проверяет права owner/admin/mod/member в core. Kick, ban, unban, mute, timeout, удаление сообщения и pin несут actor (author объекта), target, reason и immutable timestamp. Owner нельзя удалить или заблокировать. Обычный member не может выдать роль, пригласить участника, управлять каналами, закрепить сообщение, опубликовать announcement или модерировать через UI либо replay чужого события.
 

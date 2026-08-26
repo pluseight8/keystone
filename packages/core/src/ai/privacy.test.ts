@@ -44,6 +44,17 @@ describe('AI egress firewall and routing', () => {
     expect(wire).not.toContain('do not expose');
   });
 
+  it('never injects system-managed SECRET context into a local model', async () => {
+    const sent: AIProviderRequest[] = [];
+    const router = new AIRouter({ providers: [fakeProvider('local', 'local', sent)], defaultModel: 'local/test' });
+    await router.run({ taskPrivacy: 'private', userText: 'use safe context', context: [
+      { id: 'private:1', dataClass: 'PRIVATE', value: 'allowed private context' },
+      { id: 'key:1', dataClass: 'SECRET', value: 'raw identity key' },
+    ] });
+    expect(sent[0]?.context.map(item => item.id)).toEqual(['private:1']);
+    expect(JSON.stringify(sent[0])).not.toContain('raw identity key');
+  });
+
   it('strips private RAG, chats, files and social data before an external request', async () => {
     const sent: AIProviderRequest[] = [];
     const audit = new AIAuditLog();

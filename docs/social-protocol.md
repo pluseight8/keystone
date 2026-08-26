@@ -1,4 +1,4 @@
-# Social graph and profiles (Phase 3)
+# Social graph and profiles
 
 Русский обзор: [социальный граф](ru/social-media.md#социальный-граф).
 

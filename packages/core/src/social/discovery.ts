@@ -12,12 +12,34 @@ import {
   type KeystoneObjectType,
 } from './object-model.js';
 import { videoPayloadSchema } from './video.js';
+import { SafetyRuntime, SafetySurfaceGate, type ContentDomain } from '../security/content-safety.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
 
 export type DiscoveryScope = 'local' | 'neighbourhood' | 'public';
 /** Where a discovery item came from. This is local policy metadata, not a central index. */
 export type DiscoverySource = 'local' | 'social' | 'public';
 export type FeedSurface = 'home' | 'following' | 'communities' | 'music' | 'videos' | 'shorts' | 'live';
-export type DiscoveryEntry = Pick<KeystoneObject, 'id' | 'type' | 'author' | 'createdAt' | 'visibility' | 'references' | 'payload'>;
+/** Publication metadata is a signed PublicationRevision projection, not a
+ * second blob/object copy. It intentionally stays separate from the generic
+ * KeystoneObject schema while using the same local index/feed surfaces. */
+export interface PublicationDiscoveryEntry {
+  readonly id: string;
+  readonly type: 'publication';
+  readonly author: string;
+  readonly createdAt: string;
+  readonly visibility: 'public' | 'unlisted';
+  readonly references: KeystoneObject['references'];
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+export type DiscoveryEntry = {
+  readonly id: KeystoneObject['id'];
+  readonly type: KeystoneObject['type'] | 'publication';
+  readonly author: KeystoneObject['author'];
+  readonly createdAt: KeystoneObject['createdAt'];
+  readonly visibility: KeystoneObject['visibility'] | 'unlisted';
+  readonly references: KeystoneObject['references'];
+  readonly payload: KeystoneObject['payload'] | Readonly<Record<string, unknown>>;
+};
 export type SearchResult = { object: DiscoveryEntry; score: number; highlights: readonly string[] };
 export type SearchPage = { items: readonly SearchResult[]; nextCursor?: string };
 export type DiscoveryReason = 'following' | 'community' | 'interest' | 'recent' | 'interaction' | 'history' | 'bookmark' | 'trust';
@@ -26,7 +48,7 @@ export type FeedPage = { items: readonly FeedItem[]; nextCursor?: string };
 
 export interface DiscoveryVisibilityPolicy { shouldDisplay(value: DiscoveryEntry): boolean; }
 
-/** Local signals are deliberately device-local. They are never included in P2P advertisements. */
+/** Local signals are deliberately device-local. They are never included in P2P discovery records. */
 export interface LocalInteraction {
   likes?: number;
   reactions?: number;
@@ -80,9 +102,9 @@ export class DeterministicRankingProvider implements RankingProvider {
   }
 }
 
-const discoverableTypes = new Set<KeystoneObjectType>(['identity.profile', 'community', 'post', 'comment', 'track', 'artist', 'album', 'playlist', 'video', 'short_video', 'live_broadcast', 'file_object']);
-const publicTypes = new Set<KeystoneObjectType>(['identity.profile', 'community', 'post', 'track', 'artist', 'album', 'playlist', 'video', 'short_video', 'live_broadcast', 'file_object']);
-const feedTypes = new Set<KeystoneObjectType>(['identity.profile', 'community', 'post', 'track', 'video', 'short_video', 'live_broadcast', 'file_object']);
+const discoverableTypes = new Set<string>(['identity.profile', 'community', 'post', 'comment', 'track', 'artist', 'album', 'playlist', 'video', 'short_video', 'live_broadcast', 'file_object', 'publication']);
+const publicTypes = new Set<string>(['identity.profile', 'community', 'post', 'track', 'artist', 'album', 'playlist', 'video', 'short_video', 'live_broadcast', 'file_object', 'publication']);
+const feedTypes = new Set<string>(['identity.profile', 'community', 'post', 'track', 'video', 'short_video', 'live_broadcast', 'file_object', 'publication']);
 const shortVideoPayloadSchema = z.object({ videoId: z.string().min(1), videoUri: z.string().min(1), durationMs: z.number().int().positive(), aspectRatio: z.literal('9:16') }).passthrough();
 
 /**
@@ -166,19 +188,32 @@ export class UnifiedDiscoveryService {
   private readonly localMessages = new Map<string, DiscoveryEntry>();
   private localHistoryEnabled = true;
   private readonly readyPromise: Promise<void>;
-  constructor(options: { index?: LocalDiscoveryIndex; ranking?: RankingProvider; policy?: DiscoveryVisibilityPolicy; storage?: PersistentDiscoveryStorage } = {}) {
+  private readonly protectedSurfaces: MandatorySafetySurfaceRegistry;
+  constructor(options: { index?: LocalDiscoveryIndex; ranking?: RankingProvider; policy?: DiscoveryVisibilityPolicy; storage?: PersistentDiscoveryStorage; protectedSurfaces?: MandatorySafetySurfaceRegistry } = {}) {
     this.index = options.index ?? new LocalDiscoveryIndex(options.policy, options.ranking);
     this.storage = options.storage;
+    // Shared/public discovery is never allowed to silently downgrade to a raw
+    // index. Hosts may explicitly supply an unavailable registry for fail-closed
+    // testing; normal hosts receive the deterministic local runtime.
+    this.protectedSurfaces = options.protectedSurfaces ?? new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()));
     this.readyPromise = this.hydrate();
   }
+  safetySurfaces(): MandatorySafetySurfaceRegistry { return this.protectedSurfaces; }
   async ready(): Promise<void> { await this.readyPromise; }
   async ingest(entry: DiscoveryEntry, source: DiscoverySource = 'local', permissions?: DiscoveryPermissionContext): Promise<boolean> {
     await this.ready();
     if (!discoverableTypes.has(entry.type) || entry.visibility === 'private' || entry.type === 'message' || entry.type === 'live_chat_message') return false;
     if (source === 'public' && (!this.index.isParticipationEnabled() || entry.visibility !== 'public' || !publicTypes.has(entry.type))) return false;
     if (permissions && !canDisplay(entry, permissions, source === 'public' ? 'public' : 'local')) return false;
+    const domain = discoveryDomain(entry.visibility);
+    const eligible = await this.protectedSurfaces.evaluate('DISCOVERY', { objectId: entry.id, value: entry, content: entry.payload, domain, sourceType: 'discovery', verified: true, authorized: true, sharing: true });
+    if (!eligible) return false;
     const added = this.index.index(entry);
     if (!added && !this.index.has(entry.id)) return false;
+    // Retain the gate-issued token alongside the projected local index entry.
+    // The projection is never accepted here unless the registry has already
+    // validated the token against the current policy/hash/domain.
+    if (added) await this.protectedSurfaces.store('DISCOVERY', eligible);
     this.sources.set(entry.id, source);
     await this.persist();
     return true;
@@ -187,19 +222,32 @@ export class UnifiedDiscoveryService {
     const object = parseDiscoveryObject(value); if (!object || (verify && !(await verify(object)))) return false;
     return this.ingest(object, source, permissions);
   }
+  /** Ingests a verified PublicationService projection without copying its
+   * revision/body. The publication service remains signature authority. */
+  async ingestPublication(entry: PublicationDiscoveryEntry, source: DiscoverySource = 'local', permissions?: DiscoveryPermissionContext): Promise<boolean> {
+    if (!entry || entry.type !== 'publication' || !entry.id || !entry.author || !['public', 'unlisted'].includes(entry.visibility)) return false;
+    return this.ingest(entry, source, permissions);
+  }
   /** Indexes an already-authorized private message for Local Search only. */
   indexLocalMessage(message: DiscoveryEntry): boolean { if (message.type !== 'message' || message.visibility !== 'private') return false; this.localMessages.set(message.id, structuredClone(message)); return true; }
   async search(input: { query: string; scope?: DiscoveryScope; limit?: number; cursor?: string; permissions?: DiscoveryPermissionContext }): Promise<SearchPage> {
     await this.ready(); const scope = input.scope ?? 'local'; const pageResult = this.index.search({ query: input.query, scope, limit: 100 }); const filtered = pageResult.items.filter(item => canDisplay(item.object, input.permissions ?? {}, scope));
+    const safeFiltered = await this.filterSearchResults(filtered, scope);
     if (scope === 'local' && this.localMessages.size) {
       const query = normalizeQuery(input.query); const terms = tokenize(query);
       const messages = [...this.localMessages.values()].filter(value => input.permissions?.canView?.(value, scope) !== false).map(value => { const text = searchable(value); return { object: structuredClone(value), score: scoreMatch(text, terms), highlights: highlights(text, terms), text }; }).filter(item => terms.every(term => item.text.includes(term))).map(({ text: _text, ...item }) => item);
-      return page([...filtered, ...messages].sort((a, b) => b.score - a.score || b.object.createdAt.localeCompare(a.object.createdAt) || a.object.id.localeCompare(b.object.id)), cursor(input.cursor), pageSize(input.limit));
+      return page([...safeFiltered, ...messages].sort((a, b) => b.score - a.score || b.object.createdAt.localeCompare(a.object.createdAt) || a.object.id.localeCompare(b.object.id)), cursor(input.cursor), pageSize(input.limit));
     }
-    return page(filtered, cursor(input.cursor), pageSize(input.limit));
+    return page(safeFiltered, cursor(input.cursor), pageSize(input.limit));
   }
   async feed(input: { surface: FeedSurface; limit?: number; cursor?: string; permissions?: DiscoveryPermissionContext; following?: readonly string[]; communities?: readonly string[]; interests?: readonly string[]; mutedAuthors?: readonly string[]; blockedCommunities?: readonly string[]; now?: number }): Promise<FeedPage> {
-    await this.ready(); const permissions = input.permissions ?? {}; const following = input.following ?? [...this.following]; const communities = input.communities ?? [...this.communities]; const pageResult = this.index.feed({ ...input, following, communities, interests: input.interests, mutedAuthors: [...(input.mutedAuthors ?? []), ...(permissions.blockedAuthors ? [...permissions.blockedAuthors] : [])], blockedCommunities: [...(input.blockedCommunities ?? []), ...(permissions.blockedCommunities ? [...permissions.blockedCommunities] : [])], interactions: this.interactions, trustedAuthors: permissions.trustedAuthors }); const filtered = pageResult.items.filter(item => canDisplay(item.object, permissions, 'local')); return page(filtered, cursor(input.cursor), pageSize(input.limit));
+    await this.ready(); const permissions = input.permissions ?? {}; const following = input.following ?? [...this.following]; const communities = input.communities ?? [...this.communities]; const pageResult = this.index.feed({ ...input, following, communities, interests: input.interests, mutedAuthors: [...(input.mutedAuthors ?? []), ...(permissions.blockedAuthors ? [...permissions.blockedAuthors] : [])], blockedCommunities: [...(input.blockedCommunities ?? []), ...(permissions.blockedCommunities ? [...permissions.blockedCommunities] : [])], interactions: this.interactions, trustedAuthors: permissions.trustedAuthors }); const filtered = pageResult.items.filter(item => canDisplay(item.object, permissions, 'local')); const safeFiltered = await this.filterFeedItems(filtered, input.surface); return page(safeFiltered, cursor(input.cursor), pageSize(input.limit));
+  }
+  /** Recommendation candidates have their own mandatory surface boundary even
+   * when the local ranker is reused by Home. This keeps a future ranker from
+   * accepting raw DiscoveryEntry values by accident. */
+  async recommendations(input: Omit<Parameters<UnifiedDiscoveryService['feed']>[0], 'surface'>): Promise<FeedPage> {
+    await this.ready(); const permissions = input.permissions ?? {}; const following = input.following ?? [...this.following]; const communities = input.communities ?? [...this.communities]; const pageResult = this.index.feed({ ...input, surface: 'home', following, communities, interactions: this.interactions, trustedAuthors: permissions.trustedAuthors }); const filtered = pageResult.items.filter(item => canDisplay(item.object, permissions, 'local')); const safe = await this.filterFeedItemsWithSurface(filtered, 'RECOMMENDATIONS'); return page(safe, cursor(input.cursor), pageSize(input.limit));
   }
   async recordInteraction(id: string, signal: LocalInteraction): Promise<void> { await this.ready(); if (!this.localHistoryEnabled) return; const current = this.interactions.get(id) ?? {}; this.interactions.set(id, { ...current, ...signal, updatedAt: signal.updatedAt ?? new Date().toISOString() }); await this.persist(); }
   async setLocalHistoryEnabled(enabled: boolean): Promise<void> { await this.ready(); this.localHistoryEnabled = enabled; if (!enabled) { this.interactions.clear(); await this.persist(); } }
@@ -214,8 +262,28 @@ export class UnifiedDiscoveryService {
   interaction(id: string): LocalInteraction | undefined { const value = this.interactions.get(id); return value && structuredClone(value); }
   source(id: string): DiscoverySource | undefined { return this.sources.get(id); }
   publicAdvertisement(): readonly Pick<DiscoveryEntry, 'id' | 'type' | 'author' | 'createdAt'>[] { return this.index.publicAdvertisement(); }
-  private async hydrate(): Promise<void> { if (!this.storage) return; const state = await this.storage.read(); for (const entry of Object.values(state.entries)) this.index.index(entry); Object.entries(state.interactions).forEach(([id, value]) => this.interactions.set(id, value)); state.following.forEach(id => this.following.add(id)); state.communities.forEach(id => this.communities.add(id)); Object.entries(state.sources).forEach(([id, source]) => this.sources.set(id, source)); }
+  private async hydrate(): Promise<void> { if (!this.storage) return; const state = await this.storage.read(); for (const entry of Object.values(state.entries)) { const domain = discoveryDomain(entry.visibility); const eligible = await this.protectedSurfaces.evaluate('DISCOVERY', { objectId: entry.id, value: entry, content: entry.payload, domain, sourceType: 'discovery', verified: true, authorized: true, sharing: true }); if (!eligible) continue; if (this.index.index(entry)) await this.protectedSurfaces.store('DISCOVERY', eligible); } Object.entries(state.interactions).forEach(([id, value]) => this.interactions.set(id, value)); state.following.forEach(id => this.following.add(id)); state.communities.forEach(id => this.communities.add(id)); Object.entries(state.sources).forEach(([id, source]) => this.sources.set(id, source)); }
   private async persist(): Promise<void> { if (!this.storage) return; await this.storage.write({ version: 1, entries: Object.fromEntries(this.index.values().map(entry => [entry.id, entry])), interactions: Object.fromEntries(this.interactions), following: [...this.following], communities: [...this.communities], sources: Object.fromEntries(this.sources) }); }
+  private async filterSearchResults(items: readonly SearchResult[], scope: DiscoveryScope): Promise<readonly SearchResult[]> {
+    const surface = 'SEARCH' as const;
+    return (await Promise.all(items.map(async item => (await this.entryEligible(surface, item.object, scope)) ? item : undefined))).filter((item): item is SearchResult => !!item);
+  }
+  private async filterFeedItems(items: readonly FeedItem[], surface: FeedSurface): Promise<readonly FeedItem[]> { return this.filterFeedItemsWithSurface(items, feedSurfaceSafety(surface)); }
+  private async filterFeedItemsWithSurface(items: readonly FeedItem[], surface: 'HOME' | 'RECOMMENDATIONS' | 'MUSIC' | 'VIDEO' | 'SHORTS' | 'LIVE'): Promise<readonly FeedItem[]> {
+    return (await Promise.all(items.map(async item => (await this.entryEligible(surface, item.object, 'local')) ? item : undefined))).filter((item): item is FeedItem => !!item);
+  }
+  private async entryEligible(surface: 'SEARCH' | 'HOME' | 'RECOMMENDATIONS' | 'MUSIC' | 'VIDEO' | 'SHORTS' | 'LIVE', entry: DiscoveryEntry, _scope: DiscoveryScope): Promise<boolean> {
+    if (entry.visibility === 'private') return true;
+    return (await this.protectedSurfaces.evaluate(surface, { objectId: entry.id, value: entry, content: entry.payload, text: searchable(entry), domain: discoveryDomain(entry.visibility), sourceType: 'discovery', verified: true, authorized: true, sharing: true })) !== undefined;
+  }
+}
+
+/** Maps signed object visibility to the safety domain used by discovery adapters. */
+function discoveryDomain(visibility: DiscoveryEntry['visibility']): ContentDomain {
+  if (visibility === 'private') return 'PRIVATE_SELF';
+  if (visibility === 'community') return 'COMMUNITY';
+  if (visibility === 'contacts') return 'DIRECT_SHARED';
+  return 'PUBLIC';
 }
 
 /** Transport is optional and caller-owned: this contract does not imply a Keystone search server. */
@@ -224,9 +292,11 @@ export interface PublicDiscoveryAdapter { searchPublic(query: string, limit: num
 /** The caller routes every remote result through its signed-object verifier before it reaches the local index. */
 export type DiscoveryEntryVerifier = (entry: DiscoveryEntry) => Promise<boolean>;
 export class DiscoveryCoordinator {
-  constructor(private readonly index: LocalDiscoveryIndex, private readonly verify: DiscoveryEntryVerifier, private readonly neighbourhood?: NeighbourhoodDiscoveryAdapter, private readonly publicNetwork?: PublicDiscoveryAdapter) {}
-  async discover(query: string, scope: DiscoveryScope, limit = 20): Promise<SearchPage> { if (scope === 'local') return this.index.search({ query, scope, limit }); const remote = scope === 'neighbourhood' ? await this.neighbourhood?.searchKnownPeers(query, pageSize(limit)) ?? [] : await this.publicNetwork?.searchPublic(query, pageSize(limit)) ?? []; for (const entry of remote) if (await this.verify(entry)) this.index.index(entry); return this.index.search({ query, scope, limit }); }
+  private readonly protectedSurfaces: MandatorySafetySurfaceRegistry;
+  constructor(private readonly index: LocalDiscoveryIndex, private readonly verify: DiscoveryEntryVerifier, private readonly neighbourhood?: NeighbourhoodDiscoveryAdapter, private readonly publicNetwork?: PublicDiscoveryAdapter, protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()))) { this.protectedSurfaces = protectedSurfaces; }
+  async discover(query: string, scope: DiscoveryScope, limit = 20): Promise<SearchPage> { if (scope === 'local') return this.safeSearch(this.index.search({ query, scope, limit }), scope); const remote = scope === 'neighbourhood' ? await this.neighbourhood?.searchKnownPeers(query, pageSize(limit)) ?? [] : await this.publicNetwork?.searchPublic(query, pageSize(limit)) ?? []; for (const entry of remote) { if (!(await this.verify(entry))) continue; const eligible = await this.protectedSurfaces.evaluate('DISCOVERY', { objectId: entry.id, value: entry, content: entry.payload, domain: discoveryDomain(entry.visibility), sourceType: 'discovery', verified: true, authorized: true, sharing: true }); if (eligible) { this.index.index(entry); await this.protectedSurfaces.store('DISCOVERY', eligible); } } return this.safeSearch(this.index.search({ query, scope, limit: 100 }), scope).then(result => page(result.items, 0, pageSize(limit))); }
   advertisePublic(): Promise<void> { return this.publicNetwork?.advertise(this.index.publicAdvertisement()) ?? Promise.resolve(); }
+  private async safeSearch(result: SearchPage, scope: DiscoveryScope): Promise<SearchPage> { const items = (await Promise.all(result.items.map(async item => { if (item.object.visibility === 'private') return undefined; const eligible = await this.protectedSurfaces.evaluate('SEARCH', { objectId: item.object.id, value: item.object, content: item.object.payload, text: searchable(item.object), domain: discoveryDomain(item.object.visibility), sourceType: 'discovery', verified: true, authorized: true, sharing: true }); return eligible ? item : undefined; }))).filter((item): item is SearchResult => !!item); return page(items, 0, pageSize(result.items.length || undefined)); }
 }
 
 function canDisplay(value: DiscoveryEntry, context: DiscoveryPermissionContext, scope: DiscoveryScope): boolean {
@@ -238,6 +308,7 @@ function canDisplay(value: DiscoveryEntry, context: DiscoveryPermissionContext, 
 }
 function visible(value: DiscoveryEntry, scope: DiscoveryScope): boolean { return scope === 'local' ? value.visibility !== 'private' : scope === 'neighbourhood' ? value.visibility === 'contacts' || value.visibility === 'community' || value.visibility === 'public' : value.visibility === 'public' && publicTypes.has(value.type); }
 function onSurface(value: DiscoveryEntry, surface: FeedSurface, following: Set<string>, communities: Set<string>): boolean { if (surface === 'home') return true; if (surface === 'following') return following.has(value.author) || (!!creatorId(value) && following.has(creatorId(value)!)); if (surface === 'communities') return communityIds(value).some(id => communities.has(id)); if (surface === 'music') return value.type === 'track'; if (surface === 'videos') return value.type === 'video' && !isShort(value); if (surface === 'shorts') return isShort(value); return value.type === 'live_broadcast'; }
+function feedSurfaceSafety(surface: FeedSurface): 'HOME' | 'MUSIC' | 'VIDEO' | 'SHORTS' | 'LIVE' { if (surface === 'music') return 'MUSIC'; if (surface === 'videos') return 'VIDEO'; if (surface === 'shorts') return 'SHORTS'; if (surface === 'live') return 'LIVE'; return 'HOME'; }
 function creatorId(value: DiscoveryEntry): string | undefined { const payload = value.payload as Record<string, unknown>; return typeof payload.creatorProfileId === 'string' ? payload.creatorProfileId : undefined; }
 function communityIds(value: DiscoveryEntry): readonly string[] { const payload = value.payload as Record<string, unknown>; const ids = value.references.filter(reference => reference.type === 'community').map(reference => reference.id); if (typeof payload.communityId === 'string') ids.push(payload.communityId); return [...new Set(ids)]; }
 function isShort(value: DiscoveryEntry): boolean { const payload = value.payload as Record<string, unknown>; return value.type === 'short_video' || (value.type === 'video' && !!payload.shortForm && typeof payload.shortForm === 'object' && (payload.shortForm as Record<string, unknown>).aspectRatio === '9:16'); }
@@ -269,5 +340,5 @@ function parseState(value: unknown): DiscoveryState {
 function isStoredEntry(value: unknown): value is DiscoveryEntry {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<DiscoveryEntry>;
-  return typeof candidate.id === 'string' && typeof candidate.type === 'string' && discoverableTypes.has(candidate.type as KeystoneObjectType) && typeof candidate.author === 'string' && typeof candidate.createdAt === 'string' && Number.isFinite(Date.parse(candidate.createdAt)) && candidate.visibility !== 'private' && Array.isArray(candidate.references) && !!candidate.payload && typeof candidate.payload === 'object';
+  return typeof candidate.id === 'string' && typeof candidate.type === 'string' && discoverableTypes.has(candidate.type) && typeof candidate.author === 'string' && typeof candidate.createdAt === 'string' && Number.isFinite(Date.parse(candidate.createdAt)) && candidate.visibility !== 'private' && Array.isArray(candidate.references) && !!candidate.payload && typeof candidate.payload === 'object';
 }

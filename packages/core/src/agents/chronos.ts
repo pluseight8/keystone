@@ -1,5 +1,6 @@
 import type { NodeId } from '../types.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 
 export type ChronosSystemEvent =
   | { type: 'file.created'; path: string; occurredAt: string }
@@ -176,7 +177,7 @@ export class ChronosP2PDelegator implements ChronosTaskDelegator {
   private readonly pending = new Map<string, (result: { accepted: boolean; nodeId?: NodeId; message?: string }) => void>();
   private readonly handlers = new Set<(task: ChronosDelegatedTask, sender: NodeId) => Promise<void>>();
   private readonly seen = new Set<string>(); private readonly unsubscribe: () => void;
-  constructor(private readonly transport: Transport, private readonly options: ChronosP2POptions) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
+  constructor(private readonly transport: KeystoneDeliveryInterface, private readonly options: ChronosP2POptions) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
   onTask(handler: (task: ChronosDelegatedTask, sender: NodeId) => Promise<void>): () => void { this.handlers.add(handler); return () => this.handlers.delete(handler); }
   async delegate(task: ChronosDelegatedTask): Promise<{ accepted: boolean; nodeId?: NodeId; message?: string }> {
     validateDelegatedTask(task);

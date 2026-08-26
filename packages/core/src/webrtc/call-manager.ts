@@ -166,6 +166,7 @@ export class CallManager {
       finally { this.isSettingRemoteAnswerPending = false; }
       return;
     }
+    if (signal.type !== 'call_offer') return;
     const readyForOffer = !this.makingOffer && (pc.signalingState === 'stable' || this.isSettingRemoteAnswerPending);
     const offerCollision = !readyForOffer;
     const polite = this.options.selfId.localeCompare(peerId) > 0;

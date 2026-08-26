@@ -1,6 +1,9 @@
 # Private Communities and group encryption
 
-Phase 25 adds an encrypted path for `private` and `contacts` Communities. The existing public Community path and the existing Hyperswarm/Noise transport are unchanged. Public replication continues to reject non-public Communities unless this private protocol is explicitly used.
+The private-community implementation adds an encrypted path for `private` and
+`contacts` Communities. The existing public Community path and Hyperswarm/Noise
+transport are unchanged. Public replication continues to reject non-public
+Communities unless this private protocol is explicitly used.
 
 ## Protocol boundary
 
@@ -30,4 +33,4 @@ Private state is stored through the host `EncryptedSocialStateStore` and encrypt
 
 ## Limitations and privacy
 
-The protocol provides authenticated membership changes and current-epoch confidentiality, not a central membership registry, cloud backup, DRM, analytics or monetization. Network peers can still observe normal routing metadata. Private Community metadata is never sent through the public Community replication or public discovery protocols. Contacts-only support uses the same encrypted path; public Communities retain their existing clear signed-object behavior and do not pay an encryption overhead.
+The protocol provides authenticated membership changes and current-epoch confidentiality, not a central membership registry, cloud backup or analytics service. Network peers can still observe normal routing metadata. Private Community metadata is never sent through the public Community replication or public discovery protocols. Contacts-only support uses the same encrypted path; public Communities retain their existing clear signed-object behavior without unnecessary encryption overhead.

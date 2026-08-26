@@ -1,6 +1,6 @@
 # Agents
 
-Phase 33 adds a local-first agent runtime on top of the existing AI
+The agent runtime provides a local-first layer on top of the existing AI
 orchestrator, privacy firewall, Personal AI Mesh and typed tool boundary. It
 does not provide a new provider, transport or permission system.
 

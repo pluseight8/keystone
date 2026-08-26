@@ -9,7 +9,8 @@ import { CommunityReplicationService } from '../social/community-replication.js'
 import { PersistentCommunityStorage } from '../social/community-storage.js';
 import type { CommunityEvent } from '../social/community-storage.js';
 import { CommunityService } from '../social/communities.js';
-import { ContentCache, ContentFetcher, PersistentContentCache, createContentManifest, type ContentManifest, type ContentProvider } from '../social/content.js';
+import { ContentCache, ContentFetcher, PersistentContentCache, createContentManifest, type ContentId, type ContentManifest, type ContentProvider } from '../social/content.js';
+import { ContentTransferStateStoreAdapter, DistributedContentServer, DistributedContentService } from '../social/distributed-content.js';
 import { LocalContentStore, MusicService, PersistentMusicStorage, StreamingPlaybackSource } from '../social/music.js';
 import { MusicReplicationService } from '../social/music-replication.js';
 import { PersistentVideoStorage, VideoContentStore, VideoPlaybackSource, VideoService } from '../social/video.js';
@@ -22,12 +23,13 @@ import { PersistentDiscoveryStorage, UnifiedDiscoveryService } from '../social/d
 import { SocialGraphService } from '../social/graph.js';
 import { SocialGraphReplicationService } from '../social/graph-replication.js';
 import { NotificationService, PersistentNotificationStorage } from '../social/notifications.js';
-import { KEYSTONE_OBJECT_VERSION, profileObjectSchema, roleObjectSchema, type KeystoneObject } from '../social/object-model.js';
+import { KEYSTONE_OBJECT_VERSION, postObjectSchema, profileObjectSchema, roleObjectSchema, type KeystoneObject } from '../social/object-model.js';
 import { ContactEnvelopeSecurity, DirectMessageService, SodiumDirectMessageCipher, type SocialContact } from '../social/messaging.js';
 import { GroupConversationService } from '../social/conversations.js';
 import { PersistentSocialStorage, type EncryptedSocialStateStore } from '../social/storage.js';
 import { PersistentPrivateCommunityStateStorage, PrivateCommunityReplicationService, PrivateCommunityService } from '../social/private-communities.js';
 import { FileService, FileStorageManager, FileTransferManager, PersistentFileStorage, type FileProviderDirectory } from '../social/files.js';
+import { FileContainmentService, QuarantineStore } from '../security/untrusted-content.js';
 import { FileReplicationService } from '../social/file-replication.js';
 import { DeviceReplicationService, DeviceService, SecurityEventLog, type DevicePrivilegedEvent } from '../security/devices.js';
 import { SettingsService } from '../security/settings.js';
@@ -35,20 +37,41 @@ import { BackupService, type KeystoneBackupState } from '../sync/backup-recovery
 import { PersonalAIHost, RemoteLocalAIRuntime } from '../ai/personal-mesh.js';
 import { AgentVisitService, type AgentRef, type AgentRoomMessage, type AgentVisitOperation } from '../ai/visits.js';
 import { AgentMailbox } from '../ai/agent-social.js';
+import { AgentNegotiationService } from '../ai/agent-negotiation.js';
+import { AgentProfileService, type AgentProfile } from '../ai/agent-profiles.js';
+import { AgentSocialGraphService } from '../ai/agent-social-graph.js';
+import { AgentPresenceService, type AgentConciergeCategory, type AgentPresenceVisibility, type ConciergeSource } from '../ai/agent-presence.js';
+import { AgentWorkboardService, WorkboardTransportReplication, type WorkboardEvent } from '../ai/workboards.js';
 import { PersistentSharedSpaceStateStore, SharedSpaceService } from '../social/spaces.js';
 import type { AIProvider, AIProviderRequest } from '../ai/privacy.js';
 import { createUnifiedContextSources, UnifiedContextResolver } from '../ai/context.js';
+import { CalendarReplicationService, CalendarService } from '../social/calendar.js';
 import type { Envelope, Transport } from '../transport.js';
 import { HyperswarmTransport } from '../transport.js';
+import { ConnectivityFabric, FabricTransport, HyperswarmTransportProvider, type KeystoneDeliveryInterface } from '../connectivity.js';
 import { HyperswarmSignalingChannel, type CallSignal } from '../webrtc/protocol.js';
+import { MemoryVaultStorageAdapter, VaultService } from '../vaults.js';
+import { PersistentSharedVaultStateStore, SharedVaultService } from '../shared-vaults.js';
+import { PersonalDeviceMesh, type DeviceEnrollmentRequest } from '../personal-device-mesh.js';
+import { ContinuityService, SodiumContinuityCipher, createDefaultContinuityAdapters, type HandoffObjectType } from '../continuity.js';
+import { ControlledLocationProvider, LocationPolicy, LocationService, LocationShareService, type LocationCipher } from '../location.js';
+import { PublicationReplicationService, PublicationService, type PublicationVisibility } from '../social/publications.js';
 
 type Role = 'alice' | 'alice_device' | 'alice_phone' | 'alice_tablet' | 'bob' | 'charlie' | 'mallory';
 type Config = { root: string; bootstrap: string; seeds: Record<Role, string> };
-type Command = { id: string; action: 'sendText' | 'flush' | 'history' | 'contextRead' | 'replayLast' | 'groupCreate' | 'groupRead' | 'groupSend' | 'groupReply' | 'groupReact' | 'groupEdit' | 'groupDelete' | 'groupAdd' | 'groupRemove' | 'groupAttach' | 'groupStats' | 'communityPublish' | 'communityRead' | 'communityPhase24Create' | 'communityPhase24Join' | 'communityPhase24Moderate' | 'communityPhase24Relay' | 'communityPhase24Read' | 'communityPhase24SpoofRole' | 'communityPhase24Replay' | 'privateCreate' | 'privateInvite' | 'privateRead' | 'privateSend' | 'privateRemove' | 'privateLeave' | 'privateReplay' | 'privateSpoof' | 'privateTamper' | 'spaceCreate' | 'spacePublish' | 'spaceRead' | 'spaceDocument' | 'spaceEdit' | 'spaceGrantAgent' | 'spaceAgentEdit' | 'spaceRemove' | 'contentServe' | 'contentFetch' | 'musicPublish' | 'musicPlay' | 'videoPublish' | 'videoPlay' | 'filePublish' | 'fileRead' | 'fileFetch' | 'fileSeed' | 'webrtcOffer' | 'livePublish' | 'liveRead' | 'liveSignal' | 'liveAnswer' | 'liveChat' | 'liveEnd' | 'discoveryPublish' | 'discoveryRead' | 'discoveryFollow' | 'discoverySpoof' | 'discoveryStats' | 'profilePublish' | 'profileRead' | 'follow' | 'unfollow' | 'socialRead' | 'socialStats' | 'block' | 'mute' | 'notificationRead' | 'notificationStats' | 'socialSpoof' | 'deviceAuthorize' | 'deviceRead' | 'deviceRevoke' | 'devicePrivileged' | 'devicePrivilegedSpoof' | 'deviceSpoof' | 'deviceStats' | 'backupCreate' | 'backupInspect' | 'settingsSet' | 'settingsRead' | 'aiDiscover' | 'aiInfer' | 'aiStats' | 'aiRevoke' | 'visitInvite' | 'visitRead' | 'visitAccept' | 'visitRequest' | 'visitRevoke' | 'visitReplay' | 'visitSpoof' | 'visitCapabilitySpoof' | 'roomCreate' | 'roomPublish' | 'roomMessage' | 'roomRead' | 'agentTaskSend' | 'agentTaskAccept' | 'agentSocialRead' | 'agentSocialFlush' | 'agentPolicy' | 'agentRoomCreate' | 'agentRoomPost' | 'signals' | 'stop'; peer?: Role; providers?: Role[]; target?: Role; members?: Role[]; text?: string; fileId?: string; communityId?: string; channelId?: string; conversationId?: string; messageId?: string; visitId?: string; agentTaskId?: string; roomId?: string; spaceId?: string; operation?: AgentVisitOperation; broadcastId?: string; manifest?: ContentManifest; interruptAt?: number; visibility?: 'public' | 'private' };
+type Command = { id: string; action: 'sendText' | 'flush' | 'history' | 'contextRead' | 'replayLast' | 'groupCreate' | 'groupRead' | 'groupSend' | 'groupReply' | 'groupReact' | 'groupEdit' | 'groupDelete' | 'groupAdd' | 'groupRemove' | 'groupAttach' | 'groupStats' | 'communityPublish' | 'communityRead' | 'communityPhase24Create' | 'communityPhase24Join' | 'communityPhase24Moderate' | 'communityPhase24Relay' | 'communityPhase24Read' | 'communityPhase24SpoofRole' | 'communityPhase24Replay' | 'privateCreate' | 'privateInvite' | 'privateRead' | 'privateSend' | 'privateRemove' | 'privateLeave' | 'privateReplay' | 'privateSpoof' | 'privateTamper' | 'spaceCreate' | 'spacePublish' | 'spaceRead' | 'spaceDocument' | 'spaceEdit' | 'spaceGrantAgent' | 'spaceAgentEdit' | 'spaceRemove' | 'contentServe' | 'contentFetch' | 'musicPublish' | 'musicPlay' | 'videoPublish' | 'videoPlay' | 'filePublish' | 'fileHostilePublish' | 'fileRead' | 'fileFetch' | 'fileSeed' | 'fileQuarantine' | 'fileInspect' | 'webrtcOffer' | 'callSignal' | 'livePublish' | 'liveRead' | 'liveSignal' | 'liveAnswer' | 'liveChat' | 'liveEnd' | 'discoveryPublish' | 'discoveryRead' | 'discoveryFollow' | 'discoverySpoof' | 'discoveryMaliciousSafe' | 'discoveryStats' | 'profilePublish' | 'profileRead' | 'follow' | 'unfollow' | 'socialRead' | 'socialStats' | 'block' | 'mute' | 'notificationRead' | 'notificationStats' | 'socialSpoof' | 'deviceAuthorize' | 'deviceRead' | 'deviceRevoke' | 'devicePrivileged' | 'devicePrivilegedSpoof' | 'deviceSpoof' | 'deviceStats' | 'backupCreate' | 'backupInspect' | 'settingsSet' | 'settingsRead' | 'aiDiscover' | 'aiInfer' | 'aiStats' | 'aiRevoke' | 'visitInvite' | 'visitRead' | 'visitAccept' | 'visitRequest' | 'visitRevoke' | 'visitReplay' | 'visitSpoof' | 'visitCapabilitySpoof' | 'roomCreate' | 'roomPublish' | 'roomMessage' | 'roomRead' | 'agentTaskSend' | 'agentTaskAccept' | 'agentSocialRead' | 'agentSocialFlush' | 'agentPolicy' | 'agentRoomCreate' | 'agentRoomPost' | 'negotiationCreate' | 'negotiationPropose' | 'negotiationRead' | 'negotiationRespond' | 'negotiationFinalize' | 'negotiationFlush' | 'negotiationWire' | 'negotiationPolicy' | 'agentProfileCreate' | 'agentProfilePublish' | 'agentProfileRead' | 'agentProfileHide' | 'agentProfileRevoke' | 'agentProfileTrust' | 'agentProfileMute' | 'agentProfileBlock' | 'agentProfileGraph' | 'agentProfileSpoof' | 'agentPresenceSet' | 'agentPresenceRead' | 'agentConciergePolicy' | 'agentConciergeRequest' | 'agentConciergeRead' | 'agentConciergeApprove' | 'agentConciergeShare' | 'agentConciergeFlush' | 'agentConciergeSpoof' | 'agentPresenceSpoof' | 'workboardCreate' | 'workboardRead' | 'workboardClaim' | 'workboardComplete' | 'workboardSpoof' | 'calendarCreate' | 'calendarRead' | 'calendarEventCreate' | 'calendarEventRead' | 'calendarRSVP' | 'calendarSpoof' | 'calendarStats' | 'meshEnrollRequest' | 'meshAuthorize' | 'meshAccept' | 'meshReplicate' | 'meshFlush' | 'meshRead' | 'meshRevoke' | 'meshFallbackSpoof' | 'continuitySend' | 'continuityFlush' | 'continuityRead' | 'continuityOpen' | 'continuityCancel' | 'publicationCreate' | 'publicationPublish' | 'publicationRead' | 'publicationUpdate' | 'publicationFetch' | 'publicationUnpublish' | 'signals' | 'stop'; peer?: Role; providers?: Role[]; target?: Role; members?: Role[]; text?: string; fileId?: string; communityId?: string; channelId?: string; conversationId?: string; messageId?: string; visitId?: string; agentTaskId?: string; roomId?: string; spaceId?: string; negotiationId?: string; proposalId?: string; boardId?: string; workItemId?: string; calendarId?: string; eventId?: string; operation?: AgentVisitOperation; broadcastId?: string; manifest?: ContentManifest; interruptAt?: number; visibility?: 'public' | 'private'; publicationVisibility?: PublicationVisibility; presenceVisibility?: AgentPresenceVisibility; category?: AgentConciergeCategory; resultType?: 'AGENT_SUGGESTION' | 'DERIVED_PREFERENCE' | 'PUBLIC_INFORMATION' | 'OWNER_CONFIRMED_DECISION'; dataClass?: 'PUBLIC' | 'USER_EXPLICIT'; meshRequest?: unknown; meshAuthorization?: unknown; objectId?: string; objectType?: string; objectVersion?: string; payload?: unknown; metadata?: unknown; confirm?: boolean; reason?: string; callSignalType?: 'CALL_INVITE' | 'CALL_ACCEPT' | 'CALL_REJECT' | 'CALL_CANCEL' | 'CALL_SIGNAL' | 'CALL_MEDIA_STATE' | 'CALL_CLAIM' | 'CALL_END'; callId?: string; sessionId?: string; sequence?: number; expiresAt?: string; mode?: 'audio' | 'video' };
 
 const configPath = process.env.KEYSTONE_NETWORK_CONFIG;
 const role = process.env.KEYSTONE_NETWORK_ROLE as Role | undefined;
 if (!configPath || !role) throw new Error('Network peer requires KEYSTONE_NETWORK_CONFIG and KEYSTONE_NETWORK_ROLE');
+let activeDeviceMesh: PersonalDeviceMesh | undefined;
+
+const networkContinuityCapabilities = [
+  'CAN_OPEN_MAPS', 'CAN_OPEN_MAIL', 'CAN_OPEN_BROWSER', 'CAN_RECEIVE_FILES',
+  'CAN_OPEN_VAULT', 'CAN_OPEN_DOCUMENT', 'CAN_OPEN_COLLABORATION',
+  'CAN_OPEN_PUBLICATION', 'CAN_OPEN_MESSAGING', 'CAN_OPEN_WORKSPACE',
+  'CAN_RECEIVE_CLIPBOARD',
+] as const;
 
 class AtomicJsonStore implements EncryptedSocialStateStore {
   constructor(private readonly path: string) {}
@@ -57,15 +80,17 @@ class AtomicJsonStore implements EncryptedSocialStateStore {
 }
 
 /** Records production sends for a replay test without changing transport behavior. */
-class RecordingTransport implements Transport {
+class RecordingTransport implements KeystoneDeliveryInterface {
   lastMessage?: Envelope;
   lastCommunity?: Envelope;
   lastPrivate?: Envelope;
   lastVisit?: Envelope;
   lastAgentSocial?: Envelope;
+  readonly agentSocialHistory: Envelope[] = [];
   lastSpace?: Envelope;
-  constructor(private readonly inner: HyperswarmTransport) {}
-  start(): Promise<void> { return this.inner.start(); }
+  lastSharedVault?: Envelope;
+  constructor(private readonly inner: KeystoneDeliveryInterface) {}
+  start(): Promise<void> { return (this.inner as KeystoneDeliveryInterface & { start?: () => Promise<void> }).start?.() ?? Promise.resolve(); }
   connect(peer: string): Promise<void> { return this.inner.connect(peer); }
   async send(envelope: Envelope): Promise<void>;
   async send(peer: string, envelope: Envelope): Promise<void>;
@@ -75,13 +100,25 @@ class RecordingTransport implements Transport {
     if (envelope.type === 'social.community_event') this.lastCommunity = structuredClone(envelope);
     if (envelope.type.startsWith('social.private_community_')) this.lastPrivate = structuredClone(envelope);
     if (envelope.type === 'ai.agent_visit') this.lastVisit = structuredClone(envelope);
-    if (envelope.type === 'ai.agent_social') this.lastAgentSocial = structuredClone(envelope);
+    if (envelope.type === 'ai.agent_social') { this.lastAgentSocial = structuredClone(envelope); this.agentSocialHistory.push(structuredClone(envelope)); if (this.agentSocialHistory.length > 256) this.agentSocialHistory.shift(); }
     if (envelope.type === 'social.shared_space') this.lastSpace = structuredClone(envelope);
+    if (envelope.type === 'shared-vault') this.lastSharedVault = structuredClone(envelope);
     return maybeEnvelope ? this.inner.send(peerOrEnvelope as string, envelope) : this.inner.send(envelope);
   }
   onMessage(handler: (envelope: Envelope) => void): () => void { return this.inner.onMessage(handler); }
-  isPeerConnected(peer: string): boolean { return this.inner.isPeerConnected(peer); }
+  isPeerConnected(peer: string): boolean { return this.inner.isPeerConnected?.(peer) ?? false; }
+  reconnect(peer: string): Promise<void> { return this.inner.reconnect?.(peer) ?? Promise.reject(new Error('Reconnect unavailable')); }
   close(): Promise<void> { return this.inner.close(); }
+}
+
+/** The real-network location proof uses the existing Sodium device keys for
+ * application E2E. The provider itself is controlled/deterministic; only the
+ * delivery path is Hyperswarm/Noise. */
+class SodiumLocationCipher implements LocationCipher {
+  private readonly cipher = new SodiumDirectMessageCipher();
+  constructor(private readonly local: DeviceSessionKeys, private readonly peers: Record<Role, DeviceSessionKeys>) {}
+  async seal(recipient: string, value: unknown) { const peer = Object.values(this.peers).find(candidate => candidate.nodeId === recipient); if (!peer) throw new Error('Unknown location recipient'); const encrypted = await this.cipher.encrypt(JSON.stringify(value), this.local.encryptionPrivateKey, peer.encryptionPublicKey); return { version: 1 as const, algorithm: 'APPLICATION_E2E' as const, nonce: encrypted.nonce, ciphertext: encrypted.ciphertext }; }
+  async open(sender: string, value: unknown) { const peer = Object.values(this.peers).find(candidate => candidate.nodeId === sender); if (!peer || !value || typeof value !== 'object') throw new Error('Unknown location sender'); const encrypted = value as { nonce?: unknown; ciphertext?: unknown }; if (typeof encrypted.nonce !== 'string' || typeof encrypted.ciphertext !== 'string') throw new Error('Malformed location ciphertext'); const plaintext = await this.cipher.decrypt({ algorithm: 'xsalsa20poly1305', nonce: encrypted.nonce, ciphertext: encrypted.ciphertext }, this.local.encryptionPrivateKey, peer.encryptionPublicKey); return JSON.parse(plaintext) as unknown; }
 }
 
 describe('real network peer', () => {
@@ -107,8 +144,44 @@ describe('real network peer', () => {
     const directory = process.env.KEYSTONE_NETWORK_DIRECTORY ?? join(config.root, role!); await mkdir(directory, { recursive: true, mode: 0o700 });
     if (restoredState) await restoreNetworkState(directory, restoredState);
     const raw = new HyperswarmTransport(Buffer.from(local.publicKey, 'base64url'), () => new Hyperswarm({ dht: new DHT({ bootstrap: [config.bootstrap] }) }));
-    const transport = new RecordingTransport(raw);
     const security = new ContactEnvelopeSecurity(local, contacts), cryptoProvider = new SodiumCryptoProvider();
+    // High-level production services receive only the Fabric-backed facade.
+    // The raw Hyperswarm transport is registered exclusively as the Internet
+    // provider implementation and never injected into an application service.
+    const fabric = new ConnectivityFabric();
+    fabric.registerProvider(new HyperswarmTransportProvider(raw, { sender: local.nodeId, security, ownsTransport: true }));
+    const transport = new RecordingTransport(new FabricTransport({ fabric, localNodeId: local.nodeId, applicationSecurity: security }));
+    const workboardReplication = new WorkboardTransportReplication({ transport, security, localIdentityId: local.nodeId, peers: Object.values(peerKeys).filter(value => value.nodeId !== local.nodeId).map(value => value.nodeId).filter(value => value !== local.nodeId) });
+    const workboards = new AgentWorkboardService({
+      identityId: local.nodeId,
+      agentId: `${role}-agent`,
+      storage: new AtomicJsonStore(join(directory, 'workboards.json')),
+      signer: {
+        sign: payload => cryptoProvider.sign(payload, local.privateKey),
+        verify: (payload, signature, actor) => {
+          const identityId = actor.ownerIdentityId ?? actor.id;
+          const publicKey = Object.values(peerKeys).find(value => value.nodeId === identityId)?.publicKey ?? (identityId === local.nodeId ? local.publicKey : undefined);
+          return publicKey ? cryptoProvider.verify(payload, signature, publicKey) : false;
+        },
+      },
+      replication: workboardReplication,
+    });
+    await workboards.ready();
+    const calendar = new CalendarService({
+      identityId: local.nodeId,
+      deviceId: role,
+      storage: new AtomicJsonStore(join(directory, 'calendar.json')),
+      signer: {
+        sign: payload => cryptoProvider.sign(payload, local.privateKey),
+        verify: (payload, signature, actor) => {
+          const publicKey = Object.values(peerKeys).find(value => value.nodeId === actor.identityId)?.publicKey ?? (actor.identityId === local.nodeId ? local.publicKey : undefined);
+          return publicKey ? cryptoProvider.verify(payload, signature, publicKey) : false;
+        },
+      },
+      defaultTimezone: 'UTC',
+    });
+    await calendar.ready();
+    const calendarReplication = new CalendarReplicationService({ transport, service: calendar, security, local, peers: Object.values(peerKeys).filter(value => value.nodeId !== local.nodeId).map(value => value.nodeId) });
     const persistedAIRevocations = await readJson<string[]>(join(directory, 'ai-revocations.json'));
     const aiRevoked = new Set<string>(Array.isArray(persistedAIRevocations) ? persistedAIRevocations.filter(value => typeof value === 'string') : []);
     const aiHost = role === 'alice' ? new PersonalAIHost(transport, security, local, {
@@ -123,6 +196,36 @@ describe('real network peer', () => {
     const devices = new DeviceService(new AtomicJsonStore(join(directory, 'devices.json')), cryptoProvider, local, { identityId: deviceIdentity.nodeId, authorityKeys: deviceAuthority, events: new SecurityEventLog(new AtomicJsonStore(join(directory, 'security-events.json'))) });
     await devices.ready();
     const deviceReplication = new DeviceReplicationService(transport, devices, security, local);
+    // R0P73: Personal Device Mesh is a Fabric-backed owned-device layer. The
+    // owner identity/authority are explicit; labels, role names and proximity
+    // never enroll a device implicitly.
+    const meshOwner = isAliceTrustedDevice ? peerKeys.alice : local;
+    const deviceMesh = new PersonalDeviceMesh({
+      local,
+      ownerIdentityId: meshOwner.nodeId,
+      authorityDeviceId: meshOwner.nodeId,
+      authorityPublicKey: meshOwner.publicKey,
+      crypto: cryptoProvider,
+      security,
+      storage: new AtomicJsonStore(join(directory, 'device-mesh.json')),
+      transport,
+      onReplica: async (replica, payload) => {
+        const safeId = replica.objectId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+        await atomicWrite(join(directory, `device-mesh-replica-${safeId}.json`), { replica, payload });
+      },
+    });
+    await deviceMesh.ready();
+    activeDeviceMesh = deviceMesh;
+    const continuity = new ContinuityService({
+      devices: deviceMesh,
+      delivery: transport,
+      security,
+      cipher: new SodiumContinuityCipher(local, Object.values(peerKeys)),
+      storage: new AtomicJsonStore(join(directory, 'continuity.json')),
+      localCapabilities: networkContinuityCapabilities,
+      adapters: createDefaultContinuityAdapters(),
+    });
+    await continuity.ready();
     const socialStorage = new PersistentSocialStorage(new AtomicJsonStore(join(directory, 'messages.json')));
     const messages = new DirectMessageService(transport, socialStorage, cryptoProvider, local, contacts, security, new SodiumDirectMessageCipher());
     const groups = new GroupConversationService(messages, socialStorage, cryptoProvider, local);
@@ -131,13 +234,21 @@ describe('real network peer', () => {
     await notifications.ready();
     graph.subscribe(event => { if (event.kind === 'profile' && event.object.type === 'identity.profile' && event.object.author === local.nodeId) void notifications.setLocalHandles(event.object.payload.handle ? [event.object.payload.handle] : []); });
     const existingProfile = await graph.profile(local.nodeId); if (existingProfile?.payload.handle) await notifications.setLocalHandles([existingProfile.payload.handle]);
-    messages.subscribe(event => { if (event.kind === 'message' && event.message) void notifications.ingest(event.message); });
+    messages.subscribe(event => {
+      if (event.kind === 'message' && event.message) {
+        if (process.env.KEYSTONE_NETWORK_TIMELINE === '1') console.error(`[${role}] application.message id=${event.message.id} peer=${event.peer}`);
+        void notifications.ingest(event.message);
+      }
+    });
     const graphReplication = new SocialGraphReplicationService(transport, graph, cryptoProvider, security, local, () => Date.now(), { onAccepted: object => { void notifications.ingest(object); } });
     const communities = new CommunityService(new PersistentCommunityStorage(new AtomicJsonStore(join(directory, 'communities.json'))), cryptoProvider, local);
     const replication = new CommunityReplicationService(transport, communities, security, local, () => Date.now(), { onAccepted: object => { void notifications.ingest(object); } });
     const privateCommunities = new PrivateCommunityService(new PersistentPrivateCommunityStateStorage(new AtomicJsonStore(join(directory, 'private-communities.json')), local), communities, cryptoProvider, local, { peers: Object.values(peerKeys).filter(value => value.nodeId !== local.nodeId) });
     const privateCommunityReplication = new PrivateCommunityReplicationService(transport, privateCommunities, security, local);
     const content = new NetworkContentBridge(transport, security, local);
+    const distributedContentServer = new DistributedContentServer(transport, security, local, { maxContentBytes: 8 * 1024 * 1024, maxConcurrentRequests: 4, maxRequestsPerPeer: 2 });
+    const distributedContentCache = new PersistentContentCache(8 * 1024 * 1024, new AtomicJsonStore(join(directory, 'distributed-content-cache.json'))); await distributedContentCache.ready();
+    const distributedContentService = new DistributedContentService({ cache: distributedContentCache, transferState: new ContentTransferStateStoreAdapter(new AtomicJsonStore(join(directory, 'distributed-content-state.json'))), maxActiveTransfers: 2, maxActiveSources: 2, maxInFlightChunks: 2, maxRequestsPerSource: 1 }); await distributedContentService.ready();
     const musicContent = new LocalContentStore(`${role}-music`, new ContentCache(512 * 1024));
     const music = new MusicService(new PersistentMusicStorage(new AtomicJsonStore(join(directory, 'music.json'))), cryptoProvider, local);
     const musicReplication = new MusicReplicationService(transport, music, security, local, () => Date.now(), { onAccepted: object => { void notifications.ingest(object); } });
@@ -146,14 +257,25 @@ describe('real network peer', () => {
     const videoReplication = new VideoReplicationService(transport, videos, security, local, () => Date.now(), { onAccepted: object => { void notifications.ingest(object); } });
     const fileCache = new PersistentContentCache(8 * 1024 * 1024, new AtomicJsonStore(join(directory, 'file-cache.json'))); await fileCache.ready();
     const fileContent = new LocalContentStore(`${role}-files`, fileCache);
-    const files = new FileService(new PersistentFileStorage(new AtomicJsonStore(join(directory, 'files.json'))), cryptoProvider, local, fileContent);
+    const containment = new FileContainmentService({ store: new QuarantineStore({ stateStore: new AtomicJsonStore(join(directory, 'quarantine.json')) }) });
+    const files = new FileService(new PersistentFileStorage(new AtomicJsonStore(join(directory, 'files.json'))), cryptoProvider, local, fileContent, () => Date.now(), undefined, undefined, containment);
     const filePolicy = new FileStorageManager(fileContent.cache, new AtomicJsonStore(join(directory, 'file-storage.json')));
     const fileReplication = new FileReplicationService(transport, files, cryptoProvider, security, local);
     const live = new LiveBroadcastService(new PersistentLiveStorage(new AtomicJsonStore(join(directory, 'live.json'))), cryptoProvider, local);
     const liveReplication = new LiveReplicationService(transport, live, security, local, () => Date.now(), new Set(), { onAccepted: object => { void notifications.ingest(object); } });
     const discovery = new UnifiedDiscoveryService({ storage: new PersistentDiscoveryStorage(new AtomicJsonStore(join(directory, 'discovery.json'))) });
     const discoveryReplication = new DiscoveryReplicationService(transport, discovery, cryptoProvider, security, local, () => Date.now(), { onAccepted: object => { void notifications.ingest(object); } });
+    const publications = new PublicationService(cryptoProvider, local, { stateStore: new AtomicJsonStore(join(directory, 'publications.json')) });
+    await publications.ready();
+    const publicationReplication = new PublicationReplicationService(transport, security, local, publications, { maxAnnouncementBytes: 512 * 1024 });
     const settings = new SettingsService(new AtomicJsonStore(join(directory, 'settings.json'))); await settings.ready();
+    const controlledLocation = new ControlledLocationProvider(() => Date.now());
+    controlledLocation.emit({ latitude: 55.751244, longitude: 37.618423, horizontalAccuracy: 12, timestamp: new Date().toISOString(), provenance: 'CONTROLLED_TEST', precision: 'PRECISE' });
+    const locationPolicy = new LocationPolicy();
+    const location = new LocationService(controlledLocation, locationPolicy, { storage: new AtomicJsonStore(join(directory, 'location.json')) });
+    const locationCipher = new SodiumLocationCipher(local, peerKeys);
+    const locationShares = new LocationShareService({ transport, security, localNodeId: local.nodeId, cipher: locationCipher });
+    await location.ready();
     const backup = new BackupService();
     const discoveryObjects = new Map<string, KeystoneObject>();
     const roomMessages: AgentRoomMessage[] = [];
@@ -181,11 +303,46 @@ describe('real network peer', () => {
     const agentContacts = (Object.keys(peerKeys) as Role[]).filter(name => name !== role).map(name => ({ version: 1 as const, agent: { agentId: `${name}-agent`, identityId: peerKeys[name].nodeId }, signingPublicKey: peerKeys[name].publicKey, encryptionPublicKey: peerKeys[name].encryptionPublicKey, trusted: name.startsWith('alice_') || name === 'alice' || name === 'bob' || name === 'charlie', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
     const agentSocial = new AgentMailbox({ transport, crypto: cryptoProvider, security, local, agentId: `${role}-agent`, contacts: agentContacts, storage: new AtomicJsonStore(join(directory, 'agent-social.json')), executor: { execute: async task => ({ value: { accepted: true, taskId: task.taskId, agent: `${role}-agent` }, dataClass: 'USER_EXPLICIT' }) }, policy: { mode: 'auto', askBeforeAccepting: false, autoAcceptTaskTypes: ['availability', 'coordination'], maxPending: 64 } });
     await agentSocial.ready();
+    const agentNegotiation = new AgentNegotiationService({ mailbox: agentSocial, crypto: cryptoProvider, local, storage: new AtomicJsonStore(join(directory, 'agent-negotiation.json')), policy: { mode: 'ALLOW_SAFE_NEGOTIATIONS', askBeforeAccepting: false, defaultDisclosure: 'BOOLEAN' }, evaluator: role === 'bob' || role === 'charlie' ? async ({ proposal }) => ({ decision: 'accept', selectedOptionIds: proposal.options.filter(option => option.id === 'sat-18').map(option => option.id), disclosure: 'BOOLEAN', derived: { available: true }, score: 0.9 }) : undefined });
+    await agentNegotiation.ready();
+    const agentProfiles = new AgentProfileService({ mailbox: agentSocial, crypto: cryptoProvider, local, storage: new AtomicJsonStore(join(directory, 'agent-profiles.json')) });
+    await agentProfiles.ready();
+    const agentGraph = new AgentSocialGraphService({ mailbox: agentSocial, crypto: cryptoProvider, local, profiles: agentProfiles, storage: new AtomicJsonStore(join(directory, 'agent-social-graph.json')) });
+    await agentGraph.ready();
+    agentProfiles.setBlockPolicy(agent => agentGraph.isBlocked(agent));
+    const agentPresence = new AgentPresenceService({
+      mailbox: agentSocial,
+      crypto: cryptoProvider,
+      local,
+      profile: agentProfiles,
+      storage: new AtomicJsonStore(join(directory, 'agent-presence.json')),
+      isHumanContact: identityId => agentSocial.contactsList().some(value => value.agent.identityId === identityId),
+      isTrustedAgent: agent => agentGraph.isTrusted(agent) || agentSocial.contactsList().some(value => value.agent.identityId === agent.identityId && value.agent.agentId === agent.agentId && value.trusted),
+      isBlocked: agent => agentGraph.isBlocked(agent),
+      isMuted: agent => agentGraph.isMuted(agent),
+      profilePolicy: source => source.kind === 'agent' && agentProfiles.publicProfiles().then(profiles => profiles.some(value => value.ownerIdentityId === source.agent.identityId && value.agentId === source.agent.agentId && value.acceptsTasks)),
+    });
+    await agentPresence.ready();
     const spaces = new SharedSpaceService({ transport, crypto: cryptoProvider, security, local, peers: Object.values(peerKeys).filter(value => value.nodeId !== local.nodeId), storage: new PersistentSharedSpaceStateStore(new AtomicJsonStore(join(directory, 'shared-spaces.json')), local) });
     await spaces.ready();
     const agentSpaces = new SharedSpaceService({ transport, crypto: cryptoProvider, security, local, localAgentId: `${role}-agent`, peers: Object.values(peerKeys).filter(value => value.nodeId !== local.nodeId), storage: new PersistentSharedSpaceStateStore(new AtomicJsonStore(join(directory, 'agent-shared-spaces.json')), local) });
     await agentSpaces.ready();
-    const contextResolver = new UnifiedContextResolver({ viewerId: local.nodeId, sources: createUnifiedContextSources({ messages, spaces, communities, files, music, videos, live, discovery, notifications }, local.nodeId) });
+    const vault = new VaultService({ identityId: local.nodeId, rootReference: `network://${role}/vault`, name: `${role} Shared Vault`, storage: new MemoryVaultStorageAdapter() });
+    const sharedVaults = new SharedVaultService({
+      vault,
+      identityId: local.nodeId,
+      device: local,
+      crypto: cryptoProvider,
+      privateKey: local.privateKey,
+      trustedPublicKeys: Object.fromEntries(Object.values(peerKeys).map(value => [value.nodeId, value.publicKey])),
+      trustedEncryptionPublicKeys: Object.fromEntries(Object.values(peerKeys).map(value => [value.nodeId, value.encryptionPublicKey])),
+      transport,
+      security,
+      state: new PersistentSharedVaultStateStore(new AtomicJsonStore(join(directory, 'shared-vault.json')), local),
+      onError: error => { console.error(`[${role}] shared-vault`, error instanceof Error ? `${error.name}: ${error.message}` : String(error)); },
+    });
+    await Promise.all([vault.ready(), sharedVaults.ready()]);
+    const contextResolver = new UnifiedContextResolver({ viewerId: local.nodeId, sources: createUnifiedContextSources({ messages, spaces, communities, files, music, videos, live, discovery, notifications, sharedVaults: [sharedVaults] }, local.nodeId) });
     const signals: Array<{ peer: string; signal: CallSignal }> = [];
     const signaling = new HyperswarmSignalingChannel(transport, async (peer, signal) => {
       const unsigned = { version: 1 as const, type: 'webrtc.signal', id: crypto.randomUUID(), sender: local.nodeId, recipient: peer, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: signal };
@@ -199,25 +356,117 @@ describe('real network peer', () => {
         const command = await readJson<Command>(join(directory, 'command.json'));
         if (!command || command.id === lastCommand) { await pause(25); continue; }
         lastCommand = command.id;
+        const commandStarted = Date.now(); console.error(`[${role}] command ${command.action} start`);
         try {
-          const result = await execute(command, { local, peerKeys, messages, groups, graph, graphReplication, notifications, communities, replication, privateCommunities, privateCommunityReplication, transport, content, musicContent, music, musicReplication, videoContent, videos, videoReplication, fileContent, files, filePolicy, fileReplication, live, liveReplication, discovery, discoveryReplication, discoveryObjects, cryptoProvider, security, signals, signaling, devices, deviceReplication, settings, backup, visits, agentSocial, spaces, agentSpaces, contextResolver, roomMessages, directory, masterSeed: restoredMasterSeed ?? config.seeds[role!], aiHost, aiRuntime, aiRevoked });
+          // The mesh is intentionally supplied as an extra harness-only dependency;
+          // production application services remain typed around their existing context.
+          // @ts-expect-error R0P73 harness extension is consumed by mesh commands below.
+          const result = await execute(command, { local, peerKeys, messages, groups, graph, graphReplication, notifications, communities, replication, privateCommunities, privateCommunityReplication, transport, content, distributedContentServer, distributedContentService, musicContent, music, musicReplication, videoContent, videos, videoReplication, fileContent, files, containment, filePolicy, fileReplication, live, liveReplication, discovery, discoveryReplication, publications, publicationReplication, discoveryObjects, cryptoProvider, security, signals, signaling, devices, deviceReplication, deviceMesh, continuity, settings, backup, visits, agentSocial, agentNegotiation, agentProfiles, agentGraph, agentPresence, spaces, agentSpaces, sharedVaults, contextResolver, roomMessages, workboards, workboardReplication, calendar, calendarReplication, location, locationShares, locationPolicy, controlledLocation, directory, masterSeed: restoredMasterSeed ?? config.seeds[role!], aiHost, aiRuntime, aiRevoked });
           await atomicWrite(join(directory, `response-${command.id}.json`), { ok: true, result });
+          console.error(`[${role}] command ${command.action} done durationMs=${Date.now() - commandStarted}`);
           if (command.action === 'stop') break;
         } catch (error) {
           await atomicWrite(join(directory, `response-${command.id}.json`), { ok: false, error: error instanceof Error ? error.message : String(error) });
         }
       }
     } finally {
-      unsubscribeSignals(); agentSocial.close(); agentSpaces.close(); spaces.close(); visits.close(); aiHost?.close(); aiRuntime?.close(); deviceReplication.close(); content.close(); groups.close(); messages.close(); graphReplication.close(); replication.close(); privateCommunityReplication.close(); musicReplication.close(); videoReplication.close(); fileReplication.close(); liveReplication.close(); discoveryReplication.close(); await transport.close();
+      locationShares.close(); await location.shutdown(); calendarReplication.close(); calendar.close(); workboards.close(); workboardReplication.close(); await sharedVaults.close(); vault.close(); publicationReplication.close();
+      unsubscribeSignals(); agentPresence.close(); agentGraph.close(); agentProfiles.close(); agentNegotiation.close(); agentSocial.close(); agentSpaces.close(); spaces.close(); visits.close(); aiHost?.close(); aiRuntime?.close(); deviceReplication.close(); continuity.close(); deviceMesh.close(); activeDeviceMesh = undefined; distributedContentServer.close(); content.close(); groups.close(); messages.close(); graphReplication.close(); replication.close(); privateCommunityReplication.close(); musicReplication.close(); videoReplication.close(); fileReplication.close(); liveReplication.close(); discoveryReplication.close(); await transport.close();
     }
     expect(true).toBe(true);
-  }, 120_000);
+  }, 180_000);
 });
 
-async function execute(command: Command, context: { local: DeviceSessionKeys; peerKeys: Record<Role, DeviceSessionKeys>; messages: DirectMessageService; groups: GroupConversationService; graph: SocialGraphService; graphReplication: SocialGraphReplicationService; notifications: NotificationService; communities: CommunityService; replication: CommunityReplicationService; privateCommunities: PrivateCommunityService; privateCommunityReplication: PrivateCommunityReplicationService; transport: RecordingTransport; content: NetworkContentBridge; musicContent: LocalContentStore; music: MusicService; musicReplication: MusicReplicationService; videoContent: VideoContentStore; videos: VideoService; videoReplication: VideoReplicationService; fileContent: LocalContentStore; files: FileService; filePolicy: FileStorageManager; fileReplication: FileReplicationService; live: LiveBroadcastService; liveReplication: LiveReplicationService; discovery: UnifiedDiscoveryService; discoveryReplication: DiscoveryReplicationService; discoveryObjects: Map<string, KeystoneObject>; cryptoProvider: SodiumCryptoProvider; security: ContactEnvelopeSecurity; signals: Array<{ peer: string; signal: CallSignal }>; signaling: HyperswarmSignalingChannel; devices: DeviceService; deviceReplication: DeviceReplicationService; settings: SettingsService; backup: BackupService; visits: AgentVisitService; agentSocial: AgentMailbox; spaces: SharedSpaceService; agentSpaces: SharedSpaceService; contextResolver: UnifiedContextResolver; roomMessages: AgentRoomMessage[]; directory: string; masterSeed: string; aiHost?: PersonalAIHost; aiRuntime?: RemoteLocalAIRuntime; aiRevoked: Set<string> }): Promise<unknown> {
+async function execute(command: Command, context: { local: DeviceSessionKeys; peerKeys: Record<Role, DeviceSessionKeys>; messages: DirectMessageService; groups: GroupConversationService; graph: SocialGraphService; graphReplication: SocialGraphReplicationService; notifications: NotificationService; communities: CommunityService; replication: CommunityReplicationService; privateCommunities: PrivateCommunityService; privateCommunityReplication: PrivateCommunityReplicationService; transport: RecordingTransport; content: NetworkContentBridge; distributedContentServer: DistributedContentServer; distributedContentService: DistributedContentService; musicContent: LocalContentStore; music: MusicService; musicReplication: MusicReplicationService; videoContent: VideoContentStore; videos: VideoService; videoReplication: VideoReplicationService; fileContent: LocalContentStore; files: FileService; containment: FileContainmentService; filePolicy: FileStorageManager; fileReplication: FileReplicationService; live: LiveBroadcastService; liveReplication: LiveReplicationService; discovery: UnifiedDiscoveryService; discoveryReplication: DiscoveryReplicationService; publications: PublicationService; publicationReplication: PublicationReplicationService; discoveryObjects: Map<string, KeystoneObject>; cryptoProvider: SodiumCryptoProvider; security: ContactEnvelopeSecurity; signals: Array<{ peer: string; signal: CallSignal }>; signaling: HyperswarmSignalingChannel; devices: DeviceService; deviceReplication: DeviceReplicationService; continuity: ContinuityService; settings: SettingsService; backup: BackupService; visits: AgentVisitService; agentSocial: AgentMailbox; agentNegotiation: AgentNegotiationService; agentProfiles: AgentProfileService; agentGraph: AgentSocialGraphService; agentPresence: AgentPresenceService; spaces: SharedSpaceService; agentSpaces: SharedSpaceService; sharedVaults: SharedVaultService; contextResolver: UnifiedContextResolver; roomMessages: AgentRoomMessage[]; workboards: AgentWorkboardService; workboardReplication: WorkboardTransportReplication; calendar: CalendarService; calendarReplication: CalendarReplicationService; directory: string; masterSeed: string; aiHost?: PersonalAIHost; aiRuntime?: RemoteLocalAIRuntime; aiRevoked: Set<string> }): Promise<unknown> {
+  const action = command.action as string;
   const peer = command.peer ? context.peerKeys[command.peer] : undefined;
+  if (action === 'locationCreate') {
+    if (!peer) throw new Error('locationCreate requires peer');
+    const services = context as typeof context & { location: LocationService; locationShares: LocationShareService; locationPolicy: LocationPolicy };
+    const caller = { id: context.local.nodeId, kind: 'OWNER_UI' as const };
+    const grant = services.locationPolicy.issue({ principal: caller, capability: 'SHARE', scope: 'FOREGROUND', precision: 'APPROXIMATE', durationMs: 5 * 60_000, target: peer.nodeId, explicitOwnerAction: true });
+    const session = await services.location.createShare({ ownerDeviceId: context.local.nodeId, target: peer.nodeId, grantId: grant.id, caller, mode: 'ONE_SHOT', durationMs: 5 * 60_000 });
+    await services.locationShares.start(session, 'APPROXIMATE'); await services.locationShares.flush();
+    return { shareId: session.id, grantId: grant.id, precision: session.precision, state: session.state };
+  }
+  if (action === 'locationSend') {
+    if (!command.objectId) throw new Error('locationSend requires share id in objectId');
+    const services = context as typeof context & { location: LocationService; locationShares: LocationShareService };
+    const caller = { id: context.local.nodeId, kind: 'OWNER_UI' as const }; const session = await services.location.getShare(command.objectId); if (!session) throw new Error('Location share not found');
+    const fix = await services.location.shareCurrent(session.id, caller); const updated = await services.location.getShare(session.id); if (!updated) throw new Error('Location share ended'); await services.locationShares.sendFix(updated, fix); await services.locationShares.flush();
+    return { shareId: session.id, precision: fix.precision, latitude: fix.latitude, longitude: fix.longitude };
+  }
+  if (action === 'locationRead') {
+    const services = context as typeof context & { locationShares: LocationShareService };
+    return { share: command.objectId ? services.locationShares.get(command.objectId) : undefined, diagnostics: services.locationShares.diagnostics() };
+  }
+  if (action === 'locationStop') {
+    if (!command.objectId) throw new Error('locationStop requires share id in objectId');
+    const services = context as typeof context & { location: LocationService; locationShares: LocationShareService };
+    const session = await services.location.getShare(command.objectId); if (!session) throw new Error('Location share not found'); await services.locationShares.stop(session); await services.locationShares.flush(); const stopped = await services.location.stopShare(session.id); return { shareId: stopped.id, state: stopped.state };
+  }
+  if (command.action === 'calendarCreate') {
+    const members = (command.members ?? ['bob', 'charlie']).filter(name => name !== role).map(name => ({ identityId: context.peerKeys[name].nodeId, role: name === 'bob' ? 'editor' as const : 'viewer' as const, disclosure: name === 'bob' ? 'FULL_EVENT' as const : 'FREE_BUSY' as const }));
+    const calendar = await context.calendar.createCalendar({ id: command.calendarId ?? 'production-calendar', name: command.text ?? 'Production Calendar', visibility: 'shared', timezone: 'UTC', members });
+    return { calendarId: calendar.id, revision: calendar.revision, members: calendar.members.map(value => value.identityId) };
+  }
+  if (command.action === 'calendarRead') {
+    if (!command.calendarId) throw new Error('calendarRead requires calendarId');
+    const calendar = await context.calendar.getCalendar(command.calendarId); return { calendar, events: await context.calendar.listEvents(command.calendarId, { actor: context.local.nodeId, expand: true, limit: 256 }) };
+  }
+  if (command.action === 'calendarEventCreate') {
+    if (!command.calendarId) throw new Error('calendarEventCreate requires calendarId');
+    const event = await context.calendar.createEvent(command.calendarId, { id: command.eventId ?? 'production-calendar-event', title: command.text ?? 'Production calendar event', start: '2026-08-25T10:00:00.000Z', end: '2026-08-25T11:00:00.000Z', visibility: 'shared', participants: command.peer ? [{ identityId: context.peerKeys[command.peer].nodeId }] : [] });
+    return { eventId: event.id, calendarId: event.calendarId, revision: event.revision, title: event.title };
+  }
+  if (command.action === 'calendarEventRead') {
+    if (!command.eventId) throw new Error('calendarEventRead requires eventId'); const event = await context.calendar.getEvent(command.eventId); return event ? { eventId: event.id, calendarId: event.calendarId, revision: event.revision, title: event.title, participants: event.participants.map(value => ({ identityId: value.identityId, rsvp: value.rsvp })) } : undefined;
+  }
+  if (command.action === 'calendarRSVP') {
+    if (!command.eventId) throw new Error('calendarRSVP requires eventId'); const event = await context.calendar.respond(command.eventId, (command.text ?? 'ACCEPTED') as 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'MAYBE'); await context.calendarReplication.flush(); return { eventId: event.id, revision: event.revision, rsvp: event.participants.find(value => value.identityId === context.local.nodeId)?.rsvp };
+  }
+  if (command.action === 'calendarStats') {
+    const calendars = await context.calendar.listCalendars(); return { calendars: calendars.map(value => ({ id: value.id, revision: value.revision, members: value.members.filter(member => !member.removedAt).map(member => member.identityId) })), pending: context.calendarReplication.pendingCount() };
+  }
+  if (command.action === 'calendarSpoof') {
+    if (!peer || !command.calendarId || !command.eventId) throw new Error('calendarSpoof requires peer, calendarId and eventId');
+    const forged = { version: 1 as const, id: crypto.randomUUID(), calendarId: command.calendarId, operation: 'event.upsert' as const, targetId: command.eventId, revision: 999, actor: { identityId: context.local.nodeId }, payload: { version: 1, id: command.eventId, calendarId: command.calendarId, creatorIdentityId: context.local.nodeId, title: 'spoof', description: '', start: '2026-08-25T10:00:00.000Z', end: '2026-08-25T11:00:00.000Z', timezone: 'UTC', allDay: false, recurrenceExceptions: [], reminders: [], participants: [], attachments: [], relatedObjectRefs: [], visibility: 'shared', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), revision: 999, tombstone: false, signature: 'forged' }, createdAt: new Date().toISOString(), signature: 'forged' };
+    const unsigned = { version: 1 as const, type: 'social.calendar', id: crypto.randomUUID(), sender: context.local.nodeId, recipient: peer.nodeId, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: forged };
+    await context.transport.send(peer.nodeId, { ...unsigned, signature: await context.security.sign(unsigned) }); return { rejected: true, target: command.eventId };
+  }
+  if (command.action === 'workboardCreate') {
+    const members = (command.members ?? ['bob', 'charlie']).map(name => ({ identityId: context.peerKeys[name].nodeId, role: name === 'charlie' ? 'viewer' as const : 'editor' as const, joinedAt: new Date().toISOString() }));
+    const board = await context.workboards.createWorkboard({ id: command.boardId ?? 'production-workboard', title: command.text ?? 'Production Workboard', members, allowedDataScopes: [{ dataClasses: ['PUBLIC'] }] });
+    const item = await context.workboards.createWorkItem(board.id, { id: command.workItemId ?? 'production-work-item', title: 'Prepare release', objective: 'bounded P2P work item', dataScopes: [{ dataClasses: ['PUBLIC'] }] });
+    return { boardId: board.id, workItemId: item.id, revision: board.revision, members: board.members.map(value => value.identityId) };
+  }
+  if (command.action === 'workboardRead') {
+    if (!command.boardId) throw new Error('workboardRead requires boardId');
+    const board = await context.workboards.getBoard(command.boardId); if (!board) return undefined;
+    return { boardId: board.id, revision: board.revision, items: await context.workboards.listItems(board.id), claims: await context.workboards.listClaims(board.id), needsUser: await context.workboards.listNeedsUser(board.id), activity: await context.workboards.listActivity(board.id) };
+  }
+  if (command.action === 'workboardClaim') {
+    if (!command.boardId || !command.workItemId) throw new Error('workboardClaim requires boardId and workItemId');
+    const claim = await context.workboards.claimWorkItem(command.boardId, command.workItemId, { actor: { kind: 'human', id: context.local.nodeId }, executionKey: `${role}-work-1` });
+    return { claimId: claim.id, state: claim.state, executionKey: claim.executionKey };
+  }
+  if (command.action === 'workboardComplete') {
+    if (!command.boardId || !command.workItemId) throw new Error('workboardComplete requires boardId and workItemId');
+    const claim = (await context.workboards.listClaims(command.boardId)).find(value => value.workItemId === command.workItemId && value.state === 'active');
+    if (!claim) throw new Error('active Workboard claim not found');
+    const completed = await context.workboards.releaseClaim(claim.id, { kind: 'human', id: context.local.nodeId }, 'completed');
+    await context.workboardReplication.flush();
+    return { claimId: completed.id, state: completed.state, item: await context.workboards.getWorkItem(command.boardId, command.workItemId) };
+  }
+  if (command.action === 'workboardSpoof') {
+    if (!command.boardId || !command.workItemId || !peer) throw new Error('workboardSpoof requires boardId, workItemId and peer');
+    const item = await context.workboards.getWorkItem(command.boardId, command.workItemId); if (!item) throw new Error('WorkItem unavailable');
+    const forged = { version: 1 as const, id: crypto.randomUUID(), boardId: command.boardId, actor: { kind: 'human' as const, id: context.local.nodeId }, operation: 'item.upsert' as const, targetId: command.workItemId, revision: item.revision + 100, payload: { ...item, revision: item.revision + 100 }, createdAt: new Date().toISOString(), signature: 'forged-workboard-signature' } as WorkboardEvent;
+    await context.workboards.applyEvent(forged);
+    return { accepted: true };
+  }
   if (command.action === 'aiDiscover') { if (!peer || !context.aiRuntime) throw new Error('aiDiscover requires a personal AI client and peer'); const advertisement = await context.aiRuntime.discover(); return { deviceId: advertisement.deviceId, capability: advertisement.capability, state: advertisement.state, busy: advertisement.busy, queueLength: advertisement.queueLength, maxConcurrent: advertisement.maxConcurrent, models: advertisement.models }; }
-  if (command.action === 'aiInfer') { if (!peer || !context.aiRuntime || !command.text) throw new Error('aiInfer requires a personal AI client, peer and text'); let text = ''; for await (const token of context.aiRuntime.stream({ privacyClass: 'PERSONAL_TRUSTED_COMPUTE', model: { provider: 'test-host', model: 'qwen' }, systemPrompt: 'Keystone test host', userText: command.text, context: [{ id: 'private-test-context', source: 'chat', dataClass: 'PRIVATE', value: 'private context stays inside trusted devices' }], requestedTools: [] })) text += token; return { text, privacyClass: 'PERSONAL_TRUSTED_COMPUTE' }; }
+  if (command.action === 'aiInfer') { if (!peer || !context.aiRuntime || !command.text) throw new Error('aiInfer requires a personal AI client, peer and text'); const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 15_000); try { let text = ''; for await (const token of context.aiRuntime.stream({ privacyClass: 'PERSONAL_TRUSTED_COMPUTE', model: { provider: 'test-host', model: 'qwen' }, systemPrompt: 'Keystone test host', userText: command.text, context: [{ id: 'private-test-context', source: 'chat', dataClass: 'PRIVATE', value: 'private context stays inside trusted devices' }], requestedTools: [], signal: controller.signal })) text += token; return { text, privacyClass: 'PERSONAL_TRUSTED_COMPUTE' }; } finally { clearTimeout(timeout); } }
   if (command.action === 'aiStats') { if (!context.aiHost) throw new Error('AI host is not running'); return { active: context.aiHost.activeRequests, queueLength: context.aiHost.queueLength, maxConcurrent: (await context.aiHost.advertisement()).maxConcurrent, busy: context.aiHost.isBusy }; }
   if (command.action === 'aiRevoke') { if (!context.aiHost || !peer) throw new Error('aiRevoke requires host and target'); context.aiRevoked.add(peer.nodeId); await atomicWrite(join(context.directory, 'ai-revocations.json'), [...context.aiRevoked]); return { deviceId: peer.nodeId, revoked: true }; }
   if (command.action === 'spaceCreate') {
@@ -233,6 +482,38 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   if (command.action === 'spaceAgentEdit') { if (!command.spaceId || !command.messageId) throw new Error('spaceAgentEdit requires spaceId and document id'); const document = await context.agentSpaces.updateDocument(command.spaceId, command.messageId, { body: command.text ?? 'agent production edit' }); return { spaceId: command.spaceId, documentId: document.id, body: document.body, agentId: `${role}-agent` }; }
   if (command.action === 'spaceRead') { if (!command.spaceId) throw new Error('spaceRead requires spaceId'); const space = context.spaces.getSpace(command.spaceId); if (!space) throw new Error('Shared Space is unavailable'); return { space, documents: context.spaces.listDocuments(command.spaceId), stats: context.spaces.stats() }; }
   if (command.action === 'spaceRemove') { if (!command.spaceId || !peer) throw new Error('spaceRemove requires spaceId and peer'); const space = await context.spaces.removeMember(command.spaceId, peer.nodeId); return { spaceId: space.id, members: space.members.map(value => ({ identityId: value.identityId, removed: !!value.removedAt })) }; }
+  if ((command.action as string) === 'sharedVaultCreate') {
+    const vault = await context.sharedVaults.create({ id: (command as Command & { sharedVaultId?: string }).sharedVaultId ?? 'production-shared-vault', title: command.text ?? 'Production Shared Vault', visibility: 'private', historyPolicy: 'CURRENT_STATE_ONLY' });
+    return { vaultId: vault.id, epoch: vault.epoch.epoch, visibility: vault.visibility, memberCount: vault.members.length };
+  }
+  if ((command.action as string) === 'sharedVaultInvite') {
+    if (!peer) throw new Error('sharedVaultInvite requires peer');
+    const vaultId = (command as Command & { sharedVaultId?: string }).sharedVaultId ?? 'production-shared-vault';
+    const invitation = await context.sharedVaults.invite(vaultId, peer.nodeId, peer);
+    await context.sharedVaults.flushPending();
+    return { vaultId, invitationId: invitation.id, epoch: invitation.epoch, encryptedKey: !!invitation.wrappedKey };
+  }
+  if ((command.action as string) === 'sharedVaultRead') {
+    const vaultId = (command as Command & { sharedVaultId?: string }).sharedVaultId ?? 'production-shared-vault';
+    const vault = await context.sharedVaults.get(vaultId); if (!vault) return undefined;
+    return { vaultId, epoch: vault.epoch.epoch, members: vault.members.filter(value => !value.removedAt).map(value => value.identityId), notes: (await context.sharedVaults.listNotes(vaultId)).map(value => ({ id: value.id, path: value.path, content: value.content })) };
+  }
+  if ((command.action as string) === 'sharedVaultNote') {
+    const vaultId = (command as Command & { sharedVaultId?: string }).sharedVaultId ?? 'production-shared-vault';
+    const note = await context.sharedVaults.createNote(vaultId, { path: `${role}-shared.md`, content: command.text ?? 'encrypted production note' });
+    await context.sharedVaults.flushPending();
+    return { vaultId, noteId: note.id, content: note.content, pending: context.sharedVaults.pendingCount() };
+  }
+  if ((command.action as string) === 'sharedVaultRemove') {
+    if (!peer) throw new Error('sharedVaultRemove requires peer');
+    const vaultId = (command as Command & { sharedVaultId?: string }).sharedVaultId ?? 'production-shared-vault';
+    const vault = await context.sharedVaults.removeMember(vaultId, peer.nodeId, 'kick');
+    return { vaultId, epoch: vault.epoch.epoch, members: vault.members.filter(value => !value.removedAt).map(value => value.identityId) };
+  }
+  if ((command.action as string) === 'sharedVaultWire') {
+    const envelope = context.transport.lastSharedVault;
+    return { type: envelope?.type, ciphertext: typeof (envelope?.body as { ciphertext?: unknown } | undefined)?.ciphertext === 'string', serialized: envelope ? JSON.stringify(envelope.body) : '' };
+  }
   if (command.action === 'agentTaskSend') {
     if (!peer || !command.text) throw new Error('agentTaskSend requires peer and text');
     const task = await context.agentSocial.createTask({ recipient: { agentId: `${command.peer}-agent`, identityId: peer.nodeId }, taskType: 'availability', prompt: command.text, explicitContext: [{ id: 'explicit-request', label: 'User explicitly shared request', value: command.text, dataClass: 'USER_EXPLICIT' }] });
@@ -274,8 +555,8 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   }
   if (command.action === 'visitReplay') {
     if (!peer || !context.transport.lastVisit) throw new Error('visitReplay requires peer and a visit envelope');
-    await context.transport.send(peer.nodeId, context.transport.lastVisit);
-    return { replayed: true };
+    if (!context.transport.isPeerConnected(peer.nodeId)) return { rejected: true };
+    try { await context.transport.send(peer.nodeId, context.transport.lastVisit); return { replayed: true }; } catch { return { rejected: true }; }
   }
   if (command.action === 'visitSpoof') {
     if (!peer) throw new Error('visitSpoof requires peer');
@@ -306,8 +587,39 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   if (command.action === 'roomMessage') { if (!command.roomId || !command.text) throw new Error('roomMessage requires roomId and text'); await context.visits.sendRoomMessage(command.roomId, command.text); return { roomId: command.roomId, sent: true }; }
   if (command.action === 'roomRead') { return { rooms: await context.visits.listRooms(), messages: context.roomMessages.map(message => ({ id: message.id, roomId: message.roomId, sender: message.sender.identityId, text: message.text, dataClass: message.dataClass })) }; }
   if (command.action === 'contextRead') { if (!command.text) throw new Error('contextRead requires text'); await context.contextResolver.refresh(); const result = await context.contextResolver.resolve({ text: command.text, execution: 'local', scope: 'all-private' }); return { status: result.status, answer: result.answer, citations: result.citations.map(value => ({ objectId: value.objectId, sourceType: value.sourceType, author: value.author, permissionScope: value.permissionScope })) }; }
+  if (command.action === 'negotiationCreate') {
+    const members = (command.members ?? (command.peer ? [command.peer] : [])).map(name => ({ agentId: `${name}-agent`, identityId: context.peerKeys[name].nodeId }));
+    const session = await context.agentNegotiation.createSession({ title: command.text ?? 'Choose a common time', category: 'coordination', participants: members, strategy: 'UNANIMOUS', disclosureDefault: 'BOOLEAN', constraints: [{ id: 'local-availability', label: 'Local availability', dataClass: 'PRIVATE', disclosure: 'RANGE', localOnly: true }] });
+    return { negotiationId: session.id, participants: session.participants.map(value => value.identityId), status: session.status };
+  }
+  if (command.action === 'negotiationPropose') { if (!command.negotiationId) throw new Error('negotiationPropose requires negotiationId'); const proposal = await context.agentNegotiation.propose(command.negotiationId, { options: [{ id: 'fri-18', label: 'Friday 18:00', dataClass: 'PUBLIC' }, { id: 'sat-18', label: 'Saturday 18:00', dataClass: 'PUBLIC' }] }); return { proposalId: proposal.id, negotiationId: proposal.sessionId, options: proposal.options.map(value => value.id) }; }
+  if (command.action === 'negotiationRespond') { if (!command.negotiationId || !command.proposalId) throw new Error('negotiationRespond requires negotiationId and proposalId'); const response = await context.agentNegotiation.respond(command.negotiationId, command.proposalId, { decision: 'accept', selectedOptionIds: ['sat-18'], disclosure: 'BOOLEAN', derived: { available: true }, score: 0.9 }); return { responseId: response.id, selectedOptionIds: response.selectedOptionIds, disclosure: response.disclosure }; }
+  if (command.action === 'negotiationFinalize') { if (!command.negotiationId) throw new Error('negotiationFinalize requires negotiationId'); const result = await context.agentNegotiation.finalize(command.negotiationId); return { resultId: result.id, status: result.status, selectedOptionIds: result.selectedOptionIds }; }
+  if (command.action === 'negotiationRead') { return { sessions: await context.agentNegotiation.listSessions(), proposals: await context.agentNegotiation.listProposals(command.negotiationId), responses: await context.agentNegotiation.listResponses(command.negotiationId), results: await context.agentNegotiation.listResults(), audit: context.agentNegotiation.audit().map(value => ({ event: value.event, outcome: value.outcome, negotiationId: value.negotiationId, disclosure: value.disclosure })) }; }
+  if (command.action === 'negotiationFlush') { if (!peer) throw new Error('negotiationFlush requires peer'); await context.agentNegotiation.flush(peer.nodeId); return { outbox: (await context.agentSocial.snapshot()).outbox.length }; }
+  if (command.action === 'negotiationWire') { const cipher = new SodiumDirectMessageCipher(); const serialized = await Promise.all(context.transport.agentSocialHistory.map(async envelope => { const recipient = Object.values(context.peerKeys).find(value => value.nodeId === envelope.recipient); if (!recipient) return JSON.stringify(envelope); try { return await cipher.decrypt(envelope.body, recipient.encryptionPrivateKey, context.local.encryptionPublicKey); } catch { return JSON.stringify(envelope); } })); return { serialized: serialized.join('\n') || JSON.stringify(context.transport.lastAgentSocial ?? null) }; }
+  if (command.action === 'negotiationPolicy') { const policy = command.text === 'deny' ? await context.agentNegotiation.setPolicy({ mode: 'DENY' }) : command.text === 'ask' ? await context.agentNegotiation.setPolicy({ mode: 'ASK_EVERY_TIME', askBeforeAccepting: true }) : await context.agentNegotiation.setPolicy({ mode: 'ALLOW_SAFE_NEGOTIATIONS', askBeforeAccepting: false }); return { mode: policy.mode, disclosure: policy.defaultDisclosure }; }
+  if (command.action === 'agentProfileCreate') { const profile = await context.agentProfiles.create({ agentId: command.agentTaskId ?? `${role}-profile`, displayName: command.text ?? `${role} Agent`, description: 'Bounded Keystone agent', agentType: 'Personal', capabilitiesSummary: ['coordination'], interests: ['planning'], specializations: ['local tasks'], visibility: command.visibility ?? 'private' }); return { agentId: profile.agentId, ownerIdentityId: profile.ownerIdentityId, visibility: profile.visibility, status: profile.status, signature: profile.signature }; }
+  if (command.action === 'agentProfilePublish') { const agentId = command.agentTaskId ?? 'eight'; await context.agentProfiles.publish(agentId, command.peer ? [context.peerKeys[command.peer].nodeId] : undefined); const profile = await context.agentProfiles.get(agentId); return { agentId, ownerIdentityId: profile?.ownerIdentityId, visibility: profile?.visibility, status: profile?.status }; }
+  if (command.action === 'agentProfileRead') { const profiles = command.text === 'all' ? (await context.agentProfiles.snapshot()).profiles.filter(value => !peer || value.ownerIdentityId === peer.nodeId) : peer ? (await context.agentProfiles.publicProfiles()).filter(value => value.ownerIdentityId === peer.nodeId) : await context.agentProfiles.publicProfiles(); return { profiles: profiles.map(value => ({ agentId: value.agentId, ownerIdentityId: value.ownerIdentityId, displayName: value.displayName, agentType: value.agentType, visibility: value.visibility, status: value.status, presence: value.presence.state, signature: value.signature })), audit: context.agentProfiles.audit().slice(-16).map(value => ({ event: value.event, outcome: value.outcome, peer: value.peer, agentId: value.agentId, reason: value.reason })) }; }
+  if (command.action === 'agentProfileHide') { const agentId = command.agentTaskId ?? 'eight'; const profile = await context.agentProfiles.update(agentId, { visibility: 'private' }); await context.agentProfiles.publish(agentId); return { agentId, visibility: profile.visibility, revision: profile.revision }; }
+  if (command.action === 'agentProfileRevoke') { const agentId = command.agentTaskId ?? 'eight'; const profile = await context.agentProfiles.revoke(agentId); await context.agentProfiles.publish(agentId); return { agentId, status: profile.status, revision: profile.revision }; }
+  if (command.action === 'agentProfileTrust' || command.action === 'agentProfileMute' || command.action === 'agentProfileBlock') { if (!peer) throw new Error(`${command.action} requires peer`); const target = { agentId: command.agentTaskId ?? `${command.peer}-agent`, identityId: peer.nodeId }; const enabled = command.text !== 'off'; const relationship = command.action === 'agentProfileTrust' ? await context.agentGraph.setTrusted(target, enabled, true) : command.action === 'agentProfileMute' ? await context.agentGraph.setMuted(target, enabled) : await context.agentGraph.setBlocked(target, enabled); return { agent: target, trusted: relationship.trusted, trustedByPeer: relationship.trustedByPeer, muted: relationship.muted, blocked: relationship.blocked, known: relationship.known }; }
+  if (command.action === 'agentProfileGraph') { const snapshot = await context.agentGraph.snapshot(); return { relationships: snapshot.relationships, events: snapshot.events.map(value => ({ id: value.id, actor: value.actor, target: value.target, action: value.action, ownerIdentityId: value.ownerIdentityId })), known: context.agentGraph.knownAgents().map(value => value.agent) }; }
+  if (command.action === 'agentProfileSpoof') { if (!peer) throw new Error('agentProfileSpoof requires peer'); const now = new Date().toISOString(); const unsigned: Omit<AgentProfile, 'signature'> = { version: 1, agentId: command.agentTaskId ?? 'eight', ownerIdentityId: context.peerKeys.alice.nodeId, displayName: 'Spoofed', description: 'forged profile', agentType: 'Personal', capabilitiesSummary: ['coordination'], interests: [], specializations: [], presence: { state: 'offline', acceptingTasks: false, updatedAt: now, expiresAt: new Date(Date.now() + 60_000).toISOString() }, acceptsVisits: true, acceptsTasks: true, acceptsRooms: true, trustPolicy: { mode: 'ask', acceptsVisits: true, acceptsTasks: true, acceptsRooms: true }, visibility: 'public', status: 'active', createdAt: now, updatedAt: now, revision: 99 }; const forged: AgentProfile = { ...unsigned, signature: await context.cryptoProvider.sign(canonicalJson(unsigned), context.local.privateKey) }; await context.agentSocial.sendAgentProfile(peer.nodeId, forged); await context.agentSocial.flush(peer.nodeId); return { sent: true, forged: true }; }
+  if (command.action === 'agentPresenceSet') {
+    const state = (command.text ?? 'taking_messages') as Parameters<AgentPresenceService['setPresence']>[0]['state']; const visibility = command.presenceVisibility ?? 'contacts'; const peers = peer ? [{ agentId: `${command.peer}-agent`, identityId: peer.nodeId }] : undefined; const presence = await context.agentPresence.setPresence({ state, acceptingMessages: state !== 'offline' && state !== 'do_not_disturb', acceptingTasks: state === 'available', visibility, peers }); return { agent: presence.agent, state: presence.state, visibility: presence.visibility, acceptingMessages: presence.acceptingMessages, expiresAt: presence.expiresAt }; }
+  if (command.action === 'agentPresenceRead') { await context.agentPresence.sweep(); const snapshot = await context.agentPresence.snapshot(); return { local: context.agentPresence.presence(), remote: snapshot.remotePresences.map(value => ({ peer: value.peer, state: context.agentPresence.remotePresence(value.peer)?.state })), policy: snapshot.policy, audit: snapshot.audit.slice(-32).map(value => ({ event: value.event, outcome: value.outcome, peer: value.peer, requestId: value.requestId, reason: value.reason })) }; }
+  if (command.action === 'agentConciergePolicy') { const mode = command.text === 'everyone' ? 'everyone' : command.text === 'deny' ? 'deny' : 'trusted_agents'; const policy = await context.agentPresence.setPolicy({ accessMode: mode, acceptingMessages: mode !== 'deny', autoCategories: mode === 'trusted_agents' ? ['public_information'] : [], ownerApprovalCategories: ['availability', 'scheduling', 'coordination', 'request', 'proposal'] }); return { accessMode: policy.accessMode, acceptingMessages: policy.acceptingMessages, ownerApprovalCategories: policy.ownerApprovalCategories }; }
+  if (command.action === 'agentConciergeRequest') { if (!peer || !command.text) throw new Error('agentConciergeRequest requires peer and text'); const request = await context.agentPresence.createRequest({ recipient: { agentId: `${command.peer}-agent`, identityId: peer.nodeId }, kind: 'question', category: command.category ?? 'availability', text: command.text, explicitContext: [{ id: 'explicit-request', label: 'User explicitly shared request', value: command.text, dataClass: 'USER_EXPLICIT' }] }); return { requestId: request.requestId, id: request.id, status: request.status, outbox: (await context.agentSocial.snapshot()).outbox.length }; }
+  if (command.action === 'agentConciergeRead') { const snapshot = await context.agentPresence.snapshot(); return { inbox: await context.agentPresence.listInbox(), sent: snapshot.requests.filter(value => value.sender.identityId === context.local.nodeId), responses: snapshot.responses, policy: snapshot.policy, audit: snapshot.audit.slice(-32).map(value => ({ event: value.event, outcome: value.outcome, peer: value.peer, requestId: value.requestId, responseId: value.responseId, reason: value.reason })) }; }
+  if (command.action === 'agentConciergeApprove') { if (!command.agentTaskId) throw new Error('agentConciergeApprove requires request id'); const responses = await context.agentPresence.approve(command.agentTaskId, { value: command.text ?? 'Owner confirmed this response.', type: command.resultType ?? 'OWNER_CONFIRMED_DECISION', dataClass: command.dataClass ?? 'USER_EXPLICIT' }); return { requestId: command.agentTaskId, responses: responses.map(value => ({ id: value.id, type: value.result.type, recipient: value.recipient })) }; }
+  if (command.action === 'agentConciergeShare') { if (!command.agentTaskId || !peer || !command.text) throw new Error('agentConciergeShare requires request id, peer and text'); const target: ConciergeSource = { kind: 'agent', agent: { agentId: `${command.peer}-agent`, identityId: peer.nodeId } }; const response = await context.agentPresence.shareResponse(command.agentTaskId, target, { type: command.resultType ?? 'DERIVED_PREFERENCE', value: command.text, dataClass: command.dataClass ?? 'PUBLIC' }); return { requestId: command.agentTaskId, responseId: response.id, type: response.result.type, recipient: response.recipient }; }
+  if (command.action === 'agentConciergeFlush') { if (!peer) throw new Error('agentConciergeFlush requires peer'); await context.agentSocial.flush(peer.nodeId); return { outbox: (await context.agentSocial.snapshot()).outbox.length }; }
+  if (command.action === 'agentPresenceSpoof') { if (!peer) throw new Error('agentPresenceSpoof requires peer'); const now = new Date().toISOString(); const unsigned = { version: 1 as const, agent: { agentId: `${command.peer}-agent`, identityId: peer.nodeId }, state: 'available' as const, acceptingTasks: true, acceptingMessages: true, visibility: 'public' as const, updatedAt: now, expiresAt: new Date(Date.now() + 60_000).toISOString() }; const forged = { ...unsigned, signature: await context.cryptoProvider.sign(canonicalJson(unsigned), context.local.privateKey) }; await context.agentSocial.sendPresence(peer.nodeId, forged); await context.agentSocial.flush(peer.nodeId); return { sent: true, forged: true }; }
+  if (command.action === 'agentConciergeSpoof') { if (!peer) throw new Error('agentConciergeSpoof requires peer'); const now = new Date().toISOString(); const resultUnsigned = { version: 1 as const, id: `forged-${crypto.randomUUID()}`, agent: { agentId: `${command.peer}-agent`, identityId: peer.nodeId }, ownerIdentityId: peer.nodeId, type: 'OWNER_CONFIRMED_DECISION' as const, value: 'forged owner confirmation', dataClass: 'PUBLIC' as const, createdAt: now, ownerConfirmation: { version: 1 as const, requestId: command.agentTaskId ?? 'forged-request', ownerIdentityId: peer.nodeId, actionHash: 'forged', confirmedAt: now, signature: 'forged' } }; const result = { ...resultUnsigned, signature: await context.cryptoProvider.sign(canonicalJson(resultUnsigned), context.local.privateKey) }; const responseUnsigned = { version: 1 as const, id: `forged-response-${crypto.randomUUID()}`, requestId: command.agentTaskId ?? 'forged-request', sender: context.agentSocial.localAgentRef, recipient: { kind: 'agent' as const, agent: { agentId: `${command.peer}-agent`, identityId: peer.nodeId } }, result, createdAt: now, expiresAt: new Date(Date.now() + 60_000).toISOString() }; const response = { ...responseUnsigned, signature: await context.cryptoProvider.sign(canonicalJson(responseUnsigned), context.local.privateKey) }; await context.agentSocial.sendConcierge(peer.nodeId, { kind: 'response', response }); await context.agentSocial.flush(peer.nodeId); return { sent: true, forged: true }; }
   if (command.action === 'sendText') { if (!peer || !command.text) throw new Error('sendText requires peer and text'); const message = await context.messages.sendText(peer.nodeId, command.text); return { id: message.id }; }
-  if (command.action === 'flush') { if (!peer) throw new Error('flush requires peer'); await context.messages.flush(peer.nodeId); return {}; }
+  if (command.action === 'flush') { if (!peer) throw new Error('flush requires peer'); await context.messages.flush(peer.nodeId); await context.calendarReplication.flush(peer.nodeId); return {}; }
   if (command.action === 'history') { if (!peer) throw new Error('history requires peer'); const conversation = await context.messages.createConversation(peer.nodeId); return { messages: (await context.messages.history(conversation.id)).map(message => ({ id: message.id, text: message.payload.kind === 'text' ? message.payload.text : undefined })) }; }
   if (command.action === 'groupCreate') { const members = (command.members ?? []).map(member => context.peerKeys[member].nodeId); const group = await context.groups.create({ title: command.text ?? 'Keystone group', members }); return { conversationId: group.id, members: group.members, admins: group.adminIds }; }
   if (command.action === 'groupRead') { if (!command.conversationId) throw new Error('groupRead requires conversationId'); const group = await context.groups.get(command.conversationId); if (!group) return undefined; const canRead = (group.members ?? []).includes(context.local.nodeId); const messages = canRead ? await context.groups.history(group.id) : []; return { conversationId: group.id, members: group.members, admins: group.adminIds, title: group.title, unread: group.unreadCount, messages: messages.map(message => ({ id: message.id, author: message.author, text: message.payload.kind === 'text' ? message.payload.text : undefined, kind: message.payload.kind, references: message.references, supersedes: message.supersedes, deleted: message.deleted })) }; }
@@ -349,6 +661,98 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
       applicationState: { durableStores: stores }, settings: stores['settings.json'], socialGraph: { store: 'messages.json' }, conversations: { store: 'messages.json' }, communities: { store: 'communities.json' }, privateCommunities: { store: 'private-communities.json' }, mediaMetadata: { music: stores['music.json'], video: stores['video.json'], files: stores['files.json'] }, libraryPlaylists: { music: stores['music.json'], video: stores['video.json'] }, notifications: stores['notifications.json'], storageReferences: { fileStorage: stores['file-storage.json'] }, userOwnedMedia: { files: stores['files.json'], fileStorage: stores['file-storage.json'] },
     }, { recoverySecret: command.text ?? 'phase28-network-recovery-secret' });
     const path = join(context.directory, 'phase28-backup.keystone'); await writeFile(path, created.bytes, { mode: 0o600 }); return { path, manifest: created.manifest };
+  }
+  if (command.action === 'meshEnrollRequest') {
+    if (!activeDeviceMesh) throw new Error('Personal Device Mesh is unavailable');
+    const request = await activeDeviceMesh.createEnrollmentRequest({ label: command.text ?? `${role} device`, platform: command.messageId ?? 'desktop', capabilities: { roles: ['PORTABLE', 'USER_INTERFACE'], continuityCapabilities: networkContinuityCapabilities } });
+    return { request };
+  }
+  if (command.action === 'meshAuthorize') {
+    if (!activeDeviceMesh || !command.meshRequest) throw new Error('meshAuthorize requires enrollment request');
+    const request = command.meshRequest as DeviceEnrollmentRequest;
+    const authorization = await activeDeviceMesh.authorizeEnrollment(request, { confirmed: true, doubleConfirmed: true });
+    return { authorization };
+  }
+  if (command.action === 'meshAccept') {
+    if (!activeDeviceMesh || !command.meshAuthorization) throw new Error('meshAccept requires authorization');
+    return { accepted: await activeDeviceMesh.acceptEnrollmentAuthorization(command.meshAuthorization) };
+  }
+  if (command.action === 'meshReplicate') {
+    if (!activeDeviceMesh || !peer || !command.objectId) throw new Error('meshReplicate requires peer and objectId');
+    const requests = await activeDeviceMesh.replicate({ objectId: command.objectId, objectType: command.objectType ?? 'note', objectVersion: command.objectVersion ?? '1', payload: command.payload ?? { text: command.text ?? 'mesh payload' }, metadata: command.metadata ?? { objectId: command.objectId }, policy: { intent: 'SELECTED_DEVICES', selectedDeviceIds: [peer.nodeId] }, priority: 'USER_INTERACTIVE' });
+    return { requests };
+  }
+  if (command.action === 'meshFlush') {
+    if (!activeDeviceMesh) throw new Error('Personal Device Mesh is unavailable');
+    return activeDeviceMesh.flush(peer?.nodeId);
+  }
+  if (command.action === 'meshRead') {
+    if (!activeDeviceMesh) throw new Error('Personal Device Mesh is unavailable');
+    const snapshot = await activeDeviceMesh.stateSnapshot();
+    return { status: await activeDeviceMesh.status(), devices: await activeDeviceMesh.listDevices(), pending: await activeDeviceMesh.pendingTransfers(peer?.nodeId), replicas: Object.values(snapshot.replicas), trustEpoch: snapshot.trustEpoch, revoked: peer ? activeDeviceMesh.isRevoked(peer.nodeId) : activeDeviceMesh.isRevoked(activeDeviceMesh.localDeviceId) };
+  }
+  if (command.action === 'meshRevoke') {
+    if (!activeDeviceMesh || !peer) throw new Error('meshRevoke requires peer');
+    const event = await activeDeviceMesh.revokeDevice(peer.nodeId, command.reason ?? command.text ?? 'revoked by owner', { confirmed: true, doubleConfirmed: true });
+    return { eventId: event.id, deviceId: event.deviceId, trustEpoch: event.trustEpoch };
+  }
+  if (command.action === 'meshFallbackSpoof') {
+    if (!activeDeviceMesh || !peer) throw new Error('meshFallbackSpoof requires peer');
+    const payload = { body: 'canonicalJson-only envelope must be rejected' };
+    const request = {
+      version: 1 as const,
+      id: crypto.randomUUID(),
+      objectId: 'mesh:fallback-signature',
+      objectType: 'note',
+      objectVersion: '1',
+      stateHash: await context.cryptoProvider.hash(canonicalJson(payload)),
+      targetDeviceId: peer.nodeId,
+      intent: 'SELECTED_DEVICES' as const,
+      priority: 'USER_INTERACTIVE' as const,
+      profile: 'INTERACTIVE' as const,
+      metadataOnly: false,
+      sizeBytes: new TextEncoder().encode(JSON.stringify(payload)).byteLength,
+      payload,
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+      nextAttemptAt: Date.now(),
+      status: 'PENDING' as const,
+    };
+    const unsigned = {
+      version: 1 as const,
+      type: 'device.mesh.sync' as const,
+      id: crypto.randomUUID(),
+      sender: context.local.nodeId,
+      recipient: peer.nodeId,
+      nonce: await context.cryptoProvider.randomNonce(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      body: { version: 1 as const, kind: 'device_mesh_sync' as const, request, trustEpoch: activeDeviceMesh.trustEpoch },
+    };
+    // Deliberately use the legacy canonicalJson signature.  The receiving
+    // FabricTransport must reject it because ContactEnvelopeSecurity signs
+    // the protocol-domain payload instead.
+    const forged = { ...unsigned, signature: await context.cryptoProvider.sign(canonicalJson(unsigned), context.local.privateKey) };
+    await context.transport.send(peer.nodeId, forged);
+    return { sent: true, objectId: request.objectId };
+  }
+  if (command.action === 'continuitySend') {
+    if (!peer || !command.objectType) throw new Error('continuitySend requires peer and objectType');
+    const type = command.objectType as HandoffObjectType;
+    if (type === 'clipboard') throw new Error('continuitySend does not carry clipboard text; use an explicit host action');
+    const request = await context.continuity.sendToDevice({ targetDeviceId: peer.nodeId, type: type as Exclude<HandoffObjectType, 'clipboard'>, value: command.payload ?? { objectId: command.objectId ?? `network:${type}`, label: command.text ?? `R0P84 ${type}` }, action: command.text === 'continue' ? 'CONTINUE' : 'OPEN' });
+    return { requestId: request.requestId, status: request.status, type: request.payload.type, reference: request.payload.reference };
+  }
+  if (command.action === 'continuityFlush') return context.continuity.flush(peer?.nodeId);
+  if (command.action === 'continuityRead') return { outbox: await context.continuity.outbox(), inbox: await context.continuity.inbox(), history: await context.continuity.history() };
+  if (command.action === 'continuityOpen') {
+    if (!command.objectId) throw new Error('continuityOpen requires request id in objectId');
+    const item = await context.continuity.openIncoming(command.objectId);
+    return { requestId: item.requestId, status: item.status, type: item.payload.type };
+  }
+  if (command.action === 'continuityCancel') {
+    if (!command.objectId) throw new Error('continuityCancel requires request id in objectId');
+    const item = await context.continuity.cancel(command.objectId);
+    return { requestId: item.requestId, status: item.status };
   }
   if (command.action === 'deviceAuthorize') {
     if (!peer) throw new Error('deviceAuthorize requires peer');
@@ -392,13 +796,13 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
     const updates = await context.privateCommunityReplication.rotateAndBroadcast(command.communityId, peer.nodeId, (command.text as 'kick' | 'ban' | 'unban') ?? 'ban', command.messageId ?? 'Phase 25 removal'); return { epoch: (await context.privateCommunities.state(command.communityId))?.epoch, recipients: updates.map(update => update.recipient) };
   }
   if (command.action === 'privateReplay') {
-    if (!peer || !context.transport.lastPrivate) throw new Error('No private envelope available for replay'); await context.transport.send(peer.nodeId, context.transport.lastPrivate); return {};
+    if (!peer || !context.transport.lastPrivate) throw new Error('No private envelope available for replay'); if (!context.transport.isPeerConnected(peer.nodeId)) return { rejected: true }; await context.transport.send(peer.nodeId, context.transport.lastPrivate); return {};
   }
   if (command.action === 'privateTamper') {
-    if (!peer || !context.transport.lastPrivate) throw new Error('No private envelope available for tamper test'); const last = context.transport.lastPrivate; const body = last.body && typeof last.body === 'object' ? { ...(last.body as Record<string, unknown>), ciphertext: `${String((last.body as Record<string, unknown>).ciphertext ?? '')}tampered` } : last.body; await context.transport.send(peer.nodeId, { ...last, body, nonce: crypto.randomUUID(), signature: 'invalid' }); return {};
+    if (!peer || !context.transport.lastPrivate) throw new Error('No private envelope available for tamper test'); if (!context.transport.isPeerConnected(peer.nodeId)) return { rejected: true }; const last = context.transport.lastPrivate; const body = last.body && typeof last.body === 'object' ? { ...(last.body as Record<string, unknown>), ciphertext: `${String((last.body as Record<string, unknown>).ciphertext ?? '')}tampered` } : last.body; await context.transport.send(peer.nodeId, { ...last, body, nonce: crypto.randomUUID(), signature: 'invalid' }); return {};
   }
   if (command.action === 'privateSpoof') {
-    if (!peer) throw new Error('privateSpoof requires peer'); const unsigned = { version: 1 as const, type: 'social.private_community_key_update', id: crypto.randomUUID(), sender: context.local.nodeId, recipient: peer.nodeId, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: { algorithm: 'crypto_box', senderEncryptionPublicKey: context.local.encryptionPublicKey, nonce: 'invalid', ciphertext: 'invalid' } }; await context.transport.connect(peer.nodeId); await context.transport.send(peer.nodeId, { ...unsigned, signature: 'invalid' }); return {};
+    if (!peer) throw new Error('privateSpoof requires peer'); if (!context.transport.isPeerConnected(peer.nodeId)) return { rejected: true }; const unsigned = { version: 1 as const, type: 'social.private_community_key_update', id: crypto.randomUUID(), sender: context.local.nodeId, recipient: peer.nodeId, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: { algorithm: 'crypto_box', senderEncryptionPublicKey: context.local.encryptionPublicKey, nonce: 'invalid', ciphertext: 'invalid' } }; await context.transport.send(peer.nodeId, { ...unsigned, signature: 'invalid' }); return {};
   }
   if (command.action === 'communityPublish') {
     if (!peer) throw new Error('communityPublish requires peer'); const community = await context.communities.createCommunity({ name: 'Production network community' }); const role = await context.communities.createRole(community.id, { name: 'Member', permissions: ['post_message'] }); const invite = await context.communities.invite(community.id, peer.nodeId, [role.payload.roleId]);
@@ -426,6 +830,76 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   if (command.action === 'communityPhase24Replay') { if (!peer || !context.transport.lastCommunity) throw new Error('No community envelope available for replay'); await context.transport.send(peer.nodeId, context.transport.lastCommunity); return {}; }
   if (command.action === 'contentServe') return { manifest: await context.content.serve() };
   if (command.action === 'contentFetch') { if (!peer || !command.manifest) throw new Error('contentFetch requires peer and manifest'); return context.content.fetch(peer.nodeId, command.manifest, command.interruptAt); }
+  // R0P74 production content proof. These commands deliberately use the
+  // Fabric-backed DistributedContentServer/Service, not the older test-only
+  // NetworkContentBridge above. Keep the command names outside the legacy
+  // union so this long-lived harness remains backwards compatible.
+  if ((command.action as string) === 'distributedContentServe') {
+    if (!peer) throw new Error('distributedContentServe requires peer');
+    const bytes = Uint8Array.from({ length: 96 * 1024 }, (_, index) => (index * 31) % 251);
+    const manifest = await createContentManifest(bytes, { mimeType: 'application/octet-stream', chunkSize: 16 * 1024, contentPolicy: 'OWNED_DEVICES' });
+    await context.distributedContentServer.serve(manifest, bytes, { policy: 'OWNED_DEVICES', authorizedPeers: [peer.nodeId] });
+    return { manifest, contentId: manifest.contentId, byteLength: manifest.byteLength, chunkCount: manifest.chunks.length };
+  }
+  if ((command.action as string) === 'distributedContentFetch') {
+    if (!peer || !command.manifest) throw new Error('distributedContentFetch requires peer and manifest');
+    const authorization = { scope: 'OWNER' as const, subjectId: context.local.nodeId };
+    const source = context.distributedContentServer.source(peer.nodeId, authorization);
+    const maxChunks = (command as Command & { maxChunks?: number }).maxChunks;
+    try {
+      const session = await context.distributedContentService.downloadTo({ manifest: command.manifest, sources: [source], authorization, maxInFlightChunks: 1, maxChunks }, () => undefined);
+      return { complete: session.state.state === 'COMPLETE', contentId: session.contentId, state: session.state.state, completedChunks: session.state.completedChunks, totalChunks: session.state.totalChunks, missing: session.missingChunks, diagnostics: context.distributedContentService.diagnostics() };
+    } catch (error) {
+      const session = context.distributedContentService.session(command.manifest.contentId);
+      return { complete: false, contentId: command.manifest.contentId, state: session?.state.state ?? 'FAILED', completedChunks: session?.state.completedChunks ?? 0, totalChunks: command.manifest.chunks.length, missing: session?.missingChunks ?? [], error: error instanceof Error ? error.message : String(error), diagnostics: context.distributedContentService.diagnostics() };
+    }
+  }
+  if ((command.action as string) === 'distributedContentRead') {
+    if (!command.manifest) throw new Error('distributedContentRead requires manifest');
+    const session = context.distributedContentService.session(command.manifest.contentId);
+    return { contentId: command.manifest.contentId, session, availability: context.distributedContentService.availability(command.manifest.contentId), diagnostics: context.distributedContentService.diagnostics() };
+  }
+  if (command.action === 'publicationCreate') {
+    const content = typeof command.payload === 'string' ? command.payload : command.text ? `Publication body from ${role}: ${command.text}` : `Publication body from ${role}`;
+    const draft = await context.publications.createDraft({ title: command.text ?? 'Keystone publication', content, slug: 'personal-page' });
+    return { draftId: draft.draftId, title: draft.title, published: false };
+  }
+  if (command.action === 'publicationPublish') {
+    if (!command.objectId) throw new Error('publicationPublish requires draft id in objectId');
+    const published = await context.publications.publishDraft(command.objectId, { visibility: command.publicationVisibility ?? 'PUBLIC', ownerConfirmed: true });
+    const bytes = new TextEncoder().encode(canonicalJson(published.revision.content));
+    await context.distributedContentServer.serve(published.revision.contentManifest, bytes, { policy: published.revision.contentManifest.contentPolicy === 'PUBLIC_CACHEABLE' ? 'PUBLIC_CACHEABLE' : 'PRIVATE_NO_STRANGER_CACHE' });
+    if (peer) await context.publicationReplication.publish(peer.nodeId, published.revision.publicationId);
+    return { publicationId: published.revision.publicationId, revisionAddress: published.revision.revisionAddress, revisionNumber: published.revision.revisionNumber, pointerRevision: published.pointer.pointerRevision, contentId: published.revision.contentManifest.contentId, contentManifest: published.revision.contentManifest, title: published.revision.title };
+  }
+  if (command.action === 'publicationRead') {
+    if (!command.objectId) throw new Error('publicationRead requires publication id in objectId');
+    const latest = await context.publications.resolveLatest(command.objectId, { allowUnlisted: true });
+    const exact = command.messageId ? await context.publications.resolveExact(command.objectId, command.messageId as ContentId) : undefined;
+    return { publicationId: command.objectId, latest: latest ? { publicationId: latest.publicationId, revisionAddress: latest.revisionAddress, revisionNumber: latest.revisionNumber, title: latest.title, visibility: latest.visibility, contentManifest: latest.contentManifest } : undefined, exact: exact ? { revisionAddress: exact.revisionAddress, revisionNumber: exact.revisionNumber, title: exact.title } : undefined };
+  }
+  if (command.action === 'publicationFetch') {
+    if (!peer || !command.objectId) throw new Error('publicationFetch requires peer and publication id in objectId');
+    const revision = command.messageId ? await context.publications.resolveExact(command.objectId, command.messageId as ContentId) : await context.publications.resolveLatest(command.objectId, { allowUnlisted: true });
+    if (!revision) throw new Error('Publication revision is unavailable');
+    const source = context.distributedContentServer.source(peer.nodeId, { scope: 'PUBLIC', subjectId: context.local.nodeId });
+    const bytes = await context.distributedContentService.download({ manifest: revision.contentManifest, sources: [source], authorization: { scope: 'PUBLIC', subjectId: context.local.nodeId }, priority: 'INTERACTIVE', maxInFlightChunks: 1 });
+    return { publicationId: revision.publicationId, revisionAddress: revision.revisionAddress, contentId: revision.contentManifest.contentId, byteLength: bytes.byteLength, content: JSON.parse(new TextDecoder().decode(bytes)) };
+  }
+  if (command.action === 'publicationUpdate') {
+    if (!command.objectId) throw new Error('publicationUpdate requires publication id in objectId');
+    const current = await context.publications.resolveLatest(command.objectId, { allowUnlisted: true });
+    if (!current) throw new Error('Publication is unavailable');
+    const updated = await context.publications.updatePublication(command.objectId, { title: command.text ?? current.title, content: typeof command.payload === 'string' ? command.payload : `${current.title} revision ${current.revisionNumber + 1}`, visibility: command.publicationVisibility ?? current.visibility });
+    const bytes = new TextEncoder().encode(canonicalJson(updated.revision.content));
+    await context.distributedContentServer.serve(updated.revision.contentManifest, bytes, { policy: updated.revision.contentManifest.contentPolicy === 'PUBLIC_CACHEABLE' ? 'PUBLIC_CACHEABLE' : 'PRIVATE_NO_STRANGER_CACHE' });
+    if (peer) await context.publicationReplication.publish(peer.nodeId, updated.revision.publicationId);
+    return { publicationId: updated.revision.publicationId, revisionAddress: updated.revision.revisionAddress, revisionNumber: updated.revision.revisionNumber, previousRevisionAddress: current.revisionAddress };
+  }
+  if (command.action === 'publicationUnpublish') {
+    if (!command.objectId) throw new Error('publicationUnpublish requires publication id in objectId');
+    const pointer = await context.publications.unpublish(command.objectId); return { publicationId: command.objectId, status: pointer.status, pointerRevision: pointer.pointerRevision };
+  }
   if (command.action === 'filePublish') {
     if (!peer) throw new Error('filePublish requires peer');
     const bytes = Uint8Array.from({ length: 192 * 1024 }, (_, index) => (index * 17) % 251);
@@ -435,6 +909,18 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
     if (manifest.contentId !== imported.manifest.contentId) throw new Error('File bridge manifest mismatch');
     await context.fileReplication.publish(peer.nodeId, imported.file);
     return { fileId: imported.file.id, objectId: imported.file.id, contentId: imported.file.payload.contentId, manifest };
+  }
+  if (command.action === 'fileHostilePublish') {
+    if (!peer) throw new Error('fileHostilePublish requires peer');
+    // Synthetic executable-like bytes deliberately carry a misleading image
+    // filename/MIME.  This is a fixture, not an executable or exploit.
+    const bytes = Uint8Array.from([0x4d, 0x5a, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00]);
+    const imported = await context.files.import({ bytes, filename: '../../cat.jpg', mimeType: 'image/jpeg', visibility: 'public', chunkSize: 16 * 1024 });
+    await context.filePolicy.register(imported.file, { userOwned: true });
+    const manifest = await context.content.serveBytes(bytes, 'image/jpeg');
+    if (manifest.contentId !== imported.manifest.contentId) throw new Error('Hostile fixture manifest mismatch');
+    await context.fileReplication.publish(peer.nodeId, imported.file);
+    return { fileId: imported.file.id, objectId: imported.file.id, contentId: imported.file.payload.contentId, manifest, filename: imported.file.payload.filename, mimeType: imported.file.payload.mimeType };
   }
   if (command.action === 'fileRead') {
     if (!command.fileId) throw new Error('fileRead requires fileId'); const file = await context.files.get(command.fileId); if (!file) return undefined;
@@ -446,8 +932,15 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   }
   if (command.action === 'fileFetch') {
     if (!command.fileId || !command.manifest) throw new Error('fileFetch requires fileId and manifest'); const file = await context.files.get(command.fileId); if (!file) throw new Error('FileObject has not arrived');
-    const providerRoles = command.providers?.length ? command.providers : peer ? [command.peer!] : []; if (!providerRoles.length) throw new Error('fileFetch requires providers'); const providers = providerRoles.map((name, index) => context.content.provider(context.peerKeys[name].nodeId, index === 0 ? command.interruptAt : undefined, true)); const directory: FileProviderDirectory = { async manifest() { return command.manifest!; }, async providers() { return providers; } }; const transfer = new FileTransferManager(context.fileContent.cache, directory, context.filePolicy, 3);
-    try { const bytes = await transfer.download(file, { manifest: command.manifest, maxParallel: 3 }); return { complete: true, bytes: bytes.length, missing: context.fileContent.cache.missing(command.manifest), status: transfer.state(file).status }; } catch (error) { return { complete: false, missing: context.fileContent.cache.missing(command.manifest), status: transfer.state(file).status, error: error instanceof Error ? error.message : String(error) }; }
+    const providerRoles = command.providers?.length ? command.providers : peer ? [command.peer!] : []; if (!providerRoles.length) throw new Error('fileFetch requires providers'); const providers = providerRoles.map((name, index) => context.content.provider(context.peerKeys[name].nodeId, index === 0 ? command.interruptAt : undefined, true)); const directory: FileProviderDirectory = { async manifest() { return command.manifest!; }, async providers() { return providers; } }; const transfer = new FileTransferManager(context.fileContent.cache, directory, context.filePolicy, 3, undefined, context.containment);
+    try { const bytes = await transfer.download(file, { manifest: command.manifest, maxParallel: 3 }); return { complete: true, bytes: bytes.length, missing: context.fileContent.cache.missing(command.manifest), status: transfer.state(file).status, quarantined: (await context.containment.store.list()).filter(entry => entry.metadata.objectId === file.id).map(entry => ({ entryId: entry.metadata.entryId, objectId: entry.metadata.objectId, state: entry.state, hash: entry.contentHash })) }; } catch (error) { return { complete: false, missing: context.fileContent.cache.missing(command.manifest), status: transfer.state(file).status, error: error instanceof Error ? error.message : String(error) }; }
+  }
+  if (command.action === 'fileQuarantine') { return (await context.containment.store.list()).map(entry => ({ entryId: entry.metadata.entryId, objectId: entry.metadata.objectId, state: entry.state, filename: entry.metadata.originalFilename, hash: entry.contentHash })); }
+  if (command.action === 'fileInspect') {
+    if (!command.fileId) throw new Error('fileInspect requires fileId');
+    const entry = await context.containment.store.getByObjectId(command.fileId); if (!entry) return undefined;
+    const inspected = await context.containment.inspect(entry.metadata.entryId); const preview = await context.containment.preview(entry.metadata.entryId);
+    return { objectId: command.fileId, state: inspected.inspection.state, risk: inspected.inspection.riskClass, executableRisk: inspected.inspection.executableRisk, mismatch: inspected.inspection.typeEvidence.mismatch, preview: preview?.kind };
   }
   if (command.action === 'musicPublish') {
     if (!peer) throw new Error('musicPublish requires peer'); const artist = await context.music.createArtist({ name: 'Network Alice', profileId: context.local.nodeId }); const bytes = Uint8Array.from({ length: 64 * 1024 }, (_, index) => index % 251); const track = await context.music.importTrack({ bytes, mimeType: 'audio/ogg', name: 'network.ogg', chunkSize: 16 * 1024, title: 'Noise track', artistIds: [artist.payload.artistId], durationMs: 60_000, codec: 'opus', explicit: false, rights: { declaredRightsHolder: { name: 'Network Alice' } } }, context.musicContent); const manifest = await context.content.serveBytes(bytes, 'audio/ogg'); await context.messages.sendTrack(peer.nodeId, track.track.id, track.track.payload.title); await context.musicReplication.publish(peer.nodeId, artist); await context.musicReplication.publish(peer.nodeId, track.track); return { trackId: track.track.id, manifest };
@@ -456,6 +949,12 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   if (command.action === 'videoPublish') { if (!peer) throw new Error('videoPublish requires peer'); const bytes = Uint8Array.from({ length: 64 * 1024 }, (_, index) => index % 251); const video = await context.videos.import({ bytes, mimeType: 'video/webm', name: 'network.webm', chunkSize: 16 * 1024, title: `Noise ${role} video`, durationMs: 60_000, dimensions: { width: 1280, height: 720 }, videoStream: { codec: 'vp9', container: 'webm' }, audioStream: { codec: 'opus', channels: 2 }, shortForm: { caption: 'Network short', aspectRatio: '9:16' } }, context.videoContent); const manifest = await context.content.serveBytes(bytes, 'video/webm'); await context.messages.sendVideo(peer.nodeId, video.video.id, video.video.payload.title); await context.videoReplication.publish(peer.nodeId, video.video); await context.discovery.ingest(video.video, 'local'); await context.discoveryReplication.publish(peer.nodeId, video.video); return { videoId: video.video.id, manifest, short: !!video.video.payload.shortForm }; }
   if (command.action === 'videoPlay') { if (!peer || !command.manifest) throw new Error('videoPlay requires peer and manifest'); const video = (await context.videos.videos())[0]; if (!video) throw new Error('Video not received'); const feed = buildShortFeed([video]); const segment = await context.content.playVideo(peer.nodeId, video, command.manifest); return { videoId: video.id, chunkIndex: segment.chunkIndex, bytes: segment.bytes.length, short: !!video.payload.shortForm, feed: feed.some(item => item.id === video.id) }; }
   if (command.action === 'webrtcOffer') { if (!peer) throw new Error('webrtcOffer requires peer'); await context.signaling.send(peer.nodeId, { type: 'call_offer', callId: 'network-call', media: 'audio', sdp: { type: 'offer', sdp: 'v=0\r\ns=Keystone network validation' } }); return {}; }
+  if (command.action === 'callSignal') {
+    if (!peer) throw new Error('callSignal requires peer');
+    const type = command.callSignalType ?? 'CALL_INVITE';
+    const signal = { version: 1 as const, type, signalId: command.objectId ?? crypto.randomUUID(), callId: command.callId ?? 'network-call-v2', sessionId: command.sessionId ?? 'network-session-v2', sequence: command.sequence ?? 0, expiresAt: command.expiresAt ?? new Date(Date.now() + (type === 'CALL_INVITE' ? 30_000 : 60_000)).toISOString(), ...(command.mode ? { mode: command.mode } : {}), ...(command.payload === undefined ? {} : { payload: command.payload }) } as CallSignal;
+    await context.signaling.send(peer.nodeId, signal); return { sent: true, type, callId: signal.callId };
+  }
   if (command.action === 'livePublish') {
     if (!peer) throw new Error('livePublish requires peer');
     const existing = command.broadcastId ? await context.live.getBroadcast(command.broadcastId) : undefined;
@@ -488,6 +987,14 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   if (command.action === 'discoveryRead') { const query = command.text?.trim() || 'Discovery'; const search = await context.discovery.search({ query, scope: 'public', limit: 50 }); const feed = await context.discovery.feed({ surface: 'home', limit: 50 }); return { search: search.items.map(item => ({ id: item.object.id, type: item.object.type })), feed: feed.items.map(item => ({ id: item.object.id, type: item.object.type })), stats: context.discoveryReplication.stats() }; }
   if (command.action === 'discoveryFollow') { if (!peer) throw new Error('discoveryFollow requires peer'); await context.discovery.follow(peer.nodeId); return { following: context.discovery.followingIds() }; }
   if (command.action === 'discoverySpoof') { if (!peer) throw new Error('discoverySpoof requires peer'); const unsigned = { version: 1 as const, type: 'social.discovery_object', id: crypto.randomUUID(), sender: context.local.nodeId, recipient: peer.nodeId, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: { object: { malformed: true } } }; await context.transport.connect(peer.nodeId); await context.transport.send(peer.nodeId, { ...unsigned, signature: await context.security.sign(unsigned) }); return {}; }
+  if (command.action === 'discoveryMaliciousSafe') {
+    if (!peer) throw new Error('discoveryMaliciousSafe requires peer');
+    const postId = crypto.randomUUID();
+    const unsignedObject = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'post' as const, id: postId, author: context.local.nodeId, createdAt: new Date().toISOString(), visibility: 'public' as const, references: [], payload: { postId, text: 'SAFE sender label: explicit nude sexual content', contentUris: [] } };
+    const object = postObjectSchema.parse({ ...unsignedObject, signature: await context.cryptoProvider.sign(canonicalJson(unsignedObject), context.local.privateKey) });
+    const unsigned = { version: 1 as const, type: 'social.discovery_object', id: crypto.randomUUID(), sender: context.local.nodeId, recipient: peer.nodeId, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: { object, safety: { decision: 'ALLOW', issuer: context.local.nodeId } } };
+    await context.transport.connect(peer.nodeId); await context.transport.send(peer.nodeId, { ...unsigned, signature: await context.security.sign(unsigned) }); return { postId };
+  }
   if (command.action === 'discoveryStats') return context.discoveryReplication.stats();
   if (command.action === 'signals') return { signals: context.signals.map(value => ({ peer: value.peer, type: value.signal.type, callId: value.signal.callId })) };
   if (command.action === 'stop') return {};

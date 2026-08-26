@@ -1,4 +1,4 @@
-# P2P media transfer (Phase 5 foundation)
+# P2P media transfer ( foundation)
 
 Русский обзор: [контент и вложения](ru/social-media.md#контент-и-вложения).
 

@@ -7,6 +7,9 @@
  * redacted payload and records only metadata in AIAuditLog.
  */
 
+import type { OwnerAuthorityService, SettingsMutationIntent } from '../security/owner-authority.js';
+import { SecretRedactionPolicy, type ProviderCredentialCapability } from '../security/secrets.js';
+
 export type AIDataClass = 'PUBLIC' | 'USER_EXPLICIT' | 'PRIVATE' | 'SECRET';
 export const AI_DATA_CLASSES: readonly AIDataClass[] = ['PUBLIC', 'USER_EXPLICIT', 'PRIVATE', 'SECRET'];
 /** Marker used for context assembled from verified Keystone objects.  The
@@ -231,10 +234,12 @@ export class AIEgressFirewall {
     const classes = uniqueClasses(['USER_EXPLICIT', ...allItems.map(item => item.dataClass)]);
     const denied = uniqueClasses(allItems.filter(item => item.dataClass === 'PRIVATE' || item.dataClass === 'SECRET').map(item => item.dataClass));
     const tools = sanitizeTools(request.requestedTools ?? [], scope);
+    const managedSecretPresent = SecretRedactionPolicy.containsManagedSecret({ context: allItems, tools: request.requestedTools ?? [], nestedContext: request.nestedContext ?? [] });
 
     if (scope === 'remote') {
       if (taskPrivacy === 'private') return this.finish(scope, model, request, { allowed: false, dataClasses: classes, deniedDataClasses: denied, firewall: 'deny', reason: 'Private tasks are local-only' });
       if (allItems.some(item => item.dataClass === 'SECRET')) return this.finish(scope, model, request, { allowed: false, dataClasses: classes, deniedDataClasses: ['SECRET'], firewall: 'deny', reason: 'SECRET data is never sent to an external AI provider' });
+      if (managedSecretPresent) return this.finish(scope, model, request, { allowed: false, dataClasses: classes, deniedDataClasses: ['SECRET'], firewall: 'deny', reason: 'Managed secrets are never sent to an AI provider' });
       if (allItems.some(item => item.source === KEYSTONE_UNIFIED_CONTEXT_SOURCE)) return this.finish(scope, model, request, { allowed: false, dataClasses: classes, deniedDataClasses: denied, firewall: 'deny', reason: 'Unified Keystone context cannot be sent to an external AI provider' });
       const allowedItems = allItems.filter(item => item.dataClass === 'PUBLIC' || item.dataClass === 'USER_EXPLICIT').map(cloneContextItem);
       const redacted = allItems.length !== allowedItems.length || Boolean(request.systemDataClass && request.systemDataClass !== 'PUBLIC' && request.systemDataClass !== 'USER_EXPLICIT');
@@ -243,12 +248,18 @@ export class AIEgressFirewall {
       return this.finish(scope, model, request, { allowed: true, payload, dataClasses: classes, deniedDataClasses: denied, firewall: redacted ? 'redact' : 'allow', reason: redacted ? 'PRIVATE context was excluded from the external payload' : undefined });
     }
 
-    const localItems = this.localPolicy.filter(allItems);
+    // SECRET is a system-managed boundary, not an AI context class.  Local
+    // inference may use private/user context, but key material, recovery
+    // material and provider credentials are omitted even from a local model;
+    // typed capabilities remain the only way to request an allowed operation.
+    const localItems = this.localPolicy.filter(allItems).filter(item => item.dataClass !== 'SECRET' && !SecretRedactionPolicy.containsManagedSecret(item.value));
+    const localRedacted = localItems.length !== allItems.length;
+    const localSecretPresent = allItems.some(item => item.dataClass === 'SECRET' || SecretRedactionPolicy.containsManagedSecret(item.value));
     const systemPrompt = request.systemPrompt?.slice(0, 32_000) || this.safeSystemPrompt;
     const payload: AIProviderRequest = { model: { ...model }, systemPrompt, userText: request.userText.slice(0, 1_000_000), context: localItems, requestedTools: tools, signal: request.signal };
-    // SECRET is usable only by a local provider. The local provider remains
-    // behind host capability policy; this firewall does not grant shell/fs access.
-    return this.finish(scope, model, request, { allowed: true, payload, dataClasses: classes, deniedDataClasses: [], firewall: 'allow' });
+    // The local provider remains behind host capability policy; this firewall
+    // does not grant shell/fs access or expose system-managed secret bytes.
+    return this.finish(scope, model, request, { allowed: true, payload, dataClasses: classes, deniedDataClasses: localSecretPresent ? ['SECRET'] : [], firewall: localRedacted ? 'redact' : 'allow', reason: localRedacted ? (localSecretPresent ? 'System-managed secret context was excluded from the local model payload' : 'Disallowed local context source was excluded from the model payload') : undefined });
   }
 
   assert(scope: AIProviderScope, model: AIModelRef, request: AIRequest): AIProviderRequest {
@@ -470,6 +481,8 @@ export interface OpenAICompatibleAIProviderOptions {
   apiKey?: string;
   getApiKey?: () => Promise<string | undefined>;
   getAccessToken?: () => Promise<string | undefined>;
+  /** Adapter-only credential capability. The model/request payload never sees it. */
+  credential?: ProviderCredentialCapability;
   fetch?: typeof globalThis.fetch;
   egressFirewall?: AIEgressFirewall;
 }
@@ -488,9 +501,9 @@ export class OpenAICompatibleAIProvider implements AIProvider {
   get scope(): AIProviderScope { return this.options.scope; }
   async health(): Promise<AIHealthSnapshot> { const checkedAt = new Date().toISOString(); try { const response = await this.fetcher(healthEndpoint(this.options.endpoint), { method: 'GET', headers: { accept: 'application/json' } }); return { state: response.ok ? 'available' : 'unavailable', checkedAt, detail: response.ok ? undefined : `HTTP ${response.status}` }; } catch (error) { return { state: 'unavailable', checkedAt, detail: safeError(error) }; } }
   async detect(): Promise<boolean> { return (await this.health()).state === 'available'; }
-  async complete(request: AIProviderRequest): Promise<AIProviderResponse> { const safe = this.egress(request); const token = await this.token(); const response = await this.fetcher(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(openAIRequestBody(safe)), signal: safe.signal }); if (!response.ok) throw new Error(`AI provider failed with HTTP ${response.status}`); return parseOpenAIResponse(await response.json() as unknown); }
-  async *stream(request: AIProviderRequest): AsyncIterable<string> { const safe = this.egress(request); const token = await this.token(); const response = await this.fetcher(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ ...openAIRequestBody(safe), stream: true }), signal: safe.signal }); if (!response.ok) throw new Error(`AI provider failed with HTTP ${response.status}`); if (!response.body) { const parsed = parseOpenAIResponse(await response.json() as unknown); if (parsed.text) yield parsed.text; return; } yield* parseSSE(response.body); }
-  protected async token(): Promise<string | undefined> { return this.options.apiKey ?? await this.options.getApiKey?.() ?? await this.options.getAccessToken?.(); }
+  async complete(request: AIProviderRequest): Promise<AIProviderResponse> { const safe = this.egress(request); const authorization = await this.authorization(); const response = await this.fetcher(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json', ...(authorization ? { authorization } : {}) }, body: JSON.stringify(openAIRequestBody(safe)), signal: safe.signal }); if (!response.ok) throw new Error(`AI provider failed with HTTP ${response.status}`); return parseOpenAIResponse(await response.json() as unknown); }
+  async *stream(request: AIProviderRequest): AsyncIterable<string> { const safe = this.egress(request); const authorization = await this.authorization(); const response = await this.fetcher(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(authorization ? { authorization } : {}) }, body: JSON.stringify({ ...openAIRequestBody(safe), stream: true }), signal: safe.signal }); if (!response.ok) throw new Error(`AI provider failed with HTTP ${response.status}`); if (!response.body) { const parsed = parseOpenAIResponse(await response.json() as unknown); if (parsed.text) yield parsed.text; return; } yield* parseSSE(response.body); }
+  protected async authorization(): Promise<string | undefined> { if (this.options.credential) return this.options.credential.getAuthorizationHeader(this.options.id); const token = this.options.apiKey ?? await this.options.getApiKey?.() ?? await this.options.getAccessToken?.(); return token ? `Bearer ${token}` : undefined; }
   protected egress(request: AIProviderRequest): AIProviderRequest { if (this.scope !== 'remote') return request; return (this.options.egressFirewall ?? new AIEgressFirewall()).assert('remote', request.model, { systemPrompt: request.systemPrompt, userText: request.userText, context: request.context, requestedTools: request.requestedTools, signal: request.signal }); }
 }
 
@@ -500,7 +513,7 @@ export class OllamaAIProvider extends OpenAICompatibleAIProvider {
   async health(): Promise<AIHealthSnapshot> { const base = new URL(this.options.endpoint).origin; const checkedAt = new Date().toISOString(); try { const response = await (this.options.fetch ?? globalThis.fetch)(`${base}/api/tags`, { headers: { accept: 'application/json' } }); return { state: response.ok ? 'available' : 'unavailable', checkedAt, detail: response.ok ? undefined : `HTTP ${response.status}` }; } catch (error) { return { state: 'unavailable', checkedAt, detail: safeError(error) }; } }
   async complete(request: AIProviderRequest): Promise<AIProviderResponse> { const response = await this.callOllama(request, false); if (!response.ok) throw new Error(`Ollama failed with HTTP ${response.status}`); const value = await response.json() as unknown; const message = value && typeof value === 'object' ? (value as Record<string, unknown>).message : undefined; const content = message && typeof message === 'object' ? (message as Record<string, unknown>).content : undefined; if (typeof content !== 'string') throw new Error('Ollama returned no text'); return { text: content, toolIntents: [] }; }
   async *stream(request: AIProviderRequest): AsyncIterable<string> { const response = await this.callOllama(request, true); if (!response.body) return; const reader = response.body.getReader(); const decoder = new TextDecoder(); let pending = ''; try { for (;;) { const chunk = await reader.read(); if (chunk.done) break; pending += decoder.decode(chunk.value, { stream: true }); for (const line of pending.split('\n').slice(0, -1)) { const json = safeJson(line); const message = json && typeof json === 'object' ? (json as Record<string, unknown>).message : undefined; const token = message && typeof message === 'object' ? (message as Record<string, unknown>).content : undefined; if (typeof token === 'string') yield token; } pending = pending.slice(pending.lastIndexOf('\n') + 1); } } finally { reader.releaseLock(); } }
-  private async callOllama(request: AIProviderRequest, stream: boolean): Promise<Response> { const safe = this.egress(request); const token = await this.token(); return (this.options.fetch ?? globalThis.fetch)(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ model: safe.model.model, stream, messages: [{ role: 'system', content: safe.systemPrompt }, ...safe.context.map(item => ({ role: 'user', content: `[Explicit context ${item.id}] ${stringifyValue(item.value)}` })), { role: 'user', content: safe.userText }] }), signal: safe.signal }); }
+  private async callOllama(request: AIProviderRequest, stream: boolean): Promise<Response> { const safe = this.egress(request); const authorization = await this.authorization(); return (this.options.fetch ?? globalThis.fetch)(this.options.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) }, body: JSON.stringify({ model: safe.model.model, stream, messages: [{ role: 'system', content: safe.systemPrompt }, ...safe.context.map(item => ({ role: 'user', content: `[Explicit context ${item.id}] ${stringifyValue(item.value)}` })), { role: 'user', content: safe.userText }] }), signal: safe.signal }); }
 }
 
 export interface AISettingsModel { ref: string; scope: AIProviderScope; enabled: boolean; contextLimit: number; endpoint?: string; displayName?: string; }
@@ -515,6 +528,11 @@ export class AISettingsService {
   async ready(): Promise<void> { await this.readyPromise; }
   snapshot(): Readonly<AISettingsState> { return structuredClone(this.state); }
   async update(patch: Partial<Omit<AISettingsState, 'version' | 'privateTasksRequireLocal'>>): Promise<Readonly<AISettingsState>> { await this.ready(); this.state = parseAISettings({ ...this.state, ...patch, version: 1, privateTasksRequireLocal: true }); await this.storage.write(this.state); return this.snapshot(); }
+  /** AI/agent settings changes require a fresh explicit owner request. */
+  async updateByAuthority(patch: Partial<Omit<AISettingsState, 'version' | 'privateTasksRequireLocal'>>, options: { authority: OwnerAuthorityService; intent: SettingsMutationIntent; confirmed?: boolean; doubleConfirmed?: boolean }): Promise<Readonly<AISettingsState>> {
+    await options.authority.assertMutation(options.intent, { confirmed: options.confirmed, doubleConfirmed: options.doubleConfirmed });
+    return this.update(patch);
+  }
   async bindRouter(router: Pick<AIRouter, 'setRemoteEnabled' | 'setDefaultModel' | 'setFallbacks' | 'setDisabledModels'>): Promise<void> { await this.ready(); router.setRemoteEnabled(this.state.remoteEnabled); router.setFallbacks(this.state.fallbacks); router.setDefaultModel(this.state.defaultModel ?? undefined); router.setDisabledModels(this.state.models.filter(model => !model.enabled).map(model => model.ref)); }
   private async hydrate(): Promise<void> { const value = await this.storage.read(); this.state = parseAISettings(value ? { ...DEFAULT_AI_SETTINGS, ...(value as object) } : DEFAULT_AI_SETTINGS); }
 }
@@ -533,7 +551,7 @@ function normalizeRef(ref: AIModelRef | string): AIModelRef { return typeof ref 
 function uniqueClasses(values: readonly AIDataClass[]): AIDataClass[] { return AI_DATA_CLASSES.filter(value => values.includes(value)); }
 function dedupeModels(values: readonly AIModel[]): AIModel[] { const seen = new Set<string>(); const result: AIModel[] = []; for (const model of values) { if (seen.has(model.id)) continue; seen.add(model.id); result.push(model); } return result; }
 function isSafeId(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value); }
-function randomId(): string { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function randomId(): string { if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID(); const bytes = new Uint8Array(16); if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') crypto.getRandomValues(bytes); else throw new Error('Secure randomness is unavailable'); return [...bytes].map(value => value.toString(16).padStart(2, '0')).join(''); }
 function safeError(error: unknown): string { return (error instanceof Error ? error.message : 'AI provider error').slice(0, 512); }
 function isLocalEndpoint(endpoint: string): boolean { try { const url = new URL(endpoint); return (url.protocol === 'http:' || url.protocol === 'https:') && ['localhost', '127.0.0.1', '::1'].includes(url.hostname); } catch { return false; } }
 function healthEndpoint(endpoint: string): string { try { const url = new URL(endpoint); if (/\/chat\/completions$/.test(url.pathname)) url.pathname = url.pathname.replace(/\/chat\/completions$/, '/models'); else if (/\/chat$/.test(url.pathname)) url.pathname = url.pathname.replace(/\/chat$/, '/models'); else if (!url.pathname.endsWith('/models')) url.pathname = `${url.pathname.replace(/\/$/, '')}/models`; return url.toString(); } catch { return endpoint; } }

@@ -76,6 +76,7 @@ export class AddonEngine {
   async executeTool(qualifiedName: string, input: JsonValue): Promise<JsonValue> {
     const tool = this.tools.get(qualifiedName);
     if (!tool) throw new Error(`Unknown addon tool: ${qualifiedName}`);
+    if (containsLegacySecretField(input)) throw new AddonSecurityError('INVALID_SANDBOX_REQUEST', 'Addon tools cannot receive legacy secret material');
     assertSchema(input, tool.parameters, `$input(${qualifiedName})`);
     const addon = this.requireAddon(tool.addonId);
     for (const capability of tool.requiredCapabilities ?? []) await this.authorize(addon.manifest, capability, `Execute AI tool ${tool.name}`);
@@ -86,6 +87,7 @@ export class AddonEngine {
     if (!isRecord(call) || typeof call.capability !== 'string' || typeof call.operation !== 'string' || typeof call.reason !== 'string' || !isJsonValue(call.input)) {
       throw new AddonSecurityError('INVALID_SANDBOX_REQUEST', 'Sandbox host call is malformed');
     }
+    if (containsLegacySecretField(call.input)) throw new AddonSecurityError('INVALID_SANDBOX_REQUEST', 'Addon host calls cannot carry legacy secret material');
     if (!(KNOWN_CAPABILITIES as readonly string[]).includes(call.capability)) throw new AddonSecurityError('INVALID_SANDBOX_REQUEST', `Unknown host capability: ${call.capability}`);
     const capability = call.capability as AddonCapability;
     await this.authorize(manifest, capability, call.reason);
@@ -208,3 +210,9 @@ function isJsonValue(value: unknown): value is JsonValue {
 }
 function cloneJson<T extends JsonValue>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
 function removeOwned<T extends { addonId: string }>(map: Map<string, T>, addonId: string): void { for (const [key, value] of map) if (value.addonId === addonId) map.delete(key); }
+const LEGACY_SECRET_FIELDS = new Set(['masterSeed', 'sessionKeys', 'DeviceSessionKeys', 'privateKey', 'encryptionPrivateKey', 'secretKey', 'rawKey', 'keyMaterial', 'sessionSecret', 'exportKey', 'getKey', 'getSecret']);
+function containsLegacySecretField(value: JsonValue): boolean {
+  if (Array.isArray(value)) return value.some(containsLegacySecretField);
+  if (!isRecord(value)) return false;
+  return Object.entries(value).some(([key, child]) => LEGACY_SECRET_FIELDS.has(key) || containsLegacySecretField(child as JsonValue));
+}

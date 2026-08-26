@@ -477,7 +477,7 @@ function cloneOrchestratorResult(value: AIOrchestratorResult): AIOrchestratorRes
 function cloneValue(value: unknown): unknown { try { return structuredClone(value); } catch { return stringify(value); } }
 function stringify(value: unknown): string { if (typeof value === 'string') return value.slice(0, 1_000_000); try { const result = JSON.stringify(value); return typeof result === 'string' ? result.slice(0, 1_000_000) : String(value); } catch { return '[unserializable]'; } }
 function safeId(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value); }
-function randomId(): string { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function randomId(): string { return `${globalThis.crypto.randomUUID()}`; }
 function clampInt(value: number, min: number, max: number): number { return Math.max(min, Math.min(max, Number.isSafeInteger(value) ? value : min)); }
 function failureCode(error: unknown): string { return error instanceof AIOrchestrationPolicyError ? error.code : error instanceof DelegationCancelledError ? 'cancelled' : 'provider_failure'; }
 function isAbortError(error: unknown, signal?: AbortSignal): boolean { return !!signal?.aborted || error instanceof DelegationCancelledError || (error instanceof Error && error.name === 'AbortError'); }

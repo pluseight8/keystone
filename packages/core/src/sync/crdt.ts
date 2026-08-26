@@ -1,6 +1,7 @@
 import * as Y from 'yjs';
 import type { NodeId } from '../types.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 
 export interface CrdtSyncOptions { documentId?: string; localNodeId: NodeId; selfPeers?: readonly NodeId[]; expiresInMs?: number; security?: EnvelopeSecurity; }
 export interface PersonalEcosystemDocument {
@@ -46,7 +47,7 @@ export class CrdtSyncAdapter {
   readonly document: Y.Doc;
   private readonly seenNonces = new Set<string>();
   private readonly peers = new Set<NodeId>(); private readonly unsubscribe: () => void; private readonly documentId: string; private started = false;
-  constructor(document: Y.Doc, private readonly transport: Transport, private readonly options: CrdtSyncOptions) {
+  constructor(document: Y.Doc, private readonly transport: KeystoneDeliveryInterface, private readonly options: CrdtSyncOptions) {
     this.document = document; this.documentId = options.documentId ?? 'life-map'; (options.selfPeers ?? []).forEach(peer => this.peers.add(peer));
     this.document.on('update', this.onLocalUpdate); this.unsubscribe = transport.onMessage(envelope => { void this.onEnvelope(envelope).catch(() => undefined); });
   }

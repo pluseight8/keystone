@@ -8,6 +8,19 @@ jobs are dispatched manually or for a signed desktop tag release, so ordinary
 pushes do not repeatedly download platform SDKs. A tagged release publishes
 only signed desktop updater bundles and `updater.json` after strict preflight.
 
+The bounded synthetic scale suite is an explicit, single-worker check rather
+than a default CI soak:
+
+```sh
+pnpm test:performance
+```
+
+It uses generated data and no one-process-per-peer topology. Keep the serial
+real-network job (`pnpm test:network`) as the production Hyperswarm/Noise
+regression evidence; its harness startup/restart cost is reported separately
+from product latency. Performance checks must use Node `>=22 <23` and must not
+disable encryption, durability, retry, authorization, or resource limits.
+
 - Linux: AppImage
 - Windows: MSI and NSIS `.exe`
 - macOS: `.app` and DMG

@@ -1,6 +1,9 @@
 # Приватные Communities и групповое шифрование
 
-Phase 25 добавляет зашифрованный путь для Communities с видимостью `private` и `contacts`. Существующий публичный путь и Hyperswarm/Noise transport не переписываются. Публичная репликация по-прежнему отклоняет непубличные Communities, если явно не используется этот private protocol.
+Реализация private Communities добавляет зашифрованный путь для видимости
+`private` и `contacts`. Существующий публичный путь и Hyperswarm/Noise
+transport не переписываются. Публичная репликация по-прежнему отклоняет
+непубличные Communities, если явно не используется этот private protocol.
 
 ## Граница протокола
 
@@ -30,4 +33,4 @@ Private state хранится через host `EncryptedSocialStateStore` и д
 
 ## Ограничения и приватность
 
-Протокол даёт аутентифицированные изменения membership и конфиденциальность текущей epoch, но не центральный registry, cloud backup, DRM, analytics или monetization. Обычные routing metadata всё ещё видны сетевым peer. Metadata private Community не отправляется через public Community replication или public discovery. Contacts-only использует тот же encrypted path; публичные Communities сохраняют существующее поведение подписанных открытых объектов без лишних затрат на шифрование.
+Протокол даёт аутентифицированные изменения membership и конфиденциальность текущей epoch, но не центральный registry, cloud backup или analytics service. Обычные routing metadata всё ещё видны сетевым peer. Metadata private Community не отправляется через public Community replication или public discovery. Contacts-only использует тот же encrypted path; публичные Communities сохраняют существующее поведение подписанных открытых объектов без лишних затрат на шифрование.

@@ -195,4 +195,16 @@ describe('typed AI tools and skill capability boundary', () => {
     const publicResult = { ...privateResult, intentId: 'public', dataClass: 'PUBLIC' as const, value: { title: 'public' } };
     expect(toPublicAIContext(publicResult).value).toEqual({ title: 'public' });
   });
+
+  it('keeps quarantined content out of process-like tools even when a skill is approved', async () => {
+    const registry = new ToolRegistry();
+    const processTool: Tool<{ file?: unknown }, { started: boolean }> = {
+      version: 1, id: 'processExecution', name: 'Process execution', description: 'Synthetic process boundary', capabilities: ['DEVICE_ACTION'],
+      inputSchema: z.object({ file: z.unknown() }).strict(), outputSchema: z.object({ started: z.boolean() }).strict(), resultClass: 'PRIVATE', execute: () => ({ started: true }),
+    };
+    registry.register(processTool); const skills = new SkillRegistry(); await installSkill(skills, { toolIds: ['processExecution'], declaredCapabilities: ['DEVICE_ACTION'] });
+    const intent = registry.issueIntent({ toolId: 'processExecution', skillId: 'test-skill', source: 'local', arguments: { file: { kind: 'QuarantinedBlob', trust: 'QUARANTINED', state: 'QUARANTINED' } }, requestedCapabilities: ['DEVICE_ACTION'] });
+    const result = await new ToolExecutor(registry, skills).execute(intent);
+    expect(result).toMatchObject({ ok: false, errorCode: 'policy_denied', sideEffectApplied: false });
+  });
 });

@@ -1,6 +1,6 @@
 # AI runtime
 
-Phase 29 adds one host-neutral AI layer on top of Keystone's existing local
+The runtime provides one host-neutral AI layer on top of Keystone's existing local
 RAG, capability policy and model adapters. A model is addressed as
 `provider/model`. Hosts register an `AIProvider`, its `AIModel` descriptors and
 an `AIRouter`; the router never hands a raw application request directly to a

@@ -9,8 +9,16 @@ export default defineConfig({
   // same components through react-native-web; package export conditions alone
   // do not rewrite direct `react-native` imports inside the workspace package.
   resolve: {
-    alias: { 'react-native': 'react-native-web' },
+    alias: {
+      'react-native': 'react-native-web',
+      // The renderer needs the browser-safe Core projection; native/Node
+      // implementations are reached through Tauri host boundaries.
+      '@keystone/core': resolve(__dirname, '../../packages/core/src/browser.ts'),
+    },
     conditions: ['browser', 'import', 'module', 'default'],
   },
-  build: { outDir: resolve(__dirname, 'dist'), emptyOutDir: true },
+  build: {
+    outDir: resolve(__dirname, 'dist'),
+    emptyOutDir: true,
+  },
 });

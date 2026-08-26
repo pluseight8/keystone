@@ -55,7 +55,7 @@ Be constructive, assume good intent, and critique the change rather than the con
 | Area | Start here | Typical changes |
 | --- | --- | --- |
 | Core and protocol | [`packages/core`](packages/core), [`docs/protocol.md`](docs/protocol.md) | Consent, crypto adapters, message framing, AI validation, transport |
-| Addons | [`packages/addons`](packages/addons), [`docs/addons.md`](docs/addons.md) | Manifests, sandbox RPC, capability handlers, tools, nodes, widgets |
+| Plugins | [`packages/addons`](packages/addons), [`docs/plugins.md`](docs/plugins.md) | Manifests, sandbox RPC, capability handlers, tools, nodes, widgets |
 | Shared UI | [`packages/ui`](packages/ui) | Accessible cross-platform primitives and interaction states |
 | Themes | [`packages/theme`](packages/theme) | Manifests, presets, token validation, rendering tests |
 | Desktop | [`apps/desktop`](apps/desktop) | Tauri commands, Rust boundary, typed automation policy, packaging |

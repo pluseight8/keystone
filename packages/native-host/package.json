@@ -1,0 +1,25 @@
+{
+  "name": "@keystone/native-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./capture": "./src/capture.ts"
+  },
+  "scripts": {
+    "test": "vitest run src/index.test.ts src/media.test.ts",
+    "test:evidence": "vitest run src/r0p66-evidence.test.ts --reporter=verbose",
+    "lint": "tsc --noEmit",
+    "test:security": "vitest run src/index.test.ts src/media.test.ts",
+    "test:media": "vitest run src/media.test.ts --testTimeout=60000 --hookTimeout=60000",
+    "test:documents": "vitest run src/documents.test.ts --testTimeout=180000 --hookTimeout=180000",
+    "test:capture": "vitest run src/capture.test.ts src/capture-evidence.test.ts --testTimeout=60000 --hookTimeout=60000"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

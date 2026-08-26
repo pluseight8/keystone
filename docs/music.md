@@ -1,4 +1,4 @@
-# Music (Phase 17)
+# Music
 
 Русский обзор: [музыка, видео и короткие видео](ru/social-media.md#музыка-видео-и-короткие-видео).
 
@@ -12,4 +12,4 @@ Direct messages and community messages carry only the Track ID. `MusicReplicatio
 
 `StreamingPlaybackSource` verifies and fetches only the chunk required at the requested position, so playback can begin without a complete download. It validates every chunk hash before caching, uses already verified chunks after an interruption or seek, and leaves quota/pinning/eviction decisions to `ContentCache`. `PlaybackController` owns local queue, seek, repeat, and play/pause state but delegates audible output to a native `AudioPlaybackAdapter`.
 
-`PersistentMusicStorage` is a separately namespaced encrypted durable-storage boundary for Track, Library, Album and Playlist state. Native hosts must provide the encrypted backend, P2P content directory/providers, and audio adapter; no central music server, DRM, cloud account, payment, advertising, or recommendation backend is part of this design.
+`PersistentMusicStorage` is a separately namespaced encrypted durable-storage boundary for Track, Library, Album and Playlist state. Native hosts must provide the encrypted backend, P2P content directory/providers, and audio adapter; no central music server, cloud account, or recommendation backend is part of this design.

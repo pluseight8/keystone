@@ -1,6 +1,6 @@
 # AI runtime
 
-Phase 29 добавляет единый host-neutral AI-слой поверх существующих локальных
+AI runtime предоставляет единый host-neutral слой поверх существующих локальных
 RAG, capability policy и model adapters. Модель адресуется как
 `provider/model`. Host регистрирует `AIProvider`, его `AIModel` и `AIRouter`;
 router никогда не передаёт provider необработанный запрос приложения.

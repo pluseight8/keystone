@@ -21,6 +21,8 @@ import {
   type SendTextOptions,
   type SocialStorage,
 } from './messaging.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
 
 export interface GroupCreateOptions { title: string; members: readonly NodeId[]; avatarUri?: string; }
 export interface GroupMessageOptions extends SendTextOptions {}
@@ -42,6 +44,7 @@ export class GroupConversationService {
     private readonly crypto: CryptoProvider,
     private readonly local: DeviceSessionKeys,
     private readonly now: () => number = () => Date.now(),
+    private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime())),
   ) {
     this.messages.setConversationPolicy((conversationId, sender) => this.authorizeMessage(conversationId, sender));
     this.unsubscribe = this.messages.subscribe(event => {
@@ -51,9 +54,9 @@ export class GroupConversationService {
 
   close(): void { this.unsubscribe(); this.messages.setConversationPolicy(undefined); }
   get localNodeId(): NodeId { return this.local.nodeId; }
-  async list(): Promise<readonly DirectConversation[]> { return (await this.storage.listConversations()).filter(value => value.kind === 'group'); }
+  async list(): Promise<readonly DirectConversation[]> { const values = (await this.storage.listConversations()).filter(value => value.kind === 'group'); return (await Promise.all(values.map(async value => await this.eligible(value) ? value : undefined))).filter((value): value is DirectConversation => !!value); }
   async conversations(): Promise<readonly DirectConversation[]> { return this.list(); }
-  async get(conversationId: string): Promise<DirectConversation | undefined> { const value = await this.storage.getConversation(conversationId); return value?.kind === 'group' ? value : undefined; }
+  async get(conversationId: string): Promise<DirectConversation | undefined> { const value = await this.storage.getConversation(conversationId); return value?.kind === 'group' && await this.eligible(value) ? value : undefined; }
   async getConversation(conversationId: string): Promise<DirectConversation | undefined> { return this.get(conversationId); }
   async stats(conversationId?: string): Promise<GroupStats> { const conversation = conversationId ? await this.get(conversationId) : undefined; return { acceptedEvents: this.acceptedEvents, rejectedEvents: this.rejectedEvents, members: conversation?.members?.length ?? 0 }; }
 
@@ -62,7 +65,7 @@ export class GroupConversationService {
     const members = uniqueMembers([this.local.nodeId, ...options.members]); if (members.length < 2) throw new Error('A group needs at least two members');
     const id = await groupConversationId(members); const existing = await this.get(id); if (existing) return existing;
     const conversation: DirectConversation = { id, participants: members, members, adminIds: [this.local.nodeId], kind: 'group', title, ...(options.avatarUri ? { avatarUri: options.avatarUri } : {}), createdAt: new Date(this.now()).toISOString(), revision: 1, unreadCount: 0 };
-    await this.storage.saveConversation(conversation);
+    if (!(await this.eligible(conversation))) throw new Error('Group conversation failed mandatory SafetySurfaceGate'); await this.storage.saveConversation(conversation);
     const event = await this.event({ conversationId: id, action: 'create', title, ...(options.avatarUri ? { avatarUri: options.avatarUri } : {}), members, adminIds: [this.local.nodeId] });
     await this.storage.markSeenObject(event.id); await this.broadcast(event, members); return conversation;
   }
@@ -93,7 +96,7 @@ export class GroupConversationService {
 
   async rename(conversationId: string, title: string, avatarUri?: string): Promise<DirectConversation> {
     const current = await this.requireAdmin(conversationId); title = title.trim(); if (!title || title.length > 160) throw new Error('Invalid group title'); const next = { ...current, title, ...(avatarUri === undefined ? {} : { avatarUri }), revision: (current.revision ?? 0) + 1 };
-    await this.storage.saveConversation(next); await this.broadcast(await this.event({ conversationId, action: 'update', title, ...(avatarUri ? { avatarUri } : {}), members: [...(next.members ?? next.participants)], adminIds: [...(next.adminIds ?? [this.local.nodeId])] }), next.members ?? next.participants); return next;
+    if (!(await this.eligible(next))) throw new Error('Group conversation failed mandatory SafetySurfaceGate'); await this.storage.saveConversation(next); await this.broadcast(await this.event({ conversationId, action: 'update', title, ...(avatarUri ? { avatarUri } : {}), members: [...(next.members ?? next.participants)], adminIds: [...(next.adminIds ?? [this.local.nodeId])] }), next.members ?? next.participants); return next;
   }
 
   async sendText(conversationId: string, text: string, options: GroupMessageOptions = {}): Promise<MessageObject> {
@@ -144,7 +147,7 @@ export class GroupConversationService {
       if (!current) { const bootstrap = payload.action === 'create' || (payload.action === 'add' && payload.member === this.local.nodeId); if (!bootstrap || !admins.includes(event.author) || !members.includes(this.local.nodeId)) throw new Error('Unknown conversation'); }
       else if (current.kind !== 'group' || !this.authorizedEvent(current, event)) throw new Error('Unauthorized conversation event');
       const next: DirectConversation = { id: payload.conversationId, participants: members, members, adminIds: admins, kind: 'group', createdAt: current?.createdAt ?? event.createdAt, ...(payload.title ?? current?.title ? { title: payload.title ?? current?.title } : {}), ...(payload.avatarUri ?? current?.avatarUri ? { avatarUri: payload.avatarUri ?? current?.avatarUri } : {}), unreadCount: current?.unreadCount ?? 0, lastMessageId: current?.lastMessageId, lastMessageAt: current?.lastMessageAt, lastMessagePreview: current?.lastMessagePreview, pinned: current?.pinned, archived: current?.archived, muted: current?.muted, draft: current?.draft, revision: (current?.revision ?? 0) + 1, lastEventId: event.id };
-      await this.storage.saveConversation(next); this.acceptedEvents++; return true;
+      if (!(await this.eligible(next)) || !(await this.eligible(event))) throw new Error('Group conversation event failed mandatory SafetySurfaceGate'); await this.storage.saveConversation(next); this.acceptedEvents++; return true;
     } catch { this.rejectedEvents++; return false; }
   }
   private authorizedEvent(current: DirectConversation, event: ConversationEventObject): boolean {
@@ -152,14 +155,15 @@ export class GroupConversationService {
   }
   private async event(payload: Omit<ConversationEventObject['payload'], 'logicalClock'>): Promise<ConversationEventObject> {
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'conversation_event' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt: new Date(this.now()).toISOString(), visibility: 'private' as const, references: [{ id: payload.conversationId, type: 'conversation' as const }], payload: { ...payload, logicalClock: await this.storage.nextLogicalClock(payload.conversationId) } };
-    return conversationEventObjectSchema.parse({ ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) });
+    const event = conversationEventObjectSchema.parse({ ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) }); if (!(await this.eligible(event))) throw new Error('Group conversation event failed mandatory SafetySurfaceGate'); return event;
   }
   private async broadcast(event: ConversationEventObject, recipients: readonly NodeId[]): Promise<void> { await this.messages.sendConversationEvent(uniqueMembers(recipients), event); }
-  private async saveState(current: DirectConversation, members: readonly NodeId[], adminIds: readonly NodeId[]): Promise<DirectConversation> { const next = { ...current, participants: [...members], members: [...members], adminIds: [...adminIds], revision: (current.revision ?? 0) + 1 }; await this.storage.saveConversation(next); return next; }
+  private async saveState(current: DirectConversation, members: readonly NodeId[], adminIds: readonly NodeId[]): Promise<DirectConversation> { const next = { ...current, participants: [...members], members: [...members], adminIds: [...adminIds], revision: (current.revision ?? 0) + 1 }; if (!(await this.eligible(next))) throw new Error('Group conversation failed mandatory SafetySurfaceGate'); await this.storage.saveConversation(next); return next; }
   private async requireMember(conversationId: string): Promise<DirectConversation> { const value = await this.get(conversationId); if (!value || !(value.members ?? value.participants).includes(this.local.nodeId)) throw new Error('Not a conversation member'); return value; }
   private async requireAdmin(conversationId: string): Promise<DirectConversation> { const value = await this.requireMember(conversationId); if (!(value.adminIds ?? []).includes(this.local.nodeId)) throw new Error('Administrator role required'); return value; }
   private async assertMessage(conversationId: string, id: string): Promise<MessageObject> { const value = await this.storage.getMessage(id); if (!value || value.payload.conversationId !== conversationId) throw new Error('Unknown conversation message'); return value; }
   private async ownText(id: string, conversationId: string): Promise<MessageObject & { payload: Extract<MessagePayload, { kind: 'text' }> }> { const value = await this.assertMessage(conversationId, id); if (value.author !== this.local.nodeId || value.payload.kind !== 'text' || value.deleted) throw new Error('Message cannot be changed'); return value as MessageObject & { payload: Extract<MessagePayload, { kind: 'text' }> }; }
+  private async eligible(value: unknown): Promise<boolean> { const objectId = typeof value === 'object' && value && 'id' in value && typeof (value as { id?: unknown }).id === 'string' ? (value as { id: string }).id : `group:${String((value as { conversationId?: unknown })?.conversationId ?? '')}`; return (await this.protectedSurfaces.evaluate('GROUP_CHAT', { objectId, value, content: value, text: JSON.stringify(value), domain: 'GROUP_SHARED', sourceType: 'group', verified: true, authorized: true, sharing: true })) !== undefined; }
 }
 
 /** Naming alias for hosts that use the broader conversation terminology. */

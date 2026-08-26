@@ -1,6 +1,6 @@
 import type { NodeId } from '../types.js';
 import type { FollowObject, MessageObject, ProfileObject } from './object-model.js';
-import type { DirectConversation, PendingEnvelope, SocialStorage } from './messaging.js';
+import { MAX_PENDING_ENVELOPES, type DirectConversation, type PendingEnvelope, type SocialStorage } from './messaging.js';
 
 /** An encrypted, atomic blob supplied by a native host. Core never chooses key storage. */
 export interface EncryptedSocialStateStore { read(): Promise<unknown | undefined>; write(value: unknown): Promise<void>; }
@@ -22,9 +22,9 @@ export class PersistentSocialStorage implements SocialStorage, SocialGraphStorag
   async getMessage(id: string) { return copy((await this.load()).messages[id]); }
   async messages(conversationId: string) { return Object.values((await this.load()).messages).filter(value => value.payload.conversationId === conversationId).sort(compareMessages).map(copy).filter((value): value is MessageObject => !!value); }
   async nextLogicalClock(conversationId: string) { const state = await this.load(); const next = (state.clocks[conversationId] ?? 0) + 1; state.clocks[conversationId] = next; await this.commit(state, { kind: 'message', conversationId }); return next; }
-  async enqueue(value: PendingEnvelope) { const state = await this.load(); state.outbox[value.id] = copy(value)!; await this.commit(state, { kind: 'outbox' }); }
+  async enqueue(value: PendingEnvelope) { const state = await this.load(); if (!state.outbox[value.id] && Object.keys(state.outbox).length >= MAX_PENDING_ENVELOPES) throw new Error('Outbox capacity exceeded'); state.outbox[value.id] = copy(value)!; await this.commit(state, { kind: 'outbox' }); }
   async pending(peer?: NodeId) { return Object.values((await this.load()).outbox).filter(value => !peer || value.peer === peer).map(copy).filter((value): value is PendingEnvelope => !!value); }
-  async replacePending(value: PendingEnvelope) { const state = await this.load(); state.outbox[value.id] = copy(value)!; await this.commit(state, { kind: 'outbox' }); }
+  async replacePending(value: PendingEnvelope) { const state = await this.load(); if (!state.outbox[value.id] && Object.keys(state.outbox).length >= MAX_PENDING_ENVELOPES) throw new Error('Outbox capacity exceeded'); state.outbox[value.id] = copy(value)!; await this.commit(state, { kind: 'outbox' }); }
   async removePending(id: string) { const state = await this.load(); if (!state.outbox[id]) return; delete state.outbox[id]; await this.commit(state, { kind: 'outbox' }); }
   async hasSeen(nonce: string) { return !!(await this.load()).nonces[nonce]; }
   async markSeen(nonce: string) { const state = await this.load(); state.nonces[nonce] = true; await this.commit(state, { kind: 'policy' }); }
@@ -57,7 +57,7 @@ export class PersistentSocialStorage implements SocialStorage, SocialGraphStorag
 }
 
 export class InMemoryEncryptedSocialStateStore implements EncryptedSocialStateStore { private value?: unknown; async read() { return copy(this.value); } async write(value: unknown) { this.value = copy(value); } }
-function parseState(value: unknown): State { if (!value) return empty(); if (!value || typeof value !== 'object') throw new Error('Invalid persistent social state'); const candidate = value as { version?: number } & Partial<Omit<State, 'version'>>; if (!candidate.conversations || !candidate.messages || !candidate.outbox || !candidate.nonces || !candidate.blocked || !candidate.clocks || !candidate.acknowledgements) throw new Error('Unsupported persistent social state'); if (candidate.version === 1) return { ...structuredClone(candidate), version: 2, seenObjects: {}, profiles: {}, follows: {}, localRelationships: {} } as State; if (candidate.version !== 2 || !candidate.profiles || !candidate.follows || !candidate.localRelationships) throw new Error('Unsupported persistent social state'); return { ...structuredClone(candidate as State), seenObjects: candidate.seenObjects ?? {} }; }
+function parseState(value: unknown): State { if (!value) return empty(); if (!value || typeof value !== 'object') throw new Error('Invalid persistent social state'); const candidate = value as { version?: number } & Partial<Omit<State, 'version'>>; if (!candidate.conversations || !candidate.messages || !candidate.outbox || !candidate.nonces || !candidate.blocked || !candidate.clocks || !candidate.acknowledgements) throw new Error('Unsupported persistent social state'); const boundedOutbox = Object.fromEntries(Object.entries(candidate.outbox).slice(-MAX_PENDING_ENVELOPES)); if (candidate.version === 1) return { ...structuredClone(candidate), outbox: boundedOutbox, version: 2, seenObjects: {}, profiles: {}, follows: {}, localRelationships: {} } as State; if (candidate.version !== 2 || !candidate.profiles || !candidate.follows || !candidate.localRelationships) throw new Error('Unsupported persistent social state'); return { ...structuredClone(candidate as State), outbox: boundedOutbox, seenObjects: candidate.seenObjects ?? {} }; }
 function compareMessages(a: MessageObject, b: MessageObject): number { return a.payload.logicalClock - b.payload.logicalClock || a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 function compareRevision(a: { createdAt: string; id: string }, b: { createdAt: string; id: string }): number { return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id); }
 function copy<T>(value: T | undefined): T | undefined { return value === undefined ? undefined : structuredClone(value); }

@@ -1,0 +1,11 @@
+/** Mobile host-boundary projection for R0P87 Web Library. */
+export interface MobileWebLibraryEntry { readonly id: string; readonly kind: 'BOOKMARK' | 'ARCHIVE'; readonly title: string; readonly sourceUrl: string; readonly favorite: boolean; readonly readState: 'READ' | 'UNREAD'; readonly tags: readonly string[]; readonly offlineStatus: 'AVAILABLE' | 'PARTIAL' | 'BOOKMARK_ONLY' | 'UNAVAILABLE'; readonly revisionCount: number; readonly latestRevisionId?: string; }
+export interface MobileWebLibraryCollection { readonly id: string; readonly name: string; readonly isSystem: boolean; }
+export interface MobileWebLibraryReader { readonly entry: MobileWebLibraryEntry; readonly revision?: { readonly id: string; readonly revisionNumber: number; readonly capturedAt: string; readonly sourceUrl: string; }; readonly text: string; readonly missingResources: number; readonly externalRequestCount: 0; readonly scriptsExecuted: 0; readonly formsSubmitted: 0; }
+export interface MobileWebLibraryRuntime { list(input?: { readonly collectionId?: string }): Promise<readonly MobileWebLibraryEntry[]>; search(query: string): Promise<readonly MobileWebLibraryEntry[]>; collections(): Promise<readonly MobileWebLibraryCollection[]>; reader(entryId: string, revisionId?: string): Promise<MobileWebLibraryReader | undefined>; setReadState?(entryId: string, state: 'READ' | 'UNREAD'): Promise<MobileWebLibraryEntry>; setFavorite?(entryId: string, favorite: boolean): Promise<MobileWebLibraryEntry>; addNote?(input: { readonly entryId: string; readonly revisionId: string; readonly body: string }): Promise<unknown>; shareArchive?(entryId: string, revisionId?: string): Promise<void>; continueOnDevice?(entryId: string, revisionId?: string): Promise<void>; subscribe?(listener: () => void): () => void; }
+
+let current: MobileWebLibraryRuntime | undefined;
+const listeners = new Set<() => void>();
+export function installMobileWebLibraryRuntime(runtime: MobileWebLibraryRuntime | undefined): void { current = runtime; for (const listener of listeners) listener(); }
+export function getMobileWebLibraryRuntime(): MobileWebLibraryRuntime | undefined { return current; }
+export function subscribeMobileWebLibraryRuntime(listener: () => void): () => void { listeners.add(listener); return () => listeners.delete(listener); }

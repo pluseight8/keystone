@@ -1,4 +1,4 @@
-# Content addressing (Phase 5)
+# Content addressing
 
 Русский обзор: [контент и вложения](ru/social-media.md#контент-и-вложения).
 
@@ -8,4 +8,16 @@ A v1 manifest records byte length, claimed MIME type, optional name, chunk size,
 
 `ContentCache` enforces a local quota with LRU eviction and explicit pinning. A pinned object is never evicted automatically; an over-quota pinned set fails rather than silently storing unlimited media. `ContentFetcher` resumes from verified cached chunks and can fall back to another provider for each chunk. No Keystone storage service, CDN, or mandatory seeder exists.
 
-`ContentProvider` is deliberately transport-neutral. Hyperswarm, WebRTC data channels, LAN peers, and future voluntary discovery providers can implement it. Provider discovery, parallel scheduling, bandwidth limits, and host file-backed cache adapters remain implementation work above this immutable manifest contract.
+`ContentProvider` is deliberately transport-neutral. Hyperswarm, WebRTC data channels, LAN peers, and future voluntary discovery providers can implement it. `DistributedContentService` is the bounded multi-source implementation above this immutable manifest contract: it schedules missing chunks across eligible sources, verifies each chunk and the final SHA-256 address, persists resumable state, and honors cache quota/pinning. Its requests travel through the existing `KeystoneDeliveryInterface`/`ConnectivityFabric`; it does not create a CDN, global seeder directory or mandatory cloud store.
+
+Manifest policy is explicit. `PUBLIC_CACHEABLE` permits voluntary public caching; `OWNED_DEVICES`, `AUTHORIZED_GROUP` and `PRIVATE_NO_STRANGER_CACHE` require matching authorization. Private callers create the manifest from ciphertext using the existing application encryption boundary. The content layer never receives decryption keys, treats possession as authority, or announces private availability globally. Bounded retries, source concurrency, pending requests and transfer state keep RAM, disk and network use finite; malformed, stale, wrong-length or corrupt chunks are rejected before cache commit.
+
+## Publication revisions
+
+Personal Web publication bodies are serialized into ordinary content manifests
+with a bounded 16 KiB baseline chunk size so signed chunk responses remain
+below the transport frame budget. The publication revision stores the manifest
+and immutable content address; it does not implement a second blob or chunk
+protocol. A voluntary public cache can serve verified bytes, but it cannot
+change the publisher signature, latest pointer or authorship. Unpublish does
+not recall immutable bytes already cached elsewhere.

@@ -1,4 +1,4 @@
-# Unified Home, discovery, and ranking (Phase 21)
+# Unified Home, discovery, and ranking
 
 Русский обзор: [единая главная, поиск и discovery](ru/discovery.md).
 
@@ -8,7 +8,7 @@
 
 `UnifiedDiscoveryService` projects the same object IDs into Home, Following, Communities, Search, chat references, and community references. `DeterministicRankingProvider` is the default `RankingProvider`; it combines follows, community relevance, recency, local reactions, watch/listen history, bookmarks, interests, and trust hints. A host may install a local AI provider later without changing the object graph or transport. The small AI status shown at the top of mobile Home is a local-provider boundary, not a recommendation backend.
 
-Interactions and followed/community sets are persisted in a separately namespaced local discovery store. They are never placed in public advertisements and are not replicated unless the user explicitly chooses another social action. A restarted process restores its local feed and search metadata without republishing private history.
+Interactions and followed/community sets are persisted in a separately namespaced local discovery store. They are never placed in public discovery records and are not replicated unless the user explicitly chooses another social action. A restarted process restores its local feed and search metadata without republishing private history.
 
 Discovery scopes are intentionally separate:
 
@@ -18,4 +18,4 @@ Discovery scopes are intentionally separate:
 
 Permissions are evaluated before a result is returned. Private DM objects, blocked authors/communities, contacts-only objects, community-restricted objects, malformed objects, and invalid signatures cannot enter public discovery. A Video with `shortForm.aspectRatio === "9:16"` is surfaced as a Short; it remains the same Video ID and media object.
 
-There is no built-in global search endpoint, central index, central analytics, or recommendation server. Remote adapters are transport integrations and must validate incoming objects through their owning service before treating them as trusted social state. Private, contacts-only, community-only, message, and live-chat data are never included in public advertisements.
+There is no built-in global search endpoint, central index, central analytics, or recommendation server. Remote adapters are transport integrations and must validate incoming objects through their owning service before treating them as trusted social state. Private, contacts-only, community-only, message, and live-chat data are never included in public discovery records.

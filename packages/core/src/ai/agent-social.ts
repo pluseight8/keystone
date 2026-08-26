@@ -10,10 +10,13 @@
 
 import { canonicalJson, type CryptoProvider } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
-import type { Envelope, EnvelopeSecurity, Transport, UnsignedEnvelope } from '../transport.js';
+import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
+import type { KeystoneDeliveryInterface } from '../connectivity.js';
 import type { NodeId } from '../types.js';
 import { SodiumDirectMessageCipher, type DirectMessageCipher } from '../social/messaging.js';
 import type { AgentRef, AgentSharedContext } from './visits.js';
+import { MandatorySafetySurfaceRegistry } from '../security/safety-surfaces.js';
+import { SafetyRuntime, SafetySurfaceGate } from '../security/content-safety.js';
 
 export const AGENT_SOCIAL_VERSION = 1 as const;
 export const AGENT_SOCIAL_ENVELOPE = 'ai.agent_social';
@@ -30,7 +33,7 @@ export const AGENT_TASK_TYPES = ['availability', 'research', 'coordination', 'fi
 export type AgentTaskType = (typeof AGENT_TASK_TYPES)[number];
 export const AGENT_TASK_STATUSES = ['queued', 'pending', 'accepted', 'rejected', 'completed', 'expired', 'cancelled'] as const;
 export type AgentTaskStatus = (typeof AGENT_TASK_STATUSES)[number];
-export const AGENT_PRESENCE_STATES = ['available', 'busy', 'offline', 'do_not_disturb'] as const;
+export const AGENT_PRESENCE_STATES = ['available', 'busy', 'offline', 'do_not_disturb', 'taking_messages', 'ask_owner'] as const;
 export type AgentPresenceState = (typeof AGENT_PRESENCE_STATES)[number];
 export const AGENT_TRUST_MODES = ['deny', 'contacts-only', 'trusted-only', 'ask', 'auto'] as const;
 export type AgentTrustMode = (typeof AGENT_TRUST_MODES)[number];
@@ -56,6 +59,10 @@ export interface AgentPresence {
   readonly agent: AgentRef;
   readonly state: AgentPresenceState;
   readonly acceptingTasks: boolean;
+  /** Whether this agent is willing to receive concierge messages. */
+  readonly acceptingMessages?: boolean;
+  /** Presence visibility is a policy hint, never a trust grant. */
+  readonly visibility?: 'public' | 'contacts' | 'selected';
   readonly updatedAt: string;
   readonly expiresAt: string;
   readonly signature: string;
@@ -224,7 +231,7 @@ export interface AgentTaskExecutor {
 }
 
 export interface AgentMailboxOptions {
-  readonly transport: Transport;
+  readonly transport: KeystoneDeliveryInterface;
   readonly crypto: CryptoProvider;
   readonly security: EnvelopeSecurity;
   readonly local: DeviceSessionKeys;
@@ -240,6 +247,7 @@ export interface AgentMailboxOptions {
   readonly executor?: AgentTaskExecutor;
   readonly onApprovalRequired?: (request: AgentTaskRequest) => void | Promise<void>;
   readonly onTask?: (request: AgentTaskRequest) => void | Promise<void>;
+  readonly protectedSurfaces?: MandatorySafetySurfaceRegistry;
 }
 
 export type AgentSocialErrorCode =
@@ -253,13 +261,21 @@ export class AgentSocialError extends Error {
 }
 
 interface AgentSocialMessage {
-  readonly kind: 'task' | 'response' | 'receipt' | 'presence' | 'room' | 'contribution';
+  readonly kind: 'task' | 'response' | 'receipt' | 'presence' | 'room' | 'contribution' | 'negotiation' | 'profile' | 'relationship' | 'concierge';
   readonly task?: AgentTaskRequest;
   readonly response?: AgentTaskResponse;
   readonly receipt?: AgentDeliveryReceipt;
   readonly presence?: AgentPresence;
   readonly room?: AgentAsyncRoom;
   readonly contribution?: AgentRoomContribution;
+  /** Negotiation is validated by AgentNegotiationService after mailbox authentication. */
+  readonly negotiation?: unknown;
+  /** Agent profiles are validated by AgentProfileService after mailbox authentication. */
+  readonly profile?: unknown;
+  /** Agent relationship events are validated by AgentSocialGraphService after mailbox authentication. */
+  readonly relationship?: unknown;
+  /** Concierge requests/responses are validated by AgentPresenceService. */
+  readonly concierge?: unknown;
 }
 
 const DEFAULT_POLICY: AgentTrustPolicy = {
@@ -277,7 +293,7 @@ const DEFAULT_POLICY: AgentTrustPolicy = {
 
 /** Durable asynchronous mailbox and encrypted P2P social protocol. */
 export class AgentMailbox {
-  private readonly transport: Transport;
+  private readonly transport: KeystoneDeliveryInterface;
   private readonly crypto: CryptoProvider;
   private readonly security: EnvelopeSecurity;
   private readonly local: DeviceSessionKeys;
@@ -310,13 +326,19 @@ export class AgentMailbox {
   private writes: Promise<void> = Promise.resolve();
   private flushPromise?: Promise<void>;
   private readonly executing = new Set<string>();
+  private readonly negotiationHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
+  private readonly agentProfileHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
+  private readonly relationshipHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
+  private readonly presenceHandlers = new Set<(peer: NodeId, payload: AgentPresence) => void | Promise<void>>();
+  private readonly conciergeHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
+  private readonly protectedSurfaces: MandatorySafetySurfaceRegistry;
 
   constructor(options: AgentMailboxOptions) {
     this.transport = options.transport; this.crypto = options.crypto; this.security = options.security; this.local = options.local;
     this.localAgent = normalizeAgentRef({ agentId: options.agentId, identityId: options.local.nodeId });
     this.storage = options.storage ?? new InMemoryAgentMailboxStateStore(); this.cipher = options.cipher ?? new SodiumDirectMessageCipher();
     this.now = options.now ?? Date.now; this.maxMailbox = clamp(options.maxMailbox ?? AGENT_SOCIAL_MAX_MAILBOX, 1, AGENT_SOCIAL_MAX_MAILBOX); this.maxOutbox = clamp(options.maxOutbox ?? AGENT_SOCIAL_MAX_OUTBOX, 1, AGENT_SOCIAL_MAX_OUTBOX); this.maxConcurrentTasks = clamp(options.maxConcurrentTasks ?? 4, 1, 32);
-    this.executor = options.executor; this.onApprovalRequired = options.onApprovalRequired; this.onTask = options.onTask;
+    this.executor = options.executor; this.onApprovalRequired = options.onApprovalRequired; this.onTask = options.onTask; this.protectedSurfaces = options.protectedSurfaces ?? new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()));
     for (const contact of options.contacts ?? []) this.contacts.set(contact.agent.identityId, normalizeContact(contact));
     this.policy = normalizePolicy({ ...DEFAULT_POLICY, ...options.policy });
     this.unsubscribe = this.transport.onMessage(envelope => { void this.receive(envelope).catch(error => this.rejectIncoming(envelope, error)); });
@@ -326,19 +348,52 @@ export class AgentMailbox {
   get localAgentRef(): AgentRef { return { ...this.localAgent }; }
   async ready(): Promise<void> { await this.readyPromise; }
   close(): void { this.unsubscribe(); }
+  /** Register a bounded, encrypted negotiation channel on this authenticated mailbox. */
+  onNegotiationMessage(handler: (peer: NodeId, payload: unknown) => void | Promise<void>): () => void { this.negotiationHandlers.add(handler); return () => this.negotiationHandlers.delete(handler); }
+  /** Register the owner-signed AgentProfile channel on the authenticated mailbox. */
+  onAgentProfileMessage(handler: (peer: NodeId, payload: unknown) => void | Promise<void>): () => void { this.agentProfileHandlers.add(handler); return () => this.agentProfileHandlers.delete(handler); }
+  /** Register signed agent-only relationship events on the authenticated mailbox. */
+  onAgentRelationshipMessage(handler: (peer: NodeId, payload: unknown) => void | Promise<void>): () => void { this.relationshipHandlers.add(handler); return () => this.relationshipHandlers.delete(handler); }
+  /** Register validated, signed presence updates received over the encrypted mailbox. */
+  onPresenceMessage(handler: (peer: NodeId, payload: AgentPresence) => void | Promise<void>): () => void { this.presenceHandlers.add(handler); return () => this.presenceHandlers.delete(handler); }
+  /** Register the encrypted concierge channel. Payloads remain untrusted until the service validates them. */
+  onConciergeMessage(handler: (peer: NodeId, payload: unknown) => void | Promise<void>): () => void { this.conciergeHandlers.add(handler); return () => this.conciergeHandlers.delete(handler); }
+  async sendNegotiation(peer: NodeId, payload: unknown): Promise<void> { return this.sendChannel(peer, { kind: 'negotiation', negotiation: payload }, 'Negotiation'); }
+  async sendAgentProfile(peer: NodeId, payload: unknown): Promise<void> { return this.sendChannel(peer, { kind: 'profile', profile: payload }, 'Agent profile'); }
+  async sendAgentRelationship(peer: NodeId, payload: unknown): Promise<void> { return this.sendChannel(peer, { kind: 'relationship', relationship: payload }, 'Agent relationship'); }
+  async sendPresence(peer: NodeId, presence: AgentPresence): Promise<void> { return this.sendChannel(peer, { kind: 'presence', presence }, 'Agent presence'); }
+  async sendConcierge(peer: NodeId, payload: unknown): Promise<void> { return this.sendChannel(peer, { kind: 'concierge', concierge: payload }, 'Agent concierge'); }
   contactsList(): readonly AgentContact[] { return [...this.contacts.values()].map(clone); }
   listContacts(): readonly AgentContact[] { return this.contactsList(); }
+  /** Report transport liveness without forcing a reconnect attempt. */
+  isPeerConnected(peer: NodeId): boolean { return this.transport.isPeerConnected?.(peer) ?? false; }
   policySnapshot(): AgentTrustPolicy { return clone(this.policy); }
   async setPolicy(policy: Partial<AgentTrustPolicy>): Promise<AgentTrustPolicy> { return this.setTrustPolicy(policy); }
-  async snapshot(): Promise<AgentMailboxSnapshot> { await this.ready(); return this.makeSnapshot(); }
-  async listInbox(): Promise<readonly AgentTaskRequest[]> { await this.ready(); return [...this.requests.values()].filter(value => value.recipient.identityId === this.local.nodeId).map(value => withEffectiveTaskStatus(value, this.now())); }
+  async snapshot(): Promise<AgentMailboxSnapshot> {
+    await this.ready();
+    const raw = this.makeSnapshot();
+    const filter = async <T extends { readonly id: string }>(values: readonly T[], surface: 'AGENT_MAILBOX' | 'AGENT_ROOMS'): Promise<readonly T[]> => {
+      const safe: T[] = [];
+      for (const value of values) if (await this.surfaceEligible(value.id, value, surface)) safe.push(clone(value));
+      return safe;
+    };
+    return {
+      ...raw,
+      requests: await filter(raw.requests, 'AGENT_MAILBOX'),
+      responses: await filter(raw.responses, 'AGENT_MAILBOX'),
+      receipts: await filter(raw.receipts, 'AGENT_MAILBOX'),
+      rooms: await filter(raw.rooms, 'AGENT_ROOMS'),
+      contributions: await filter(raw.contributions, 'AGENT_ROOMS'),
+    };
+  }
+  async listInbox(): Promise<readonly AgentTaskRequest[]> { await this.ready(); const safe: AgentTaskRequest[] = []; for (const value of this.requests.values()) if (value.recipient.identityId === this.local.nodeId && await this.surfaceEligible(value.id, value)) safe.push(withEffectiveTaskStatus(value, this.now())); return safe; }
   async listPending(): Promise<readonly AgentTaskRequest[]> { return (await this.listInbox()).filter(value => value.status === 'pending' || value.status === 'queued'); }
-  async listSent(): Promise<readonly AgentTaskRequest[]> { await this.ready(); return [...this.requests.values()].filter(value => value.sender.identityId === this.local.nodeId).map(value => withEffectiveTaskStatus(value, this.now())); }
-  async listResponses(): Promise<readonly AgentTaskResponse[]> { await this.ready(); return [...this.responses.values()].map(clone); }
+  async listSent(): Promise<readonly AgentTaskRequest[]> { await this.ready(); const safe: AgentTaskRequest[] = []; for (const value of this.requests.values()) if (value.sender.identityId === this.local.nodeId && await this.surfaceEligible(value.id, value)) safe.push(withEffectiveTaskStatus(value, this.now())); return safe; }
+  async listResponses(): Promise<readonly AgentTaskResponse[]> { await this.ready(); const safe: AgentTaskResponse[] = []; for (const value of this.responses.values()) if (await this.surfaceEligible(value.id, value)) safe.push(clone(value)); return safe; }
   async listCompleted(): Promise<readonly AgentTaskResponse[]> { return (await this.listResponses()).filter(value => value.status === 'completed'); }
-  async listReceipts(): Promise<readonly AgentDeliveryReceipt[]> { await this.ready(); return [...this.receipts.values()].map(clone); }
-  async listRooms(): Promise<readonly AgentAsyncRoom[]> { await this.ready(); return [...this.rooms.values()].map(value => withEffectiveRoomStatus(value, this.now())); }
-  async listContributions(roomId?: string): Promise<readonly AgentRoomContribution[]> { await this.ready(); return [...this.contributions.values()].filter(value => !roomId || value.roomId === roomId).map(clone); }
+  async listReceipts(): Promise<readonly AgentDeliveryReceipt[]> { await this.ready(); const safe: AgentDeliveryReceipt[] = []; for (const value of this.receipts.values()) if (await this.surfaceEligible(value.id, value)) safe.push(clone(value)); return safe; }
+  async listRooms(): Promise<readonly AgentAsyncRoom[]> { await this.ready(); const safe: AgentAsyncRoom[] = []; for (const value of this.rooms.values()) if (await this.surfaceEligible(value.id, value, 'AGENT_ROOMS')) safe.push(withEffectiveRoomStatus(value, this.now())); return safe; }
+  async listContributions(roomId?: string): Promise<readonly AgentRoomContribution[]> { await this.ready(); const safe: AgentRoomContribution[] = []; for (const value of this.contributions.values()) if ((!roomId || value.roomId === roomId) && await this.surfaceEligible(value.id, value, 'AGENT_ROOMS')) safe.push(clone(value)); return safe; }
   presenceOf(identityId: NodeId): AgentPresence | undefined { const value = identityId === this.local.nodeId ? this.localPresence : this.presences.get(identityId); return value && Date.parse(value.expiresAt) > this.now() ? clone(value) : undefined; }
   getPresence(identityId: NodeId): AgentPresence | undefined { return this.presenceOf(identityId); }
   stats(): { readonly inbox: number; readonly sent: number; readonly pending: number; readonly outbox: number; readonly responses: number; readonly rooms: number; readonly rejected: number } { return { inbox: [...this.requests.values()].filter(value => value.recipient.identityId === this.local.nodeId && value.status === 'pending').length, sent: [...this.requests.values()].filter(value => value.sender.identityId === this.local.nodeId).length, pending: [...this.requests.values()].filter(value => value.status === 'pending').length, outbox: this.outbox.size, responses: this.responses.size, rooms: this.rooms.size, rejected: this.auditEntries.filter(value => value.outcome === 'denied').length }; }
@@ -374,8 +429,13 @@ export class AgentMailbox {
 
   async flush(peer?: NodeId): Promise<void> {
     await this.ready();
-    if (this.flushPromise) await this.flushPromise;
-    const run = this.flushNow(peer); this.flushPromise = run;
+    // Serialize flush callers from the moment they enqueue work.  The old
+    // check-then-await sequence allowed concurrent callers to observe the same
+    // promise, wake together, and overwrite `flushPromise`; in-flight session
+    // and proposal envelopes could then overtake each other on reconnect.
+    const previous = this.flushPromise ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(() => this.flushNow(peer));
+    this.flushPromise = run;
     try { await run; } finally { if (this.flushPromise === run) this.flushPromise = undefined; }
   }
   private async flushNow(peer?: NodeId): Promise<void> {
@@ -418,7 +478,7 @@ export class AgentMailbox {
 
   private async receive(envelope: Envelope): Promise<void> {
     await this.ready(); if (envelope.type !== AGENT_SOCIAL_ENVELOPE || envelope.recipient !== this.local.nodeId) return; if (!validEnvelopeExpiry(envelope.expiresAt, this.now()) || await this.security.verify(envelope) === false) throw new AgentSocialError('INVALID_SIGNATURE', 'Invalid agent social envelope'); if (this.seenIds.has(envelope.id) || this.seenIds.has(envelope.nonce)) throw new AgentSocialError('REPLAY', 'Agent social envelope replay'); this.seenIds.add(envelope.id); this.seenIds.add(envelope.nonce);
-    const contact = this.contacts.get(envelope.sender); if (!contact || contact.revoked) throw new AgentSocialError('UNKNOWN_CONTACT', 'Agent sender is not an authorized contact'); const body = await this.cipher.decrypt(envelope.body, this.local.encryptionPrivateKey, contact.encryptionPublicKey).catch(() => undefined); if (!body) throw new AgentSocialError('INVALID_SIGNATURE', 'Unable to decrypt agent social envelope'); const message = parseMessage(body); if (!message) throw new AgentSocialError('INVALID_STATE', 'Malformed agent social message');
+    const contact = this.contacts.get(envelope.sender); if (!contact || contact.revoked) throw new AgentSocialError('UNKNOWN_CONTACT', 'Agent sender is not an authorized contact'); const body = await this.cipher.decrypt(envelope.body, this.local.encryptionPrivateKey, contact.encryptionPublicKey).catch(() => undefined); if (!body) throw new AgentSocialError('INVALID_SIGNATURE', 'Unable to decrypt agent social envelope'); const message = parseMessage(body); if (!message) throw new AgentSocialError('INVALID_STATE', 'Malformed agent social message'); if (!(await this.surfaceEligible(envelope.id, message, this.surfaceForMessage(message)))) throw new AgentSocialError('POLICY_DENIED', 'Agent mailbox payload failed mandatory safety gating');
     switch (message.kind) {
       case 'task': await this.receiveTask(envelope, message.task); break;
       case 'response': await this.receiveResponse(envelope, message.response); break;
@@ -426,8 +486,31 @@ export class AgentMailbox {
       case 'presence': await this.receivePresence(envelope, message.presence); break;
       case 'room': await this.receiveRoom(envelope, message.room); break;
       case 'contribution': await this.receiveContribution(envelope, message.contribution); break;
+      case 'negotiation':
+        if (message.negotiation === undefined) throw new AgentSocialError('INVALID_STATE', 'Malformed negotiation message');
+        for (const handler of this.negotiationHandlers) await handler(envelope.sender, safeClone(message.negotiation));
+        break;
+      case 'profile':
+        if (message.profile === undefined) throw new AgentSocialError('INVALID_STATE', 'Malformed AgentProfile message');
+        for (const handler of this.agentProfileHandlers) await handler(envelope.sender, safeClone(message.profile));
+        break;
+      case 'relationship':
+        if (message.relationship === undefined) throw new AgentSocialError('INVALID_STATE', 'Malformed agent relationship message');
+        for (const handler of this.relationshipHandlers) await handler(envelope.sender, safeClone(message.relationship));
+        break;
+      case 'concierge':
+        if (message.concierge === undefined) throw new AgentSocialError('INVALID_STATE', 'Malformed agent concierge message');
+        for (const handler of this.conciergeHandlers) await handler(envelope.sender, safeClone(message.concierge));
+        break;
     }
     await this.persist();
+  }
+
+  private async sendChannel(peer: NodeId, message: AgentSocialMessage, label: string): Promise<void> {
+    await this.ready(); this.requireContact(peer);
+    const encoded = JSON.stringify(message);
+    if (new TextEncoder().encode(encoded).byteLength > AGENT_SOCIAL_MAX_TASK_BYTES) throw new AgentSocialError('QUOTA', `${label} message is too large`);
+    await this.queueMessage(peer, safeClone(message)); await this.persist(); void this.flush(peer);
   }
 
   private async receiveTask(envelope: Envelope, task: AgentTaskRequest | undefined): Promise<void> {
@@ -440,12 +523,18 @@ export class AgentMailbox {
   }
 
   private async receiveReceipt(envelope: Envelope, receipt: AgentDeliveryReceipt | undefined): Promise<void> { if (!receipt || !await this.verifyReceipt(receipt, envelope.sender) || receipt.recipient.identityId !== this.local.nodeId || receipt.recipient.agentId !== this.localAgent.agentId) throw new AgentSocialError('INVALID_SIGNATURE', 'Invalid delivery receipt'); this.assertContactAgent(envelope.sender, receipt.sender.agentId); if (this.receipts.has(receipt.id)) throw new AgentSocialError('DUPLICATE', 'Duplicate delivery receipt'); if (this.receipts.size >= this.maxMailbox) throw new AgentSocialError('QUOTA', 'Agent receipt mailbox quota exceeded'); if (receipt.taskId) { const task = this.requests.get(receipt.taskId); if (!task || task.sender.identityId !== this.local.nodeId || task.sender.agentId !== this.localAgent.agentId || task.recipient.identityId !== receipt.sender.identityId || task.recipient.agentId !== receipt.sender.agentId) throw new AgentSocialError('UNAUTHORIZED', 'Receipt does not match a sent task'); const status = receiptToTaskStatus(receipt.status); if (status) this.requests.set(task.taskId, { ...task, status }); } this.receipts.set(receipt.id, receipt); this.record({ event: 'receipt.received', outcome: 'received', peer: envelope.sender, taskId: receipt.taskId, roomId: receipt.roomId, dataClasses: [] }); }
-  private async receivePresence(envelope: Envelope, presence: AgentPresence | undefined): Promise<void> { if (!presence || !await this.verifyPresence(presence, envelope.sender) || presence.agent.identityId !== envelope.sender || !validEnvelopeExpiry(presence.expiresAt, this.now())) throw new AgentSocialError('INVALID_SIGNATURE', 'Invalid agent presence'); this.assertContactAgent(envelope.sender, presence.agent.agentId); this.presences.set(envelope.sender, presence); this.record({ event: 'presence.received', outcome: 'received', peer: envelope.sender, dataClasses: [] }); }
+  private async receivePresence(envelope: Envelope, presence: AgentPresence | undefined): Promise<void> {
+    if (!presence || !await this.verifyPresence(presence, envelope.sender) || presence.agent.identityId !== envelope.sender || !AGENT_PRESENCE_STATES.includes(presence.state) || typeof presence.acceptingTasks !== 'boolean' || (presence.acceptingMessages !== undefined && typeof presence.acceptingMessages !== 'boolean') || (presence.visibility !== undefined && !['public', 'contacts', 'selected'].includes(presence.visibility)) || !Number.isFinite(Date.parse(presence.updatedAt)) || !validEnvelopeExpiry(presence.expiresAt, this.now())) throw new AgentSocialError('INVALID_SIGNATURE', 'Invalid agent presence');
+    this.assertContactAgent(envelope.sender, presence.agent.agentId); this.presences.set(envelope.sender, clone(presence)); this.record({ event: 'presence.received', outcome: 'received', peer: envelope.sender, dataClasses: [] });
+    for (const handler of this.presenceHandlers) await handler(envelope.sender, clone(presence));
+  }
   private async receiveRoom(envelope: Envelope, room: AgentAsyncRoom | undefined): Promise<void> { if (!room || room.owner.identityId !== envelope.sender || !await verifySigned(this.crypto, room, envelope.sender) || !room.members.some(value => value.identityId === this.local.nodeId && value.agentId === this.localAgent.agentId)) throw new AgentSocialError('UNAUTHORIZED', 'Room membership is invalid'); this.assertContactAgent(envelope.sender, room.owner.agentId); validateRoom(room); if (this.rooms.has(room.id)) return; if (this.rooms.size >= this.maxMailbox) throw new AgentSocialError('QUOTA', 'Agent room mailbox quota exceeded'); this.rooms.set(room.id, room); this.record({ event: 'room.received', outcome: 'received', peer: envelope.sender, roomId: room.id, dataClasses: room.sharedContext.map(value => value.dataClass) }); }
   private async receiveContribution(envelope: Envelope, contribution: AgentRoomContribution | undefined): Promise<void> { if (!contribution || contribution.sender.identityId !== envelope.sender || !await verifySigned(this.crypto, contribution, envelope.sender) || this.contributions.has(contribution.id)) throw new AgentSocialError('INVALID_SIGNATURE', 'Invalid room contribution'); this.assertContactAgent(envelope.sender, contribution.sender.agentId); const room = this.rooms.get(contribution.roomId); if (!room || !room.members.some(value => value.identityId === envelope.sender && value.agentId === contribution.sender.agentId) || !room.members.some(value => value.identityId === this.local.nodeId && value.agentId === this.localAgent.agentId)) throw new AgentSocialError('UNAUTHORIZED', 'Contribution is outside room membership'); normalizeContext(contribution.context); if (this.contributions.size >= AGENT_SOCIAL_MAX_ROOM_CONTRIBUTIONS) throw new AgentSocialError('QUOTA', 'Agent room contribution quota exceeded'); this.contributions.set(contribution.id, contribution); this.record({ event: 'room.contribution', outcome: 'received', peer: envelope.sender, roomId: contribution.roomId, dataClasses: contribution.context.map(value => value.dataClass) }); }
 
+  private surfaceForMessage(message: AgentSocialMessage): 'AGENT_MAILBOX' | 'AGENT_ROOMS' | 'AGENT_NEGOTIATION' | 'PROFILES' { if (message.kind === 'room' || message.kind === 'contribution') return 'AGENT_ROOMS'; if (message.kind === 'negotiation') return 'AGENT_NEGOTIATION'; if (message.kind === 'profile') return 'PROFILES'; return 'AGENT_MAILBOX'; }
+  private async surfaceEligible(objectId: string, value: unknown, surface: 'AGENT_MAILBOX' | 'AGENT_ROOMS' | 'AGENT_NEGOTIATION' | 'PROFILES' = 'AGENT_MAILBOX'): Promise<boolean> { return (await this.protectedSurfaces.evaluate(surface, { objectId, domain: 'DIRECT_SHARED', value, content: value, sourceType: 'agent', verified: true, authorized: true, sharing: true })) !== undefined; }
   private async queueMessage(peer: NodeId, message: AgentSocialMessage): Promise<void> {
-    const contact = this.requireContact(peer); if (this.outbox.size >= this.maxOutbox) throw new AgentSocialError('QUOTA', 'Agent mailbox outbox quota exceeded'); const plaintext = JSON.stringify(message); if (new TextEncoder().encode(plaintext).byteLength > AGENT_SOCIAL_MAX_TASK_BYTES) throw new AgentSocialError('QUOTA', 'Agent social object exceeds size limit'); const body = await this.cipher.encrypt(plaintext, this.local.encryptionPrivateKey, contact.encryptionPublicKey); const unsigned: UnsignedEnvelope = { version: 1, type: AGENT_SOCIAL_ENVELOPE, id: randomId(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + AGENT_SOCIAL_MAX_LIFETIME_MS).toISOString(), body }; const envelope: Envelope = { ...unsigned, signature: await this.security.sign(unsigned) }; this.outbox.set(envelope.id, { id: envelope.id, peer, envelope, attempts: 0, nextAttemptAt: this.now() });
+    const contact = this.requireContact(peer); if (this.outbox.size >= this.maxOutbox) throw new AgentSocialError('QUOTA', 'Agent mailbox outbox quota exceeded'); const plaintext = JSON.stringify(message); if (new TextEncoder().encode(plaintext).byteLength > AGENT_SOCIAL_MAX_TASK_BYTES) throw new AgentSocialError('QUOTA', 'Agent social object exceeds size limit'); if (!(await this.surfaceEligible(`agent-mailbox:${peer}:${this.outbox.size}`, message, this.surfaceForMessage(message)))) throw new AgentSocialError('POLICY_DENIED', 'Agent mailbox payload failed mandatory safety gating'); const body = await this.cipher.encrypt(plaintext, this.local.encryptionPrivateKey, contact.encryptionPublicKey); const unsigned: UnsignedEnvelope = { version: 1, type: AGENT_SOCIAL_ENVELOPE, id: randomId(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + AGENT_SOCIAL_MAX_LIFETIME_MS).toISOString(), body }; const envelope: Envelope = { ...unsigned, signature: await this.security.sign(unsigned) }; this.outbox.set(envelope.id, { id: envelope.id, peer, envelope, attempts: 0, nextAttemptAt: this.now() });
   }
 
   private async sendReceipt(peer: NodeId, task: AgentTaskRequest, status: AgentDeliveryStatus): Promise<void> { const unsigned = { version: 1 as const, id: randomId(), messageId: task.id, taskId: task.taskId, sender: this.localAgent, recipient: task.sender, status, at: iso(this.now()) }; const receipt: AgentDeliveryReceipt = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) }; this.receipts.set(receipt.id, receipt); await this.queueMessage(peer, { kind: 'receipt', receipt }); }
@@ -494,7 +583,7 @@ function withEffectiveRoomStatus(value: AgentAsyncRoom, now: number): AgentAsync
 function assertResultShareable(value: AgentTaskResult): void { if (!value || (value.dataClass !== 'PUBLIC' && value.dataClass !== 'USER_EXPLICIT')) throw new AgentSocialError('UNSHAREABLE_DATA', 'Private/secret task results cannot cross an agent mailbox'); if (stringify(value.value).length > 32_000) throw new AgentSocialError('QUOTA', 'Task result is too large'); if (value.references && (!Array.isArray(value.references) || value.references.length > 64 || value.references.some(reference => !reference || !safeId(reference.id) || typeof reference.type !== 'string' || reference.type.length > 128))) throw new AgentSocialError('INVALID_ARGUMENT', 'Task result references are invalid'); }
 async function verifySigned(crypto: CryptoProvider, value: { readonly signature: string }, signer: NodeId): Promise<boolean> { try { return await crypto.verify(canonicalJson(stripSignature(value)), value.signature, signer); } catch { return false; } }
 function stripSignature<T extends { readonly signature: string }>(value: T): Omit<T, 'signature'> { const { signature: _signature, ...unsigned } = value; return unsigned; }
-function parseMessage(value: string): AgentSocialMessage | undefined { try { const parsed = JSON.parse(value) as AgentSocialMessage; if (!parsed || !['task', 'response', 'receipt', 'presence', 'room', 'contribution'].includes(parsed.kind)) return undefined; return parsed; } catch { return undefined; } }
+function parseMessage(value: string): AgentSocialMessage | undefined { try { const parsed = JSON.parse(value) as AgentSocialMessage; if (!parsed || !['task', 'response', 'receipt', 'presence', 'room', 'contribution', 'negotiation', 'profile', 'relationship', 'concierge'].includes(parsed.kind)) return undefined; return parsed; } catch { return undefined; } }
 function normalizeAgentRef(value: AgentRef): AgentRef { if (!normalizeAgentRefSafe(value)) throw new AgentSocialError('INVALID_ARGUMENT', 'Invalid agent reference'); return { agentId: value.agentId, identityId: value.identityId }; }
 function normalizeAgentRefSafe(value: unknown): value is AgentRef { return !!value && typeof value === 'object' && safeId((value as AgentRef).agentId) && safeId((value as AgentRef).identityId); }
 function uniqueRefs(values: readonly AgentRef[]): AgentRef[] { const map = new Map<string, AgentRef>(); for (const value of values) { const normalized = normalizeAgentRef(value); map.set(`${normalized.identityId}:${normalized.agentId}`, normalized); } return [...map.values()]; }
@@ -509,7 +598,7 @@ function clamp(value: number, min: number, max: number): number { return Math.ma
 function safeId(value: unknown): value is string { return typeof value === 'string' && /^[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}$/.test(value); }
 function assertId(value: string): string { if (!safeId(value)) throw new AgentSocialError('INVALID_ARGUMENT', 'Invalid id'); return value; }
 function iso(value: number): string { return new Date(value).toISOString(); }
-function randomId(): string { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
+function randomId(): string { return `${globalThis.crypto.randomUUID()}`; }
 function clone<T>(value: T): T { return structuredClone(value); }
 function safeClone<T>(value: T): T { try { return structuredClone(value); } catch { return String(value) as T; } }
 function stringify(value: unknown): string { try { return JSON.stringify(value) ?? String(value); } catch { return '[unserializable]'; } }

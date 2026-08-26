@@ -1,6 +1,7 @@
 # Asynchronous Agent Social Protocol
 
-Phase 39 adds an asynchronous mailbox for Personal Agents. `AgentMailbox`
+The agent social protocol provides an asynchronous mailbox for Personal Agents.
+`AgentMailbox`
 uses the existing authenticated `Transport`, `EnvelopeSecurity`, and
 recipient-key encryption (`SodiumDirectMessageCipher`). It is not a broker,
 directory, or cloud queue.
@@ -62,4 +63,4 @@ with an authenticated transport and an encrypted durable store. The screen
 does not expose private keys or plaintext private context.
 
 There is deliberately no central agent broker, global agent directory,
-telemetry, monetization, or public GPU-sharing path.
+telemetry, or public GPU-sharing path.

@@ -2,7 +2,7 @@
 
 ## Общие принципы
 
-Keystone не требует аккаунта, центрального сервера, каталога пользователей или CDN. Идентичность узла создаётся локально, а все значимые объекты имеют версию, автора, точное время, ссылки и криптографическую подпись. Данные могут поступать в любом порядке; клиент проверяет схему и подпись до того, как они влияют на локальную проекцию. Полная архитектура: [English](../ARCHITECTURE.md); транспорт: [English](../protocol.md).
+Keystone не требует аккаунта, центрального сервера, каталога пользователей или CDN. Идентичность узла создаётся локально, а все значимые объекты имеют версию, автора, точное время, ссылки и криптографическую подпись. Данные могут поступать в любом порядке; клиент проверяет схему и подпись до того, как они влияют на локальную проекцию. Полная архитектура: [Архитектура](../architecture.md); транспорт: [English](../protocol.md).
 
 ## Личные сообщения
 
@@ -26,7 +26,7 @@ Artist, Track, Album, Playlist и библиотечные записи подп
 
 `Track` — единый подписанный Keystone object: chat, community, profile, library и playlist ссылаются на его ID, не создавая музыкальные копии. Импорт сохраняет аудиофайл как content-addressed blob, а детерминированный Track ID строится из аудио-ссылки и канонических метаданных. `StreamingPlaybackSource` получает и проверяет только chunk, нужный для начала проигрывания или seek; cache поддерживает resume, quota и pinning. Права — только metadata: uploader и заявленный правообладатель различаются. Нет центрального music server, DRM, обязательного cloud, платежей, рекламы или recommendation backend. Public Music object передаётся поверх существующего подписанного P2P transport; contacts/private-репликация закрыта до появления зашифрованного generic-object протокола.
 
-`LiveBroadcast` — подписанный неизменяемый жизненный цикл `scheduled → live → ended`, а live chat состоит из отдельных подписанных объектов. `LiveSessionController` строит ограниченное дерево: зритель подключается к одному upstream, а выбранный forwarder передаёт поток ограниченному числу downstream-зрителей. Реальный звук, камера и screen share передаются host-адаптером на существующем WebRTC слое. Relay может помочь rendezvous или пересылкой, но не владеет стримом, чатом, списком участников или записью. Подробнее: [music](../music.md), [video](../video.md), [short videos](../short-videos.md), [streams](../streams.md).
+`LiveBroadcast` — подписанный неизменяемый жизненный цикл `scheduled → live → ended`, а live chat состоит из отдельных подписанных объектов. `LiveSessionController` строит ограниченное дерево: зритель подключается к одному upstream, а выбранный forwarder передаёт поток ограниченному числу downstream-зрителей. Реальный звук, камера и screen share передаются host-адаптером на существующем WebRTC слое. Relay может помочь rendezvous или пересылкой, но не владеет стримом, чатом, списком участников или записью. Подробнее: [music](../music.md), [video](../video.md), [shorts](../shorts.md), [streams](../streams.md).
 
 ## Лента, поиск и discovery
 
@@ -38,12 +38,12 @@ Artist, Track, Album, Playlist и библиотечные записи подп
 
 `LocalSafetyPolicy` хранит block/mute identity и community, hide object и report только в выбранном локальном storage. Report не имеет автоматической сетевой отправки. Перед показом поиска/ленты policy необходимо `initialize()`; до загрузки она работает fail-closed и не показывает индексированный контент. `LocalPeerAbuseGuard` вводит локальные лимиты на peer и тип сообщения, лимит байтов и временную пенализацию malformed-пакетов до расшифрования DM. Глобального social score, обязательного proof-of-work и telemetry collector нет.
 
-Одна owner identity уже поддерживает независимые ключи доверенных `Self` devices, Self-only swarm/CRDT/handoff и подписанную permanent revocation потерянного устройства. DM/outbox/nonces/read state должны жить в host-encrypted storage, community log — в отдельном encrypted namespace, а media — в quota/pin/LRU content cache. Реализации persistent storage, native MIME validation, backup/retention и optional push/DHT остаются ответственностью host-интеграции. Подробнее: [hardening](../hardening.md), [Phase 12 review](../PHASE12_REVIEW.md).
+Одна owner identity уже поддерживает независимые ключи доверенных `Self` devices, Self-only swarm/CRDT/handoff и подписанную permanent revocation потерянного устройства. DM/outbox/nonces/read state должны жить в host-encrypted storage, community log — в отдельном encrypted namespace, а media — в quota/pin/LRU content cache. Реализации persistent storage, native MIME validation, backup/retention и optional push/DHT остаются ответственностью host-интеграции. Подробнее: [hardening](../hardening.md), [release and evidence](../release.md).
 
 ## Безопасность и границы
 
-Подпись не означает автоматическое доверие: политика принимает решение локально. Модель, импорт, relay-конверт и дополнение считаются недоверенным входом. Раскрытие личных данных и внешние действия проходят Double Confirmation. Владелец устройства проверяет разрешения native host, происхождение обновлений и содержимое резервных копий. Подробнее: [security](../security.md), [threat model](../threat-model.md), [addons](../addons.md).
+Подпись не означает автоматическое доверие: политика принимает решение локально. Модель, импорт, relay-конверт и дополнение считаются недоверенным входом. Раскрытие личных данных и внешние действия проходят Double Confirmation. Владелец устройства проверяет разрешения native host, происхождение обновлений и содержимое резервных копий. Подробнее: [security](../security.md), [threat model](../threat-model.md), [plugins](../plugins.md).
 
 ## Эксплуатация и платформы
 
-AI-адаптеры, relay, браузерное дополнение, WebRTC-разрешения и CI — заменяемые платформенные границы, а не источник пользовательской идентичности. Для точных команд установки и сборки используйте канонические страницы: [AI](../ai.md), [relay](../relay.md), [CI](../ci.md), [WebRTC](../webrtc-platform-permissions.md).
+AI-адаптеры, ретрансляция, браузерное дополнение, WebRTC-разрешения и CI — заменяемые платформенные границы, а не источник пользовательской идентичности. Для точных команд установки и сборки используйте канонические страницы: [AI](../ai.md), [подключение](connectivity.md#ретрансляция), [CI](../ci.md), [WebRTC](../webrtc-platform-permissions.md).

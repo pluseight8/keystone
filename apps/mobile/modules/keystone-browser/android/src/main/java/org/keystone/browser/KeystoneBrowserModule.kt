@@ -38,6 +38,5 @@ class KeystoneBrowserModule : Module() {
         session?.evaluateJS(script)?.accept { promise.resolve(null) } ?: promise.reject("NO_SESSION", "Browser session unavailable", null)
       } catch (error: Exception) { promise.reject("INJECTION_REJECTED", error.message, error) }
     }
-    AsyncFunction("evaluate") { script: String, promise: Promise -> if (script.length > 65536 || script.contains("document.cookie") || script.contains("localStorage")) promise.reject("SCRIPT_REJECTED", "Script is not allowed", null) else session?.evaluateJS(script)?.accept { promise.resolve(it) } ?: promise.reject("NO_SESSION", "Browser session unavailable", null) }
   }
 }

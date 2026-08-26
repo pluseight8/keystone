@@ -1,8 +1,16 @@
-# Phase 12 hardening and operational boundaries
+# Hardening and operational boundaries
 
 Русский обзор: [hardening и границы хранения](ru/social-media.md#hardening-и-хранение).
 
 ## Local moderation and anti-spam
+
+## Secret and key isolation
+
+Hardening adds `SecureSecretHost`, typed signing domains, expiring capabilities and
+schema/type-aware redaction. Recovery export is owner-confirmed and replay
+bounded. Secret handles and capability metadata are safe to display in
+Security Center; private key bytes, recovery phrases and provider credentials
+are not.
 
 `LocalSafetyPolicy` persists only on the user's selected local storage backend. It can block or mute an identity/community, hide an object, and retain a local report. Reports have no implicit network destination, telemetry upload, developer inbox, or backdoor. Before handing the policy to `LocalDiscoveryIndex`, a host must call `initialize()`; the policy fails closed while it is loading so a persisted block cannot briefly leak into a feed or search result.
 
@@ -21,7 +29,7 @@ One Keystone owner can derive independent `Self` device session keys from the pr
 | Master seed/device keys | Platform secure storage chosen by the native host. |
 | DM, outbox, replay nonces, read state, local relationships | `PersistentSocialStorage` backed by authenticated encrypted host storage, with schema migration v1→v2. |
 | Community event logs | Separate encrypted storage namespace. |
-| Public/social object metadata and indexes | Bounded local object indexes; public advertising exposes only minimal metadata. |
+| Public/social object metadata and indexes | Bounded local object indexes; public discovery exposes only minimal metadata. |
 | Media bytes/chunks | Content-addressed cache with hash verification, quota, LRU eviction, pinning, resume, and provider fallback. |
 | AI/RAG | Existing host-local RAG/runtime boundary; no social blobs are put in React state or Yjs documents. |
 
