@@ -38,6 +38,9 @@ describe('R0P91 TaskService', () => {
     expect((await tasks.listTasks({ view: 'TRASH', includeTrash: true })).items.map(value => value.id)).toContain(today.id);
     await tasks.restoreTask(today.id);
     expect(tasks.getTask(today.id).tombstone).toBe(false);
+
+    await tasks.updateTask(tomorrow.id, { note: null });
+    expect(tasks.getTask(tomorrow.id).note).toBeUndefined();
   });
 
   it('parses deterministic Russian and English quick capture without AI', () => {

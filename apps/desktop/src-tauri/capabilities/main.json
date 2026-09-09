@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Minimal IPC access for Keystone's trusted application UI.",
-  "windows": ["main"],
+  "windows": ["main", "keystone-*"],
   "permissions": ["core:default", "process:default", "global-shortcut:default"]
 }

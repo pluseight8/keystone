@@ -5,6 +5,7 @@ use std::{collections::{HashMap, HashSet}, fs, path::{Path, PathBuf}, sync::Mute
 use tauri::{AppHandle, Emitter, State};
 
 const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_PICKED_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const SUPPORTED: [&str; 4] = ["md", "txt", "csv", "pdf"];
 
 #[derive(Default)]
@@ -16,6 +17,10 @@ pub struct LocalFileEntry { path: String, size: u64, modified_at: Option<u64> }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PickedFile { pub name: String, pub mime_type: String, pub size: u64, pub bytes: Vec<u8> }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct FileChange { root: String, paths: Vec<String>, kind: String }
 
 #[tauri::command]
@@ -23,6 +28,29 @@ pub async fn pick_local_folder(state: State<'_, KnowledgeState>) -> Result<Optio
     let selected = tauri::async_runtime::spawn_blocking(|| rfd::FileDialog::new().pick_folder()).await.map_err(|error| error.to_string())?;
     let Some(path) = selected else { return Ok(None); }; let path = canonical_directory(path.to_string_lossy().as_ref())?;
     state.allowed_roots.lock().map_err(|_| "Knowledge root state poisoned")?.insert(path.clone()); Ok(Some(path.to_string_lossy().to_string()))
+}
+
+/// Returns bytes only for a file explicitly selected in the native dialog.
+/// Absolute paths never cross the WebView boundary and the read is bounded.
+#[tauri::command]
+pub async fn pick_local_file(kind: String) -> Result<Option<PickedFile>, String> {
+    let kind = kind.trim().to_ascii_lowercase();
+    if !matches!(kind.as_str(), "audio" | "video" | "file" | "document") { return Err("Unsupported native picker kind".into()); }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut dialog = rfd::FileDialog::new();
+        match kind.as_str() {
+            "audio" => { dialog = dialog.add_filter("Audio", &["mp3", "wav", "ogg", "oga", "flac", "m4a", "aac", "opus", "webm"]); }
+            "video" => { dialog = dialog.add_filter("Video", &["mp4", "webm", "mkv", "mov", "avi", "m4v", "ogv"]); }
+            "document" => { dialog = dialog.add_filter("Documents", &["md", "markdown", "txt", "csv", "pdf", "epub"]); }
+            _ => { dialog = dialog.add_filter("Supported files", &["md", "markdown", "txt", "csv", "pdf", "epub", "json", "png", "jpg", "jpeg", "gif", "mp3", "wav", "ogg", "flac", "m4a", "mp4", "webm", "mkv", "mov"]); }
+        }
+        let Some(path) = dialog.pick_file() else { return Ok(None); };
+        let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.len() > MAX_PICKED_FILE_BYTES { return Err("Selected file exceeds the 512 MiB desktop import limit".into()); }
+        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        let name = path.file_name().and_then(|value| value.to_str()).ok_or("Selected file has no valid name")?.to_string();
+        Ok(Some(PickedFile { name: name.clone(), mime_type: mime_from_path(&path), size: bytes.len() as u64, bytes }))
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -74,3 +102,30 @@ fn visit(directory: &Path, output: &mut Vec<LocalFileEntry>) -> Result<(), Strin
 fn canonical_directory(value: &str) -> Result<PathBuf, String> { let path = fs::canonicalize(value).map_err(|error| error.to_string())?; if !path.is_dir() { return Err("Selected path is not a directory".into()); } Ok(path) }
 fn allowed_directory(state: &State<'_, KnowledgeState>, value: &str) -> Result<PathBuf, String> { let path = canonical_directory(value)?; if !state.allowed_roots.lock().map_err(|_| "Knowledge root state poisoned")?.contains(&path) { return Err("Folder was not selected in the native dialog".into()); } Ok(path) }
 fn supported(path: &Path) -> bool { path.extension().and_then(|value| value.to_str()).map(|value| SUPPORTED.contains(&value.to_ascii_lowercase().as_str())).unwrap_or(false) }
+
+fn mime_from_path(path: &Path) -> String {
+    match path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+        "md" | "markdown" => "text/markdown",
+        "txt" => "text/plain",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "pdf" => "application/pdf",
+        "epub" => "application/epub+zip",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "opus" => "audio/opus",
+        "mp4" | "m4v" => "video/mp4",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "mov" => "video/quicktime",
+        "ogv" => "video/ogg",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "application/octet-stream",
+    }.to_string()
+}

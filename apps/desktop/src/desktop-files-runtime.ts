@@ -81,6 +81,7 @@ export interface DesktopFilesystemSyncAdapter {
 
 export interface DesktopFilesRuntimeFactoryOptions {
   readonly createFilesystemAdapter?: (service: SharedFolderService, folderId: FolderId, binding: FolderFilesystemBinding) => DesktopFilesystemSyncAdapter;
+  readonly defaultFolderId?: FolderId;
 }
 
 export interface DesktopFilesRuntime {
@@ -91,6 +92,8 @@ export interface DesktopFilesRuntime {
   search(query: string, options?: { readonly folderId?: FolderId; readonly limit?: number }): Promise<readonly { readonly entry: DesktopFileEntry; readonly folder: DesktopFileFolder; readonly score: number }[]>;
   conflicts(folderId?: FolderId): Promise<readonly FolderConflict[]>;
   history(fileId: FolderFileId): Promise<readonly DesktopFileRevision[]>;
+  importFile?(input: { readonly filename: string; readonly mimeType: string; readonly bytes: Uint8Array; readonly folderId?: FolderId }): Promise<DesktopFileProjection>;
+  readFile?(fileId: FolderFileId): Promise<Uint8Array>;
   createFolder?(input: { readonly name: string; readonly parentFolderId?: FolderId }): Promise<DesktopFileFolder>;
   rename?(entryId: string, name: string, ownerConfirmed?: true): Promise<DesktopFileEntry>;
   move?(entryId: string, folderId: FolderId, ownerConfirmed?: true): Promise<DesktopFileEntry>;
@@ -128,6 +131,8 @@ export function createDesktopFilesRuntime(service: SharedFolderService, options:
     conflicts: folderId => service.listConflicts(folderId),
     history: async fileId => (await service.versionHistory(fileId)).map(revisionProjection),
     createFolder: async input => folderProjection(await service.createFolder(input)),
+    importFile: options.defaultFolderId ? async input => fileProjection(await service.createFile({ folderId: input.folderId ?? options.defaultFolderId!, name: input.filename, mimeType: input.mimeType, bytes: input.bytes })) : undefined,
+    readFile: fileId => service.readFile(fileId),
     rename: async (entryId, name, ownerConfirmed) => entryProjection(await service.renameEntry(entryId as FolderEntryId, name, ownerConfirmed ? { ownerConfirmed: true } : {})),
     move: async (entryId, folderId, ownerConfirmed) => entryProjection(await service.moveEntry(entryId as FolderEntryId, folderId, ownerConfirmed ? { ownerConfirmed: true } : {})),
     trash: async (entryId, ownerConfirmed) => service.deleteEntry(entryId as FolderEntryId, ownerConfirmed ? { ownerConfirmed: true } : {}),

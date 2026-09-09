@@ -1,1038 +1,705 @@
-import React from 'react';
-import {
-  ActivityBarItem,
-  ContextProviderRegistry,
-  DesktopShellController,
-  DesktopTab,
-  KeystoneObjectReference,
-  PaneNode,
-  ShellCommand,
-  createDefaultContextRegistry,
-  defaultShellCommands,
-  isPrimaryModifier,
-  objectTitle,
-  resolveOmniboxInput,
-} from './desktop-shell-model';
-import './desktop-shell.css';
-import './desktop-shell-overrides.css';
-import { getDesktopCalendarRuntime, subscribeDesktopCalendarRuntime, type DesktopCalendarEvent, type DesktopCalendarRuntime } from './desktop-calendar-runtime';
-import { getDesktopVaultRuntime, subscribeDesktopVaultRuntime, type DesktopVaultCanvasDocument, type DesktopVaultGraphProjection, type DesktopVaultNote, type DesktopVaultRuntime } from './desktop-vault-runtime';
-import { getDesktopSkillRuntime, subscribeDesktopSkillRuntime, type DesktopSkillRuntime } from './desktop-skill-runtime';
-import { getDesktopSafetyRuntime, subscribeDesktopSafetyRuntime, type DesktopSafetyRuntime } from './desktop-safety-runtime';
-import { getDesktopIntegrityRuntime, subscribeDesktopIntegrityRuntime, type DesktopIntegrityRuntime } from './desktop-integrity-runtime';
-import { getDesktopDailyRuntime, subscribeDesktopDailyRuntime, type DesktopDailyBrief, type DesktopDailyItem, type DesktopDailyRuntime } from './desktop-daily-runtime';
-import { getDesktopCallsRuntime, subscribeDesktopCallsRuntime, type DesktopCallsRuntime } from './desktop-calls-runtime';
-import { getDesktopPublicationRuntime, subscribeDesktopPublicationRuntime, type DesktopPublicationRuntime, type DesktopPublicationState, type DesktopPublicationVisibility } from './desktop-publication-runtime';
-import { getDesktopCollaborationRuntime, subscribeDesktopCollaborationRuntime, type DesktopCollaborationRuntime } from './desktop-collaboration-runtime';
-import { getDesktopMapsRuntime, subscribeDesktopMapsRuntime, type DesktopMapPlace, type DesktopMapRender, type DesktopMapRoute, type DesktopMapsRuntime, type DesktopMapsSurfaceState } from './desktop-maps-runtime';
-import { getDesktopMailRuntime, subscribeDesktopMailRuntime, type DesktopMailAccount, type DesktopMailAddress, type DesktopMailDraft, type DesktopMailFolder, type DesktopMailMessage, type DesktopMailOutboxEntry, type DesktopMailRuntime } from './desktop-mail-runtime';
-import { getDesktopContinuityRuntime, subscribeDesktopContinuityRuntime, type DesktopContinuityDevice, type DesktopContinuityItem, type DesktopContinuityObjectType, type DesktopContinuityRuntime } from './desktop-continuity-runtime';
-import { getDesktopNearbyExchangeRuntime, subscribeDesktopNearbyExchangeRuntime, type DesktopNearbyEndpoint, type DesktopNearbyExchangeRuntime, type DesktopNearbyOffer, type DesktopNearbyTransfer } from './desktop-nearby-exchange-runtime';
-import { getDesktopPhotosRuntime, subscribeDesktopPhotosRuntime, type DesktopPhotoAlbum, type DesktopPhotoAsset, type DesktopPhotosRuntime } from './desktop-photos-runtime';
-import { getDesktopWebLibraryRuntime, subscribeDesktopWebLibraryRuntime, type DesktopWebLibraryEntry, type DesktopWebLibraryReader, type DesktopWebLibraryRuntime } from './desktop-web-library-runtime';
-import { getDesktopSubscriptionsRuntime, subscribeDesktopSubscriptionsRuntime, type DesktopSubscriptionEntry, type DesktopSubscriptionReader, type DesktopSubscriptionsRuntime } from './desktop-subscriptions-runtime';
-import { getDesktopTasksRuntime, subscribeDesktopTasksRuntime, type DesktopTask, type DesktopTaskRuntime } from './desktop-tasks-runtime';
-import { getDesktopContactsRuntime, subscribeDesktopContactsRuntime, type DesktopContact, type DesktopContactsRuntime } from './desktop-contacts-runtime';
-import { getDesktopInboxRuntime, subscribeDesktopInboxRuntime, type DesktopInboxRuntime } from './desktop-inbox-runtime';
-import { getDesktopFilesRuntime, subscribeDesktopFilesRuntime, type DesktopFileFolder, type DesktopFileProjection, type DesktopFilesRuntime } from './desktop-files-runtime';
-import { getDesktopDocumentsRuntime, subscribeDesktopDocumentsRuntime, type DesktopDocumentsRuntime } from './desktop-documents-runtime';
-import { getDesktopCaptureRuntime, subscribeDesktopCaptureRuntime, type DesktopCaptureRuntime } from './desktop-capture-runtime';
-import type { CaptureDestinationKind } from '@keystone/core';
-
-type Locale = 'en' | 'ru';
-
-const copy = {
-  en: {
-    capture: 'Quick Capture', captureHint: 'Save text, links, files and references to your private tray.', capturePlaceholder: 'Paste text or an https:// URLâ€¦', captureClipboard: 'Capture clipboard once', captureBrowser: 'Capture current page', captureSelection: 'Capture selection', captureDrop: 'Drop a file or folder here', captureTray: 'Private Capture Tray', captureNoRuntime: 'Capture host is unavailable; text input still works locally.', captureNoItems: 'Nothing captured yet.', captureRoute: 'Route', captureDismiss: 'Dismiss', captureRestore: 'Restore', capturePreview: 'Preview destination', captureConfirm: 'Confirm route', captureSource: 'Source', captureState: 'State', captureSuggestions: 'Suggestions', captureUnsafe: 'Only safe HTTP(S) links and typed references are accepted.',
-    inbox: 'Inbox',
-    subscriptions: 'Subscriptions',
-    nearby: 'Nearby Exchange',
-    nearbyTitle: 'Nearby Exchange', nearbyBoundary: 'Anonymous one-hop discovery. The native/core adapter owns E2E protection, Fabric routing and bounded transfer state.', nearbyUnavailable: 'Nearby Exchange host is not connected.', nearbyReceive: 'Receive nearby', nearbyStop: 'Stop receiving', nearbyQr: 'Show Receive QR', nearbyRefresh: 'Refresh nearby', nearbyNoEndpoints: 'No anonymous nearby endpoints are visible.', nearbyOffers: 'Incoming offers', nearbyNoOffers: 'No offers awaiting consent.', nearbyAccept: 'Accept', nearbyReject: 'Reject', nearbyCancel: 'Cancel', nearbyResume: 'Resume', nearbyDisclosure: 'Identity is anonymous until you explicitly choose fields to disclose.', nearbyAddContact: 'Add Contact after disclosure', nearbyAnonymity: 'No GPS, RSSI distance, encounter history or automatic contact creation.', nearbyReceived: 'Received', nearbyShareQr: 'Receive QR is short-lived and scoped to Nearby Exchange only.',
-    home: 'Home', search: 'Search', agent: 'Agent Bot', askAgent: 'Ask Agent Botâ€¦', messages: 'Messages', spaces: 'Spaces', vault: 'Vault', calendar: 'Calendar', contacts: 'Contacts', maps: 'Maps', files: 'Files', documents: 'Documents', media: 'Media', photos: 'Photos', calls: 'Calls', workboard: 'Workboard', webLibrary: 'Web Library', webLibraryDescription: 'Saved pages, Read Later and immutable offline revisions. External origins are never used by the reader.', collaboration: 'Collaboration', continuity: 'Continuity', plugins: 'Plugins', settings: 'Settings', localeUnavailable: 'Calls are not configured on this host.', callBoundary: 'The native host must provide authenticated signaling and a WebRTC media adapter. Calls never record automatically.', callMediaReady: 'media adapter ready', callMediaUnavailable: 'media adapter unavailable', noActiveCall: 'No active call.', callHistory: 'Call history', acceptCall: 'Accept', rejectCall: 'Reject', mute: 'Mute', unmute: 'Unmute', cameraOn: 'Enable camera', cameraOff: 'Disable camera', screenOn: 'Share screen', screenOff: 'Stop screen share', endCall: 'End call',
-    back: 'Back', forward: 'Forward', omnibox: 'Search objects, commands, links, or ask Agent Botâ€¦', command: 'Command palette', new: 'New', workspace: 'Workspace', context: 'Context', agentScope: 'Current object scope', ask: 'Ask Agent Bot', close: 'Close', duplicate: 'Duplicate', pin: 'Pin tab', unpin: 'Unpin tab', splitHorizontal: 'Split horizontally', splitVertical: 'Split vertically', restore: 'Reopen closed tab', customize: 'Customize activity bar', hide: 'Hide', show: 'Show', moveUp: 'Move up', moveDown: 'Move down', empty: 'Open an object to begin', open: 'Open', openInTab: 'Open in new tab', local: 'Local-first', privacy: 'Private context stays on this device', placeholder: 'Placeholder / host adapter', placeholderBody: 'This surface is ready for the existing Keystone subsystem. No business logic is invented in the shell.', references: 'Typed references', drop: 'Drop a reference here', related: 'Related objects', properties: 'Properties', links: 'Links', activity: 'Activity', searchHint: 'Search is local and permission-aware.', agentHint: 'Only the active object is in scope. Keystone does not send the whole workspace automatically.', send: 'Run locally', noObject: 'No object selected', browserPrivacy: 'Browser pages do not receive Keystone private context automatically.', currentWorkspace: 'Current workspace', newWorkspace: 'New workspace', rename: 'Rename', delete: 'Delete', switcher: 'Switch workspace', done: 'Done', reset: 'Reset', add: 'Add', objectId: 'Object ID', commandHint: 'Type to filter commandsâ€¦', noCommands: 'No matching commands', quickActions: 'Quick actions', message: 'Message', group: 'Group', space: 'Space', note: 'Note', canvas: 'Canvas', event: 'Calendar event', task: 'Task', file: 'File', community: 'Community', saved: 'Saved locally', mode: 'Balanced', status: 'Ready', locked: 'Permission required', openBob: 'Open Bob profile', openChat: 'Open chat', openFile: 'Open trip file', openSpace: 'Open Trip space', askAbout: 'Ask about this object', configure: 'Configure', language: 'Language', english: 'English', russian: 'Ğ ÑƒÑÑĞºĞ¸Ğ¹', extensionSlot: 'Extension slot â€” no plugin runs without permission', needsUser: 'Needs owner input', board: 'Board', list: 'List', pause: 'Pause', cancel: 'Cancel', retry: 'Retry', assign: 'Assign', priority: 'Priority', publication: 'Publication', publicationAdapter: 'Publication controls require a host adapter backed by PublicationService.', publicationDisclosure: 'Drafts stay local until the owner explicitly publishes them. Public content may be cached; unlisted is not secret.', visibility: 'Visibility', public: 'Public', unlisted: 'By link', scoped: 'Scoped', draft: 'Draft', revision: 'Revision', preview: 'Preview', publish: 'Publish', unpublish: 'Unpublish', publishConfirm: 'Publish this content with the selected visibility?', shareLink: 'Keystone link', noPreview: 'No preview available.', continuityTitle: 'Device Continuity', sendToDevice: 'Send to Device', continueOnDevice: 'Continue on Device', deviceInbox: 'Device Inbox', devices: 'Devices', noContinuityRuntime: 'Device Continuity host is not connected.', noDevices: 'No trusted devices are available.', noInbox: 'No incoming handoffs.', chooseDevice: 'Choose a trusted device', sendWorkspace: 'Send current workspace', continueWorkspace: 'Continue current workspace', refresh: 'Refresh', flush: 'Try delivery', delivered: 'Delivered to device', opened: 'Opened', accepted: 'Accepted', queued: 'Queued', sending: 'Sending', failed: 'Failed', expired: 'Expired', cancelled: 'Cancelled', offline: 'Offline or waiting for a route', available: 'Available', recentlyAvailable: 'Recently available', notAvailable: 'Not available', automaticClipboard: 'Automatic clipboard continuity', automaticClipboardWarning: 'Off by default. Enabling requires explicit owner confirmation and never auto-pastes.', clipboardExplicit: 'Clipboard is explicit-only; no auto-paste or clipboard history is stored.', handoffBoundary: 'The native host supplies the trusted-device and encrypted delivery adapters. The shell receives references only.',
-  },
-  ru: {
-    capture: 'Ğ‘Ñ‹ÑÑ‚Ñ€Ñ‹Ğ¹ Ğ·Ğ°Ñ…Ğ²Ğ°Ñ‚', captureHint: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½ÑĞ¹Ñ‚Ğµ Ñ‚ĞµĞºÑÑ‚, ÑÑÑ‹Ğ»ĞºĞ¸, Ñ„Ğ°Ğ¹Ğ»Ñ‹ Ğ¸ ÑÑÑ‹Ğ»ĞºĞ¸ Ğ½Ğ° Ğ¾Ğ±ÑŠĞµĞºÑ‚Ñ‹ Ğ² Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğ¹ Tray.', capturePlaceholder: 'Ğ’ÑÑ‚Ğ°Ğ²ÑŒÑ‚Ğµ Ñ‚ĞµĞºÑÑ‚ Ğ¸Ğ»Ğ¸ URL https://â€¦', captureClipboard: 'Ğ—Ğ°Ñ…Ğ²Ğ°Ñ‚Ğ¸Ñ‚ÑŒ clipboard Ğ¾Ğ´Ğ¸Ğ½ Ñ€Ğ°Ğ·', captureBrowser: 'Ğ—Ğ°Ñ…Ğ²Ğ°Ñ‚Ğ¸Ñ‚ÑŒ Ñ‚ĞµĞºÑƒÑ‰ÑƒÑ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ', captureSelection: 'Ğ—Ğ°Ñ…Ğ²Ğ°Ñ‚Ğ¸Ñ‚ÑŒ Ğ²Ñ‹Ğ´ĞµĞ»ĞµĞ½Ğ¸Ğµ', captureDrop: 'ĞŸĞµÑ€ĞµÑ‚Ğ°Ñ‰Ğ¸Ñ‚Ğµ ÑÑĞ´Ğ° Ñ„Ğ°Ğ¹Ğ» Ğ¸Ğ»Ğ¸ Ğ¿Ğ°Ğ¿ĞºÑƒ', captureTray: 'ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğ¹ Capture Tray', captureNoRuntime: 'Capture host Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½; Ñ‚ĞµĞºÑÑ‚ Ğ²ÑÑ‘ Ñ€Ğ°Ğ²Ğ½Ğ¾ ÑĞ¾Ñ…Ñ€Ğ°Ğ½ÑĞµÑ‚ÑÑ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾.', captureNoItems: 'ĞŸĞ¾ĞºĞ° Ğ½Ğ¸Ñ‡ĞµĞ³Ğ¾ Ğ½Ğµ Ğ·Ğ°Ñ…Ğ²Ğ°Ñ‡ĞµĞ½Ğ¾.', captureRoute: 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚Ğ¸Ğ·Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ', captureDismiss: 'Ğ¡ĞºÑ€Ñ‹Ñ‚ÑŒ', captureRestore: 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', capturePreview: 'ĞŸÑ€ĞµĞ´Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€ Ğ½Ğ°Ğ·Ğ½Ğ°Ñ‡ĞµĞ½Ğ¸Ñ', captureConfirm: 'ĞŸĞ¾Ğ´Ñ‚Ğ²ĞµÑ€Ğ´Ğ¸Ñ‚ÑŒ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚', captureSource: 'Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº', captureState: 'Ğ¡Ğ¾ÑÑ‚Ğ¾ÑĞ½Ğ¸Ğµ', captureSuggestions: 'ĞŸÑ€ĞµĞ´Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ñ', captureUnsafe: 'ĞŸÑ€Ğ¸Ğ½Ğ¸Ğ¼Ğ°ÑÑ‚ÑÑ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ±ĞµĞ·Ğ¾Ğ¿Ğ°ÑĞ½Ñ‹Ğµ HTTP(S)-ÑÑÑ‹Ğ»ĞºĞ¸ Ğ¸ Ñ‚Ğ¸Ğ¿Ğ¸Ğ·Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸.',
-    inbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ',
-    subscriptions: 'ĞŸĞ¾Ğ´Ğ¿Ğ¸ÑĞºĞ¸',
-    nearby: 'ĞĞ±Ğ¼ĞµĞ½ Ñ€ÑĞ´Ğ¾Ğ¼',
-    nearbyTitle: 'ĞĞ±Ğ¼ĞµĞ½ Ñ€ÑĞ´Ğ¾Ğ¼', nearbyBoundary: 'ĞĞ½Ğ¾Ğ½Ğ¸Ğ¼Ğ½Ğ¾Ğµ Ğ¾Ğ±Ğ½Ğ°Ñ€ÑƒĞ¶ĞµĞ½Ğ¸Ğµ Ğ½Ğ° Ğ¾Ğ´Ğ¸Ğ½ Ğ¿ĞµÑ€ĞµÑ…Ğ¾Ğ´. Native/core adapter Ğ²Ğ»Ğ°Ğ´ĞµĞµÑ‚ E2E, Fabric-Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚Ğ¸Ğ·Ğ°Ñ†Ğ¸ĞµĞ¹ Ğ¸ bounded transfer state.', nearbyUnavailable: 'Nearby Exchange host Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.', nearbyReceive: 'ĞŸÑ€Ğ¸Ğ½Ğ¸Ğ¼Ğ°Ñ‚ÑŒ Ñ€ÑĞ´Ğ¾Ğ¼', nearbyStop: 'ĞÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¸Ñ‘Ğ¼', nearbyQr: 'ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ Receive QR', nearbyRefresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ nearby', nearbyNoEndpoints: 'ĞĞ½Ğ¾Ğ½Ğ¸Ğ¼Ğ½Ñ‹Ñ… nearby endpoints Ğ½Ğµ Ğ²Ğ¸Ğ´Ğ½Ğ¾.', nearbyOffers: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ Ğ¿Ñ€ĞµĞ´Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ñ', nearbyNoOffers: 'ĞĞµÑ‚ Ğ¿Ñ€ĞµĞ´Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ğ¹, Ğ¾Ğ¶Ğ¸Ğ´Ğ°ÑÑ‰Ğ¸Ñ… ÑĞ¾Ğ³Ğ»Ğ°ÑĞ¸Ñ.', nearbyAccept: 'ĞŸÑ€Ğ¸Ğ½ÑÑ‚ÑŒ', nearbyReject: 'ĞÑ‚ĞºĞ»Ğ¾Ğ½Ğ¸Ñ‚ÑŒ', nearbyCancel: 'ĞÑ‚Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ', nearbyResume: 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ', nearbyDisclosure: 'Ğ›Ğ¸Ñ‡Ğ½Ğ¾ÑÑ‚ÑŒ Ğ°Ğ½Ğ¾Ğ½Ğ¸Ğ¼Ğ½Ğ°, Ğ¿Ğ¾ĞºĞ° Ğ²Ñ‹ ÑĞ²Ğ½Ğ¾ Ğ½Ğµ Ğ²Ñ‹Ğ±ĞµÑ€ĞµÑ‚Ğµ Ğ¿Ğ¾Ğ»Ñ Ğ´Ğ»Ñ Ñ€Ğ°ÑĞºÑ€Ñ‹Ñ‚Ğ¸Ñ.', nearbyAddContact: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ Contact Ğ¿Ğ¾ÑĞ»Ğµ Ñ€Ğ°ÑĞºÑ€Ñ‹Ñ‚Ğ¸Ñ', nearbyAnonymity: 'ĞĞµÑ‚ GPS, Ñ€Ğ°ÑÑÑ‚Ğ¾ÑĞ½Ğ¸Ñ Ğ¿Ğ¾ RSSI, Ğ¸ÑÑ‚Ğ¾Ñ€Ğ¸Ğ¸ Ğ²ÑÑ‚Ñ€ĞµÑ‡ Ğ¸ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¾Ğ³Ğ¾ ÑĞ¾Ğ·Ğ´Ğ°Ğ½Ğ¸Ñ Contact.', nearbyReceived: 'ĞŸĞ¾Ğ»ÑƒÑ‡ĞµĞ½Ğ¾', nearbyShareQr: 'Receive QR ĞºĞ¾Ñ€Ğ¾Ñ‚ĞºĞ¾Ğ¶Ğ¸Ğ²ÑƒÑ‰Ğ¸Ğ¹ Ğ¸ scoped Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ´Ğ»Ñ Nearby Exchange.',
-    home: 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ', search: 'ĞŸĞ¾Ğ¸ÑĞº', agent: 'Agent Bot', askAgent: 'Ğ¡Ğ¿Ñ€Ğ¾ÑĞ¸Ñ‚ÑŒ Agent Botâ€¦', messages: 'Ğ¡Ğ¾Ğ¾Ğ±Ñ‰ĞµĞ½Ğ¸Ñ', spaces: 'ĞŸÑ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ°', vault: 'Ğ¥Ñ€Ğ°Ğ½Ğ¸Ğ»Ğ¸Ñ‰Ğµ', calendar: 'ĞšĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€ÑŒ', contacts: 'ĞšĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ñ‹', maps: 'ĞšĞ°Ñ€Ñ‚Ñ‹', files: 'Ğ¤Ğ°Ğ¹Ğ»Ñ‹', documents: 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹', media: 'ĞœĞµĞ´Ğ¸Ğ°', photos: 'Ğ¤Ğ¾Ñ‚Ğ¾Ğ³Ñ€Ğ°Ñ„Ğ¸Ğ¸', calls: 'Ğ—Ğ²Ğ¾Ğ½ĞºĞ¸', workboard: 'Ğ Ğ°Ğ±Ğ¾Ñ‡Ğ°Ñ Ğ´Ğ¾ÑĞºĞ°', webLibrary: 'Web Library', webLibraryDescription: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ğµ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñ‹, Read Later Ğ¸ Ğ½ĞµĞ¸Ğ·Ğ¼ĞµĞ½ÑĞµĞ¼Ñ‹Ğµ offline-Ğ²ĞµÑ€ÑĞ¸Ğ¸. Reader Ğ½Ğµ Ğ¾Ğ±Ñ€Ğ°Ñ‰Ğ°ĞµÑ‚ÑÑ Ğº Ğ²Ğ½ĞµÑˆĞ½ĞµĞ¼Ñƒ origin.', collaboration: 'Ğ¡Ğ¾Ğ²Ğ¼ĞµÑÑ‚Ğ½Ğ°Ñ Ñ€Ğ°Ğ±Ğ¾Ñ‚Ğ°', continuity: 'Continuity ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²', plugins: 'ĞŸĞ»Ğ°Ğ³Ğ¸Ğ½Ñ‹', settings: 'ĞĞ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ¸', localeUnavailable: 'Ğ—Ğ²Ğ¾Ğ½ĞºĞ¸ Ğ½Ğµ Ğ½Ğ°ÑÑ‚Ñ€Ğ¾ĞµĞ½Ñ‹ Ğ½Ğ° ÑÑ‚Ğ¾Ğ¼ host.', callBoundary: 'ĞĞ°Ñ‚Ğ¸Ğ²Ğ½Ñ‹Ğ¹ host Ğ´Ğ¾Ğ»Ğ¶ĞµĞ½ Ğ¿Ñ€ĞµĞ´Ğ¾ÑÑ‚Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ°ÑƒÑ‚ĞµĞ½Ñ‚Ğ¸Ñ„Ğ¸Ñ†Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğ¹ signaling Ğ¸ WebRTC media adapter. Ğ—Ğ²Ğ¾Ğ½ĞºĞ¸ Ğ½Ğµ Ğ·Ğ°Ğ¿Ğ¸ÑÑ‹Ğ²Ğ°ÑÑ‚ÑÑ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', callMediaReady: 'media adapter Ğ³Ğ¾Ñ‚Ğ¾Ğ²', callMediaUnavailable: 'media adapter Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½', noActiveCall: 'ĞĞºÑ‚Ğ¸Ğ²Ğ½Ğ¾Ğ³Ğ¾ Ğ·Ğ²Ğ¾Ğ½ĞºĞ° Ğ½ĞµÑ‚.', callHistory: 'Ğ˜ÑÑ‚Ğ¾Ñ€Ğ¸Ñ Ğ·Ğ²Ğ¾Ğ½ĞºĞ¾Ğ²', acceptCall: 'ĞŸÑ€Ğ¸Ğ½ÑÑ‚ÑŒ', rejectCall: 'ĞÑ‚ĞºĞ»Ğ¾Ğ½Ğ¸Ñ‚ÑŒ', mute: 'Ğ’Ñ‹ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ Ğ¼Ğ¸ĞºÑ€Ğ¾Ñ„Ğ¾Ğ½', unmute: 'Ğ’ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ Ğ¼Ğ¸ĞºÑ€Ğ¾Ñ„Ğ¾Ğ½', cameraOn: 'Ğ’ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ ĞºĞ°Ğ¼ĞµÑ€Ñƒ', cameraOff: 'Ğ’Ñ‹ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ ĞºĞ°Ğ¼ĞµÑ€Ñƒ', screenOn: 'ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ ÑĞºÑ€Ğ°Ğ½', screenOff: 'ĞÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ Ğ¿Ğ¾ĞºĞ°Ğ· ÑĞºÑ€Ğ°Ğ½Ğ°', endCall: 'Ğ—Ğ°Ğ²ĞµÑ€ÑˆĞ¸Ñ‚ÑŒ Ğ·Ğ²Ğ¾Ğ½Ğ¾Ğº',
-    back: 'ĞĞ°Ğ·Ğ°Ğ´', forward: 'Ğ’Ğ¿ĞµÑ€Ñ‘Ğ´', omnibox: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¾Ğ±ÑŠĞµĞºÑ‚Ğ¾Ğ², ĞºĞ¾Ğ¼Ğ°Ğ½Ğ´, ÑÑÑ‹Ğ»Ğ¾Ğº Ğ¸Ğ»Ğ¸ Ğ²Ğ¾Ğ¿Ñ€Ğ¾Ñ Agent Botâ€¦', command: 'ĞŸĞ°Ğ»Ğ¸Ñ‚Ñ€Ğ° ĞºĞ¾Ğ¼Ğ°Ğ½Ğ´', new: 'ĞĞ¾Ğ²Ğ¾Ğµ', workspace: 'Ğ Ğ°Ğ±Ğ¾Ñ‡ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', context: 'ĞšĞ¾Ğ½Ñ‚ĞµĞºÑÑ‚', agentScope: 'Ğ¢ĞµĞºÑƒÑ‰Ğ¸Ğ¹ Ğ¾Ğ±ÑŠĞµĞºÑ‚ Ğ² Ğ¾Ğ±Ğ»Ğ°ÑÑ‚Ğ¸ Ğ²Ğ¸Ğ´Ğ¸Ğ¼Ğ¾ÑÑ‚Ğ¸', ask: 'Ğ¡Ğ¿Ñ€Ğ¾ÑĞ¸Ñ‚ÑŒ Agent Bot', close: 'Ğ—Ğ°ĞºÑ€Ñ‹Ñ‚ÑŒ', duplicate: 'Ğ”ÑƒĞ±Ğ»Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ', pin: 'Ğ—Ğ°ĞºÑ€ĞµĞ¿Ğ¸Ñ‚ÑŒ Ğ²ĞºĞ»Ğ°Ğ´ĞºÑƒ', unpin: 'ĞÑ‚ĞºÑ€ĞµĞ¿Ğ¸Ñ‚ÑŒ Ğ²ĞºĞ»Ğ°Ğ´ĞºÑƒ', splitHorizontal: 'Ğ Ğ°Ğ·Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒ Ğ³Ğ¾Ñ€Ğ¸Ğ·Ğ¾Ğ½Ñ‚Ğ°Ğ»ÑŒĞ½Ğ¾', splitVertical: 'Ğ Ğ°Ğ·Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒ Ğ²ĞµÑ€Ñ‚Ğ¸ĞºĞ°Ğ»ÑŒĞ½Ğ¾', restore: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ·Ğ°ĞºÑ€Ñ‹Ñ‚ÑƒÑ Ğ²ĞºĞ»Ğ°Ğ´ĞºÑƒ', customize: 'ĞĞ°ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑŒ Ğ¿Ğ°Ğ½ĞµĞ»ÑŒ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ğ¹', hide: 'Ğ¡ĞºÑ€Ñ‹Ñ‚ÑŒ', show: 'ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ', moveUp: 'Ğ’Ğ²ĞµÑ€Ñ…', moveDown: 'Ğ’Ğ½Ğ¸Ğ·', empty: 'ĞÑ‚ĞºÑ€Ğ¾Ğ¹Ñ‚Ğµ Ğ¾Ğ±ÑŠĞµĞºÑ‚, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ Ğ½Ğ°Ñ‡Ğ°Ñ‚ÑŒ', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ', openInTab: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ² Ğ½Ğ¾Ğ²Ğ¾Ğ¹ Ğ²ĞºĞ»Ğ°Ğ´ĞºĞµ', local: 'Ğ¡Ğ½Ğ°Ñ‡Ğ°Ğ»Ğ° Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', privacy: 'ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğ¹ ĞºĞ¾Ğ½Ñ‚ĞµĞºÑÑ‚ Ğ¾ÑÑ‚Ğ°Ñ‘Ñ‚ÑÑ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ', placeholder: 'Ğ—Ğ°Ğ³Ğ»ÑƒÑˆĞºĞ° / host adapter', placeholderBody: 'ĞŸĞ¾Ğ²ĞµÑ€Ñ…Ğ½Ğ¾ÑÑ‚ÑŒ Ğ³Ğ¾Ñ‚Ğ¾Ğ²Ğ° Ğ´Ğ»Ñ ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰ĞµĞ¹ Ğ¿Ğ¾Ğ´ÑĞ¸ÑÑ‚ĞµĞ¼Ñ‹ Keystone. Shell Ğ½Ğµ Ğ¿Ñ€Ğ¸Ğ´ÑƒĞ¼Ñ‹Ğ²Ğ°ĞµÑ‚ Ğ±Ğ¸Ğ·Ğ½ĞµÑ-Ğ»Ğ¾Ğ³Ğ¸ĞºÑƒ.', references: 'Ğ¢Ğ¸Ğ¿Ğ¸Ğ·Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸', drop: 'ĞŸĞµÑ€ĞµÑ‚Ğ°Ñ‰Ğ¸Ñ‚Ğµ ÑÑÑ‹Ğ»ĞºÑƒ ÑÑĞ´Ğ°', related: 'Ğ¡Ğ²ÑĞ·Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ¾Ğ±ÑŠĞµĞºÑ‚Ñ‹', properties: 'Ğ¡Ğ²Ğ¾Ğ¹ÑÑ‚Ğ²Ğ°', links: 'Ğ¡Ğ²ÑĞ·Ğ¸', activity: 'ĞĞºÑ‚Ğ¸Ğ²Ğ½Ğ¾ÑÑ‚ÑŒ', searchHint: 'ĞŸĞ¾Ğ¸ÑĞº Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ Ğ¸ Ğ¿Ñ€Ğ¾Ğ²ĞµÑ€ÑĞµÑ‚ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸Ñ.', agentHint: 'Ğ’ Ğ¾Ğ±Ğ»Ğ°ÑÑ‚ÑŒ Ğ²Ğ¸Ğ´Ğ¸Ğ¼Ğ¾ÑÑ‚Ğ¸ Ğ¿Ğ¾Ğ¿Ğ°Ğ´Ğ°ĞµÑ‚ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ°ĞºÑ‚Ğ¸Ğ²Ğ½Ñ‹Ğ¹ Ğ¾Ğ±ÑŠĞµĞºÑ‚. Ğ’ĞµÑÑŒ workspace Ğ½Ğµ Ğ¿ĞµÑ€ĞµĞ´Ğ°Ñ‘Ñ‚ÑÑ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', send: 'Ğ’Ñ‹Ğ¿Ğ¾Ğ»Ğ½Ğ¸Ñ‚ÑŒ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', noObject: 'ĞĞ±ÑŠĞµĞºÑ‚ Ğ½Ğµ Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½', browserPrivacy: 'Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñ‹ Ğ±Ñ€Ğ°ÑƒĞ·ĞµÑ€Ğ° Ğ½Ğµ Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ÑÑ‚ Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğ¹ ĞºĞ¾Ğ½Ñ‚ĞµĞºÑÑ‚ Keystone Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', currentWorkspace: 'Ğ¢ĞµĞºÑƒÑ‰ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', newWorkspace: 'ĞĞ¾Ğ²Ğ¾Ğµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', rename: 'ĞŸĞµÑ€ĞµĞ¸Ğ¼ĞµĞ½Ğ¾Ğ²Ğ°Ñ‚ÑŒ', delete: 'Ğ£Ğ´Ğ°Ğ»Ğ¸Ñ‚ÑŒ', switcher: 'Ğ¡Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ Ñ€Ğ°Ğ±Ğ¾Ñ‡ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', done: 'Ğ“Ğ¾Ñ‚Ğ¾Ğ²Ğ¾', reset: 'Ğ¡Ğ±Ñ€Ğ¾ÑĞ¸Ñ‚ÑŒ', add: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ', objectId: 'ID Ğ¾Ğ±ÑŠĞµĞºÑ‚Ğ°', commandHint: 'Ğ’Ğ²ĞµĞ´Ğ¸Ñ‚Ğµ Ğ´Ğ»Ñ Ñ„Ğ¸Ğ»ÑŒÑ‚Ñ€Ğ°Ñ†Ğ¸Ğ¸ ĞºĞ¾Ğ¼Ğ°Ğ½Ğ´â€¦', noCommands: 'ĞšĞ¾Ğ¼Ğ°Ğ½Ğ´Ñ‹ Ğ½Ğµ Ğ½Ğ°Ğ¹Ğ´ĞµĞ½Ñ‹', quickActions: 'Ğ‘Ñ‹ÑÑ‚Ñ€Ñ‹Ğµ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ñ', message: 'Ğ¡Ğ¾Ğ¾Ğ±Ñ‰ĞµĞ½Ğ¸Ğµ', group: 'Ğ“Ñ€ÑƒĞ¿Ğ¿Ğ°', space: 'ĞŸÑ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', note: 'Ğ—Ğ°Ğ¼ĞµÑ‚ĞºĞ°', canvas: 'Ğ¥Ğ¾Ğ»ÑÑ‚', event: 'Ğ¡Ğ¾Ğ±Ñ‹Ñ‚Ğ¸Ğµ ĞºĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€Ñ', task: 'Ğ—Ğ°Ğ´Ğ°Ñ‡Ğ°', file: 'Ğ¤Ğ°Ğ¹Ğ»', community: 'Ğ¡Ğ¾Ğ¾Ğ±Ñ‰ĞµÑÑ‚Ğ²Ğ¾', saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', mode: 'Ğ¡Ğ±Ğ°Ğ»Ğ°Ğ½ÑĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğ¹', status: 'Ğ“Ğ¾Ñ‚Ğ¾Ğ²', locked: 'Ğ¢Ñ€ĞµĞ±ÑƒĞµÑ‚ÑÑ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸Ğµ', openBob: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ¿Ñ€Ğ¾Ñ„Ğ¸Ğ»ÑŒ Ğ‘Ğ¾Ğ±Ğ°', openChat: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ñ‡Ğ°Ñ‚', openFile: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ñ„Ğ°Ğ¹Ğ» Ğ¿Ğ¾ĞµĞ·Ğ´ĞºĞ¸', openSpace: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾ Ğ¿Ğ¾ĞµĞ·Ğ´ĞºĞ¸', askAbout: 'Ğ¡Ğ¿Ñ€Ğ¾ÑĞ¸Ñ‚ÑŒ Ğ¾Ğ± ÑÑ‚Ğ¾Ğ¼ Ğ¾Ğ±ÑŠĞµĞºÑ‚Ğµ', configure: 'ĞĞ°ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑŒ', language: 'Ğ¯Ğ·Ñ‹Ğº', english: 'English', russian: 'Ğ ÑƒÑÑĞºĞ¸Ğ¹', extensionSlot: 'Ğ¡Ğ»Ğ¾Ñ‚ Ñ€Ğ°ÑÑˆĞ¸Ñ€ĞµĞ½Ğ¸Ñ â€” Ğ¿Ğ»Ğ°Ğ³Ğ¸Ğ½Ñ‹ Ğ½Ğµ Ğ·Ğ°Ğ¿ÑƒÑĞºĞ°ÑÑ‚ÑÑ Ğ±ĞµĞ· Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸Ñ', needsUser: 'ĞÑƒĞ¶ĞµĞ½ Ğ¾Ñ‚Ğ²ĞµÑ‚ Ğ²Ğ»Ğ°Ğ´ĞµĞ»ÑŒÑ†Ğ°', board: 'Ğ”Ğ¾ÑĞºĞ°', list: 'Ğ¡Ğ¿Ğ¸ÑĞ¾Ğº', pause: 'ĞŸĞ°ÑƒĞ·Ğ°', cancel: 'ĞÑ‚Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ', retry: 'ĞŸĞ¾Ğ²Ñ‚Ğ¾Ñ€Ğ¸Ñ‚ÑŒ', assign: 'ĞĞ°Ğ·Ğ½Ğ°Ñ‡Ğ¸Ñ‚ÑŒ', priority: 'ĞŸÑ€Ğ¸Ğ¾Ñ€Ğ¸Ñ‚ĞµÑ‚', publication: 'ĞŸÑƒĞ±Ğ»Ğ¸ĞºĞ°Ñ†Ğ¸Ñ', publicationAdapter: 'Ğ£Ğ¿Ñ€Ğ°Ğ²Ğ»ĞµĞ½Ğ¸Ğµ Ğ¿ÑƒĞ±Ğ»Ğ¸ĞºĞ°Ñ†Ğ¸ĞµĞ¹ Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ host adapter Ğ½Ğ° Ğ¾ÑĞ½Ğ¾Ğ²Ğµ PublicationService.', publicationDisclosure: 'Ğ§ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸ĞºĞ¸ Ğ¾ÑÑ‚Ğ°ÑÑ‚ÑÑ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¼Ğ¸, Ğ¿Ğ¾ĞºĞ° Ğ²Ğ»Ğ°Ğ´ĞµĞ»ĞµÑ† ÑĞ²Ğ½Ğ¾ Ğ½Ğµ Ğ¾Ğ¿ÑƒĞ±Ğ»Ğ¸ĞºÑƒĞµÑ‚ Ğ¸Ñ…. ĞŸÑƒĞ±Ğ»Ğ¸Ñ‡Ğ½Ñ‹Ğµ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ¼Ğ¾Ğ³ÑƒÑ‚ ĞºÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒÑÑ; Â«Ğ¿Ğ¾ ÑÑÑ‹Ğ»ĞºĞµÂ» â€” Ğ½Ğµ ÑĞµĞºÑ€ĞµÑ‚.', visibility: 'Ğ’Ğ¸Ğ´Ğ¸Ğ¼Ğ¾ÑÑ‚ÑŒ', public: 'ĞŸÑƒĞ±Ğ»Ğ¸Ñ‡Ğ½Ğ¾', unlisted: 'ĞŸĞ¾ ÑÑÑ‹Ğ»ĞºĞµ', scoped: 'ĞĞ³Ñ€Ğ°Ğ½Ğ¸Ñ‡ĞµĞ½Ğ½Ğ°Ñ', draft: 'Ğ§ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸Ğº', revision: 'Ğ’ĞµÑ€ÑĞ¸Ñ', preview: 'ĞŸÑ€ĞµĞ´Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€', publish: 'ĞĞ¿ÑƒĞ±Ğ»Ğ¸ĞºĞ¾Ğ²Ğ°Ñ‚ÑŒ', unpublish: 'Ğ¡Ğ½ÑÑ‚ÑŒ Ñ Ğ¿ÑƒĞ±Ğ»Ğ¸ĞºĞ°Ñ†Ğ¸Ğ¸', publishConfirm: 'ĞĞ¿ÑƒĞ±Ğ»Ğ¸ĞºĞ¾Ğ²Ğ°Ñ‚ÑŒ ÑĞ¾Ğ´ĞµÑ€Ğ¶Ğ¸Ğ¼Ğ¾Ğµ Ñ Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğ¹ Ğ²Ğ¸Ğ´Ğ¸Ğ¼Ğ¾ÑÑ‚ÑŒÑ?', shareLink: 'Ğ¡ÑÑ‹Ğ»ĞºĞ° Keystone', noPreview: 'ĞŸÑ€ĞµĞ´Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€ Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½.', continuityTitle: 'Continuity ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²', sendToDevice: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ¾', continueOnDevice: 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ', deviceInbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ°', devices: 'Ğ£ÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ°', noContinuityRuntime: 'Continuity host Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.', noDevices: 'ĞĞµÑ‚ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ñ‹Ñ… Ğ´Ğ¾Ğ²ĞµÑ€ĞµĞ½Ğ½Ñ‹Ñ… ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ².', noInbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ñ… handoff Ğ½ĞµÑ‚.', chooseDevice: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ´Ğ¾Ğ²ĞµÑ€ĞµĞ½Ğ½Ğ¾Ğµ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ¾', sendWorkspace: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ñ‚ĞµĞºÑƒÑ‰ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', continueWorkspace: 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ñ‚ĞµĞºÑƒÑ‰ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', flush: 'ĞŸĞ¾Ğ¿Ñ€Ğ¾Ğ±Ğ¾Ğ²Ğ°Ñ‚ÑŒ Ğ´Ğ¾ÑÑ‚Ğ°Ğ²Ğ¸Ñ‚ÑŒ', delivered: 'Ğ”Ğ¾ÑÑ‚Ğ°Ğ²Ğ»ĞµĞ½Ğ¾ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ¾', opened: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚Ğ¾', accepted: 'ĞŸÑ€Ğ¸Ğ½ÑÑ‚Ğ¾', queued: 'Ğ’ Ğ¾Ñ‡ĞµÑ€ĞµĞ´Ğ¸', sending: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ»ÑĞµÑ‚ÑÑ', failed: 'ĞÑˆĞ¸Ğ±ĞºĞ°', expired: 'Ğ˜ÑÑ‚Ñ‘Ğº ÑÑ€Ğ¾Ğº', cancelled: 'ĞÑ‚Ğ¼ĞµĞ½ĞµĞ½Ğ¾', offline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½ Ğ¸Ğ»Ğ¸ Ğ½ĞµÑ‚ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚Ğ°', available: 'Ğ”Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾', recentlyAvailable: 'ĞĞµĞ´Ğ°Ğ²Ğ½Ğ¾ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾', notAvailable: 'ĞĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾', automaticClipboard: 'ĞĞ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ°Ñ Continuity Ğ±ÑƒÑ„ĞµÑ€Ğ° Ğ¾Ğ±Ğ¼ĞµĞ½Ğ°', automaticClipboardWarning: 'Ğ’Ñ‹ĞºĞ»ÑÑ‡ĞµĞ½Ğ¾ Ğ¿Ğ¾ ÑƒĞ¼Ğ¾Ğ»Ñ‡Ğ°Ğ½Ğ¸Ñ. Ğ’ĞºĞ»ÑÑ‡ĞµĞ½Ğ¸Ğµ Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ ÑĞ²Ğ½Ğ¾Ğ³Ğ¾ Ğ¿Ğ¾Ğ´Ñ‚Ğ²ĞµÑ€Ğ¶Ğ´ĞµĞ½Ğ¸Ñ Ğ²Ğ»Ğ°Ğ´ĞµĞ»ÑŒÑ†Ğ° Ğ¸ Ğ½Ğµ Ğ²ÑÑ‚Ğ°Ğ²Ğ»ÑĞµÑ‚ Ñ‚ĞµĞºÑÑ‚ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', clipboardExplicit: 'Ğ‘ÑƒÑ„ĞµÑ€ Ğ¾Ğ±Ğ¼ĞµĞ½Ğ° Ñ€Ğ°Ğ±Ğ¾Ñ‚Ğ°ĞµÑ‚ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ ÑĞ²Ğ½Ğ¾: auto-paste Ğ¸ Ğ¸ÑÑ‚Ğ¾Ñ€Ğ¸Ñ Ğ±ÑƒÑ„ĞµÑ€Ğ° Ğ½Ğµ Ğ¸ÑĞ¿Ğ¾Ğ»ÑŒĞ·ÑƒÑÑ‚ÑÑ.', handoffBoundary: 'ĞĞ°Ñ‚Ğ¸Ğ²Ğ½Ñ‹Ğ¹ host Ğ¿Ñ€ĞµĞ´Ğ¾ÑÑ‚Ğ°Ğ²Ğ»ÑĞµÑ‚ adapters Ğ´Ğ¾Ğ²ĞµÑ€ĞµĞ½Ğ½Ñ‹Ñ… ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ² Ğ¸ Ğ·Ğ°ÑˆĞ¸Ñ„Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ğ¾Ğ¹ Ğ´Ğ¾ÑÑ‚Ğ°Ğ²ĞºĞ¸. Shell Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ĞµÑ‚ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ references.',
-  },
-} as const;
-
-type Copy = { [K in keyof typeof copy.en]: string };
-
-function useShell(): [DesktopShellController, () => void] {
-  const controller = React.useRef<DesktopShellController>();
-  controller.current ??= new DesktopShellController({ canOpen: ref => ref.visibility !== 'private' || ref.id !== 'revoked' });
-  const [, redraw] = React.useReducer(value => value + 1, 0);
-  React.useEffect(() => controller.current?.subscribe(redraw), []);
-  return [controller.current, redraw];
-}
-
-export interface DesktopShellProps {
-  initialLocale?: Locale;
-  onLocaleChange?: (locale: Locale) => void;
-}
-
-export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: DesktopShellProps) {
-  const [shell] = useShell();
-  const [locale, setLocaleState] = React.useState<Locale>(() => (localStorage.getItem('keystone.locale') as Locale) || initialLocale);
-  const t: Copy = copy[locale];
-  const [omnibox, setOmnibox] = React.useState('');
-  const [omniboxOpen, setOmniboxOpen] = React.useState(false);
-  const [paletteOpen, setPaletteOpen] = React.useState(false);
-  const [quickActionsOpen, setQuickActionsOpen] = React.useState(false);
-  const [workspaceOpen, setWorkspaceOpen] = React.useState(false);
-  const [activityEditorOpen, setActivityEditorOpen] = React.useState(false);
-  const [draggedRef, setDraggedRef] = React.useState<KeystoneObjectReference>();
-  const [agentPrefill, setAgentPrefill] = React.useState('');
-  const omniboxRef = React.useRef<HTMLInputElement>(null);
-  const commands = React.useMemo(() => defaultShellCommands(locale), [locale]);
-  const contextRegistry = React.useMemo(() => createDefaultContextRegistry(locale), [locale]);
-  const snapshot = shell.getSnapshot();
-  const currentTab = shell.currentTab;
-
-  const setLocale = (next: Locale) => { setLocaleState(next); localStorage.setItem('keystone.locale', next); onLocaleChange?.(next); };
-
-  React.useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const primary = isPrimaryModifier(event);
-      if (primary && (event.key.toLowerCase() === 'k' || event.key.toLowerCase() === 'p')) { event.preventDefault(); setPaletteOpen(true); return; }
-      if (primary && event.key.toLowerCase() === 'l') { event.preventDefault(); omniboxRef.current?.focus(); omniboxRef.current?.select(); setOmniboxOpen(true); return; }
-      if (primary && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); shell.reopenClosedTab(); return; }
-      if (primary && event.key.toLowerCase() === 't') { event.preventDefault(); shell.openReference({ kind: 'home', id: 'new-tab', label: t.home }, { allowDuplicate: true }); return; }
-      if (primary && event.key.toLowerCase() === 'w') { event.preventDefault(); shell.closeActiveTab(); return; }
-      if (primary && event.key === '\\') { event.preventDefault(); shell.splitPane('vertical'); return; }
-      if (primary && event.key === 'Tab') { event.preventDefault(); shell.nextTab(event.shiftKey ? -1 : 1); return; }
-      if (primary && event.shiftKey && event.code === 'Space') { event.preventDefault(); shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }, { allowDuplicate: true }); return; }
-      if (primary && event.code === 'Space') { event.preventDefault(); shell.toggleAgentPanel(true); return; }
-      if (event.key === 'Escape') { setPaletteOpen(false); setQuickActionsOpen(false); setWorkspaceOpen(false); setActivityEditorOpen(false); setOmniboxOpen(false); }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [shell, t.capture, t.home]);
-
-  const runCommand = (command: ShellCommand) => { setPaletteOpen(false); command.run(shell); };
-  const submitOmnibox = (event: React.FormEvent) => {
-    event.preventDefault();
-    const input = omnibox.trim();
-    if (!input) return;
-    if (/^keystone:\/\/capture(?:[/?]|$)/i.test(input)) {
-      const captureRuntime = getDesktopCaptureRuntime();
-      if (captureRuntime) void captureRuntime.captureDeepLink(input).then(() => { shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }, { allowDuplicate: true }); }).catch(error => shell.setNotice(error instanceof Error ? error.message : t.captureUnsafe));
-      else shell.setNotice(t.captureNoRuntime);
-      setOmnibox(''); setOmniboxOpen(false); return;
-    }
-    const mailInput = parseDesktopMailInput(input);
-    if (mailInput) {
-      shell.openReference({ kind: 'mail', id: mailInput.type === 'COMPOSE' ? 'compose' : 'mail', label: t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°' : 'External Email' }, { allowDuplicate: mailInput.type === 'COMPOSE' });
-      const mailRuntime = getDesktopMailRuntime();
-      if (mailInput.type === 'SEARCH' && mailRuntime?.search) void Promise.resolve(mailRuntime.search(mailInput.query, { limit: 30 })).then(value => shell.setNotice((t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'ĞŸĞ¾Ñ‡Ñ‚Ğ°: ' : 'Mail: ') + value.length)).catch(() => shell.setNotice(t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'ĞŸĞ¾Ñ‡Ñ‚Ğ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ°' : 'Mail unavailable'));
-      else if (mailInput.type === 'REFRESH' && mailRuntime?.refresh) void Promise.resolve(mailRuntime.accounts()).then(value => value[0]?.id ? mailRuntime.refresh?.(value[0].id) : undefined).then(() => shell.setNotice(t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'ĞŸĞ¾Ñ‡Ñ‚Ğ° Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ°' : 'Mail refreshed')).catch(() => shell.setNotice(t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'ĞŸĞ¾Ñ‡Ñ‚Ğ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ°' : 'Mail unavailable'));
-      setOmnibox(''); setOmniboxOpen(false); return;
-    }
-    const mapsInput = parseDesktopMapsInput(input);
-    if (mapsInput) {
-      shell.openReference({ kind: 'map', id: 'map', label: t.maps });
-      const mapsRuntime = getDesktopMapsRuntime();
-      if (mapsInput.type === 'SEARCH_PLACE' && mapsRuntime) void mapsRuntime.search({ query: mapsInput.query, limit: 50 }).then(value => shell.setNotice(`${t.maps}: ${value.length}`)).catch(() => shell.setNotice(t.maps));
-      else if (mapsInput.type === 'SHOW_MY_LOCATION' && mapsRuntime?.showMyLocation) void mapsRuntime.showMyLocation().then(value => shell.setNotice(`${t.maps}: ${value.precision}`)).catch(() => shell.setNotice(t.maps));
-      else shell.setNotice(t.maps);
-      setOmnibox(''); setOmniboxOpen(false); return;
-    }
-    const result = resolveOmniboxInput(input, shell.router);
-    if (result.type === 'object' && result.ref) shell.openReference(result.ref);
-    else if (result.type === 'web' && result.url) shell.openBrowser(result.url);
-    else if (result.type === 'command' && result.command) {
-      const command = findCommand(commands, result.command);
-      if (command) runCommand(command); else shell.setNotice(`${t.command}: ${result.command}`);
-    } else if (result.type === 'agent-query') { setAgentPrefill(input); shell.toggleAgentPanel(true); shell.setNotice(`${t.agentScope}: ${currentTab?.title ?? t.noObject}`); }
-    else if (result.type === 'search') shell.setNotice(`${t.search}: ${input}`);
-    setOmnibox(''); setOmniboxOpen(false);
-  };
-
-  const activeRef = currentTab?.object;
-  const browserPage = currentTab?.kind === 'browser' ? shell.browserPage(currentTab.id) : undefined;
-  const context = contextRegistry.resolve(activeRef, browserPage);
-  const visibleActivity = shell.chromeState.activityBar.filter(item => item.visible);
-  const openActivity = (item: ActivityBarItem) => {
-    if (item.kind === 'search') { omniboxRef.current?.focus(); setOmniboxOpen(true); return; }
-    if (item.kind === 'plugins') { shell.openReference({ kind: 'settings', id: 'plugins', label: t.plugins }); return; }
-    if (item.id === 'inbox') { shell.openReference({ kind: 'inbox', id: 'inbox', label: t.inbox }); return; }
-    if (item.id === 'continuity') { shell.openReference({ kind: 'settings', id: 'continuity', label: t.continuity }); return; }
-    if (item.id === 'nearby') { shell.openReference({ kind: 'settings', id: 'nearby', label: t.nearby }); return; }
-    if (item.id === 'web-library') { shell.openReference({ kind: 'web-library', id: 'web-library', label: t.webLibrary }); return; }
-    if (item.id === 'capture') { shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }, { allowDuplicate: true }); return; }
-    shell.openReference({ kind: item.kind, id: item.id === 'calls' ? 'calls' : item.kind, label: item.label });
-  };
-
-  return <div className="desktop-shell" data-locale={locale}>
-    <ActivityBar items={visibleActivity} t={t} onOpen={openActivity} onCustomize={() => setActivityEditorOpen(value => !value)} />
-    <div className="desktop-environment">
-      <header className="desktop-header">
-        <div className="desktop-brand"><span className="brand-glyph">âœ¦</span><span>Keystone</span><span className="brand-channel">/ DESKTOP</span></div>
-        <div className="history-controls"><button className="icon-control" onClick={() => shell.goBack()} aria-label={t.back}>â€¹</button><button className="icon-control" onClick={() => shell.goForward()} aria-label={t.forward}>â€º</button></div>
-        <form className="omnibox" onSubmit={submitOmnibox}>
-          <span className="omnibox-symbol" aria-hidden>âŒ•</span><input ref={omniboxRef} value={omnibox} onFocus={() => setOmniboxOpen(true)} onChange={event => setOmnibox(event.target.value)} placeholder={t.omnibox} aria-label={t.omnibox}/><kbd>{isMac() ? 'âŒ˜' : 'Ctrl'} L</kbd>
-          {omniboxOpen && <OmniboxMenu value={omnibox} t={t} onChoose={value => { setOmnibox(value); omniboxRef.current?.focus(); }} />}
-        </form>
-        <div className="header-actions">
-          <button className="quiet-button capture-header-button" onClick={() => shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }, { allowDuplicate: true })} title={`${t.capture} Â· ${isMac() ? 'âŒ˜' : 'Ctrl'} â‡§ Space`}><span>ï¼‹</span><span>{t.capture}</span></button>
-          <button className="quiet-button" onClick={() => setPaletteOpen(true)} title={t.command}><span>âŒ˜</span><span>{t.command}</span></button>
-          <button className="primary-button" onClick={() => setQuickActionsOpen(value => !value)} aria-expanded={quickActionsOpen}><span>+</span>{t.new}</button>
-          <select className="locale-select" value={locale} onChange={event => setLocale(event.target.value as Locale)} aria-label={t.language}><option value="en">{t.english}</option><option value="ru">{t.russian}</option></select>
-          <button className="avatar-button" onClick={() => shell.openReference({ kind: 'settings', id: 'settings', label: t.settings })} aria-label={t.settings}>MK</button>
-        </div>
-        {quickActionsOpen && <QuickActions t={t} onChoose={action => { setQuickActionsOpen(false); shell.openReference(action, { allowDuplicate: true }); }} />}
-      </header>
-      <div className="workspace-toolbar">
-        <button className="workspace-switcher" onClick={() => setWorkspaceOpen(value => !value)} aria-expanded={workspaceOpen}><span className="workspace-dot"/><span>{snapshot.workspace.name}</span><span className="chevron">âŒ„</span></button>
-        <div className="toolbar-path">{currentTab?.object ? <><span>{currentTab.object.kind}</span><b>â€º</b><strong>{currentTab.title}</strong></> : <span>{t.home}</span>}</div>
-        <div className="toolbar-actions"><span className="privacy-mark">â—‰ {t.local}</span><button className="toolbar-button" onClick={() => shell.toggleContextSidebar()}>{t.context}</button><button className="toolbar-button" onClick={() => shell.toggleAgentPanel()}>{t.agent}</button></div>
-        {workspaceOpen && <WorkspaceMenu shell={shell} t={t} onClose={() => setWorkspaceOpen(false)} />}
-      </div>
-      <TabStrip shell={shell} tabs={snapshot.workspace.tabs} currentTab={currentTab} t={t} />
-      <div className="desktop-body" style={{ gridTemplateColumns: `${shell.chromeState.contextSidebarOpen ? 'minmax(0, 1fr)' : 'minmax(0, 1fr)'}${shell.chromeState.contextSidebarOpen ? ' minmax(220px, ' + shell.chromeState.contextSidebarWidth + 'px)' : ''}${shell.chromeState.agentPanelOpen ? ' minmax(300px, ' + shell.chromeState.agentPanelWidth + 'px)' : ''}` }}>
-        <main className="pane-host" aria-label={t.workspace} onDragOver={event => event.preventDefault()} onDrop={event => handleDrop(event, shell, draggedRef, shell.currentPaneId)}>
-          <PaneTree node={snapshot.workspace.paneTree} shell={shell} t={t} contextRegistry={contextRegistry} onDragRef={setDraggedRef} />
-        </main>
-        {shell.chromeState.contextSidebarOpen && <ContextSidebar data={context} t={t} />}
-        {shell.chromeState.agentPanelOpen && <AgentBotPanel shell={shell} t={t} activeTab={currentTab} prefill={agentPrefill} onClose={() => shell.toggleAgentPanel(false)} />}
-      </div>
-      <footer className="status-bar"><span><i className="status-light"/> {t.status}</span><span>{t.saved}</span><span>AI Â· {t.mode}</span><span className="status-spacer"/><button onClick={() => shell.toggleContextSidebar()}>{shell.chromeState.contextSidebarOpen ? 'â–£' : 'â–¡'} {t.context}</button><button onClick={() => shell.toggleAgentPanel()}>{shell.chromeState.agentPanelOpen ? 'âœ¦' : 'âœ§'} {t.agent}</button></footer>
-      {activityEditorOpen && <ActivityEditor shell={shell} t={t} onClose={() => setActivityEditorOpen(false)} />}
-    </div>
-    {paletteOpen && <CommandPalette commands={commands} t={t} onRun={runCommand} onClose={() => setPaletteOpen(false)} />}
-  </div>;
-}
-
-function isMac(): boolean { return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform); }
-
-function findCommand(commands: ShellCommand[], input: string): ShellCommand | undefined {
-  const normalized = input.trim().toLowerCase();
-  return commands.find(command => command.id === normalized || command.label.toLowerCase() === normalized || command.keywords?.some(keyword => keyword === normalized));
-}
-
-type DesktopMailInput = { readonly type: 'OPEN' | 'COMPOSE' | 'REFRESH' } | { readonly type: 'SEARCH'; readonly query: string };
-function parseDesktopMailInput(value: string): DesktopMailInput | undefined {
-  if (/^(?:open|Ğ¾Ñ‚ĞºÑ€Ñ‹Ñ‚ÑŒ)\s+(?:external\s+)?(?:mail|email|Ğ¿Ğ¾Ñ‡Ñ‚Ñƒ|Ğ¿Ğ¸ÑÑŒĞ¼Ğ°)$/i.test(value)) return { type: 'OPEN' };
-  if (/^(?:compose|write|Ğ½Ğ°Ğ¿Ğ¸ÑĞ°Ñ‚ÑŒ)\s+(?:external\s+)?(?:mail|email|Ğ¿Ğ¸ÑÑŒĞ¼Ğ¾)$/i.test(value)) return { type: 'COMPOSE' };
-  if (/^(?:refresh|sync|Ğ¾Ğ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ|ÑĞ¸Ğ½Ñ…Ñ€Ğ¾Ğ½Ğ¸Ğ·Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ)\s+(?:external\s+)?(?:mail|email|Ğ¿Ğ¾Ñ‡Ñ‚Ñƒ)$/i.test(value)) return { type: 'REFRESH' };
-  const search = value.match(/^(?:mail|email|Ğ¿Ğ¾Ñ‡Ñ‚Ğ°|Ğ¿Ğ¸ÑÑŒĞ¼Ğ°)\s+(?:search|find|Ğ½Ğ°Ğ¹Ñ‚Ğ¸)?\s*(.+)$/i);
-  return search?.[1]?.trim() ? { type: 'SEARCH', query: search[1].trim() } : undefined;
-}
-
-type DesktopMapsInput = { readonly type: 'OPEN_MAP' | 'SHOW_MY_LOCATION' | 'PLAN_ROUTE'; readonly query?: string } | { readonly type: 'SEARCH_PLACE'; readonly query: string };
-function parseDesktopMapsInput(value: string): DesktopMapsInput | undefined {
-  if (/^(?:open|Ğ¾Ñ‚ĞºÑ€Ñ‹Ñ‚ÑŒ)\s+(?:the\s+)?(?:map|maps|ĞºĞ°Ñ€Ñ‚Ñƒ|ĞºĞ°Ñ€Ñ‚Ñ‹)$/i.test(value)) return { type: 'OPEN_MAP' };
-  if (/^(?:show|Ğ¿Ğ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ)\s+(?:my\s+)?(?:location|position|Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ|Ğ¼Ğ¾Ñ Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ)$/i.test(value)) return { type: 'SHOW_MY_LOCATION' };
-  const search = value.match(/^(?:find|search|Ğ½Ğ°Ğ¹Ñ‚Ğ¸|Ğ¿Ğ¾Ğ¸ÑĞº(?:\s+Ğ¼ĞµÑÑ‚)?)\s+(.+)$/i);
-  if (search?.[1]) return { type: 'SEARCH_PLACE', query: search[1].trim() };
-  const route = value.match(/^(?:route|directions|Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚|Ğ¿Ğ¾ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑŒ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚(?:\s+Ğ´Ğ¾)?)\s+(.+)$/i);
-  if (route?.[1]) return { type: 'PLAN_ROUTE', query: route[1].trim() };
-  return undefined;
-}
-
-function ActivityBar({ items, t, onOpen, onCustomize }: { items: ActivityBarItem[]; t: Copy; onOpen: (item: ActivityBarItem) => void; onCustomize: () => void }) {
-  return <aside className="activity-bar" aria-label={t.workspace}><div className="activity-logo">âœ¦</div><nav>{items.map(item => <button key={item.id} className="activity-item" onClick={() => onOpen(item)} title={item.extensionSlot ? t.extensionSlot : item.label}><span className="activity-icon">{item.icon}</span><span>{item.label}</span></button>)}</nav><div className="activity-bottom"><button className="activity-item subtle" onClick={onCustomize} title={t.customize}><span className="activity-icon">â‹¯</span><span>{t.configure}</span></button></div></aside>;
-}
-
-function TabStrip({ shell, tabs, currentTab, t }: { shell: DesktopShellController; tabs: DesktopTab[]; currentTab?: DesktopTab; t: Copy }) {
-  return <div className="tab-strip" role="tablist" aria-label="Keystone tabs">{tabs.map(tab => <div key={tab.id} className={`tab${currentTab?.id === tab.id ? ' active' : ''}${tab.pinned ? ' pinned' : ''}${tab.dirty ? ' dirty' : ''}${tab.locked ? ' locked' : ''}`} role="tab" aria-selected={currentTab?.id === tab.id} draggable onDragStart={event => event.dataTransfer.setData('application/x-keystone-tab', tab.id)} onClick={() => shell.selectTab(shell.currentPaneId, tab.id)}><span className="tab-kind">{tabIcon(tab.kind)}</span><span className="tab-title">{tab.title}</span>{tab.locked && <span className="tab-lock">!</span>}{tab.dirty && <span className="tab-dirty">â€¢</span>}<button className="tab-menu-button" onClick={event => { event.stopPropagation(); shell.closeTab(tab.id, true); }} aria-label={`${t.close}: ${tab.title}`}>Ã—</button></div>)}<button className="tab-add" onClick={() => shell.openReference({ kind: 'home', id: 'new-tab', label: t.home }, { allowDuplicate: true })} aria-label={t.open}>+</button><div className="tab-spacer"/><button className="tab-action" onClick={() => shell.reopenClosedTab()} title={t.restore}>â†¶</button><button className="tab-action" onClick={() => shell.pinTab()} title={currentTab?.pinned ? t.unpin : t.pin}>{currentTab?.pinned ? 'â˜…' : 'â˜†'}</button></div>;
-}
-
-function PaneTree({ node, shell, t, contextRegistry, onDragRef }: { node: PaneNode; shell: DesktopShellController; t: Copy; contextRegistry: ContextProviderRegistry; onDragRef: (ref?: KeystoneObjectReference) => void }) {
-  if (node.type === 'leaf') return <PaneView node={node} shell={shell} t={t} contextRegistry={contextRegistry} onDragRef={onDragRef} />;
-  return <div className={`pane-split ${node.orientation}`} style={{ ['--split-ratio' as string]: node.ratio }}><div className="pane-child"><PaneTree node={node.first} shell={shell} t={t} contextRegistry={contextRegistry} onDragRef={onDragRef} /></div><SplitDivider node={node} shell={shell} /><div className="pane-child"><PaneTree node={node.second} shell={shell} t={t} contextRegistry={contextRegistry} onDragRef={onDragRef} /></div></div>;
-}
-
-function SplitDivider({ node, shell }: { node: Extract<PaneNode, { type: 'split' }>; shell: DesktopShellController }) {
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const host = event.currentTarget.parentElement;
-    if (!host) return;
-    const bounds = host.getBoundingClientRect();
-    const update = (move: PointerEvent) => {
-      const ratio = node.orientation === 'vertical' ? (move.clientX - bounds.left) / Math.max(1, bounds.width) : (move.clientY - bounds.top) / Math.max(1, bounds.height);
-      shell.resizePane(node.id, ratio);
-    };
-    const stop = () => { window.removeEventListener('pointermove', update); window.removeEventListener('pointerup', stop); };
-    window.addEventListener('pointermove', update);
-    window.addEventListener('pointerup', stop, { once: true });
-  };
-  return <div className="split-divider" role="separator" aria-orientation={node.orientation === 'vertical' ? 'vertical' : 'horizontal'} aria-label="Resize pane" onPointerDown={onPointerDown} />;
-}
-
-function PaneView({ node, shell, t, contextRegistry, onDragRef }: { node: Extract<PaneNode, { type: 'leaf' }>; shell: DesktopShellController; t: Copy; contextRegistry: ContextProviderRegistry; onDragRef: (ref?: KeystoneObjectReference) => void }) {
-  const tabs = node.tabIds.flatMap(tabId => { const tab = shell.tabs.get(tabId); return tab ? [tab] : []; });
-  const active = node.activeTabId ? shell.tabs.get(node.activeTabId) : tabs[0];
-  return <section className={`pane-view${shell.currentPaneId === node.id ? ' focused' : ''}`} onClick={() => shell.focusPane(node.id)} onDragOver={event => event.preventDefault()} onDrop={event => handleDrop(event, shell, undefined, node.id)}>
-    <div className="pane-toolbar"><div className="pane-tab-labels">{tabs.map(tab => <button key={tab.id} className={active?.id === tab.id ? 'pane-tab active' : 'pane-tab'} onClick={event => { event.stopPropagation(); shell.selectTab(node.id, tab.id); }}>{tabIcon(tab.kind)} {tab.title}</button>)}</div><div className="pane-actions"><button onClick={event => { event.stopPropagation(); shell.splitPane('horizontal', node.id); }} title={t.splitHorizontal}>â†•</button><button onClick={event => { event.stopPropagation(); shell.splitPane('vertical', node.id); }} title={t.splitVertical}>â†”</button><button onClick={event => { event.stopPropagation(); shell.closePane(node.id); }} title={t.close}>Ã—</button></div></div>
-    <div className="pane-content">{active ? <TabSurface tab={active} shell={shell} t={t} contextRegistry={contextRegistry} onDragRef={onDragRef} /> : <EmptyPane t={t} shell={shell} />}</div>
-  </section>;
-}
-
-function TabSurface({ tab, shell, t, contextRegistry, onDragRef }: { tab: DesktopTab; shell: DesktopShellController; t: Copy; contextRegistry: ContextProviderRegistry; onDragRef: (ref?: KeystoneObjectReference) => void }) {
-  const ref = tab.object;
-  const dragRef = ref ? { onDragStart: (event: React.DragEvent) => { event.dataTransfer.setData('application/x-keystone-ref', JSON.stringify(ref)); onDragRef(ref); } } : undefined;
-  if (tab.locked) return <div className="locked-surface"><span className="locked-icon">âŒ</span><h2>{t.locked}</h2><p>{t.privacy}</p><button className="secondary-button" onClick={() => shell.closeTab(tab.id, true)}>{t.close}</button></div>;
-  if (tab.kind === 'home') return <HomeSurface shell={shell} t={t} />;
-  if (tab.kind === 'inbox') return <InboxSurface t={t} />;
-  if (tab.kind === 'capture') return <CaptureSurface shell={shell} t={t} />;
-  if (tab.kind === 'agent') return <AgentSurface shell={shell} t={t} />;
-  if (tab.kind === 'browser') return <BrowserSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'subscriptions') return <SubscriptionsSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'web-library') return <WebLibrarySurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'workboard') return <WorkboardSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'tasks') return <TasksSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'contacts') return <ContactsSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'space' && tab.object?.id === 'collaboration') return <CollaborationSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'settings') return tab.object?.id === 'skills' ? <SkillsSurface shell={shell} t={t} /> : tab.object?.id === 'plugins' ? <PluginsSurface t={t} /> : tab.object?.id === 'continuity' ? <ContinuitySurface shell={shell} t={t} /> : tab.object?.id === 'nearby' ? <NearbyExchangeSurface shell={shell} t={t} /> : <SettingsSurface shell={shell} t={t} />;
-  if (tab.kind === 'vault') return <VaultSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'graph') return <VaultGraphSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'canvas') return <VaultCanvasSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'calendar') return <CalendarSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'map') return <MapsSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'mail') return <MailSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'file') return <FilesSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'document') return <DocumentsSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'publication') return <PublicationSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'media' && tab.object?.id === 'calls') return <CallsSurface t={t} />;
-  if (tab.kind === 'media') return <PhotosSurface tab={tab} shell={shell} t={t} />;
-  return <div className="object-surface" draggable={Boolean(ref)} {...dragRef}>
-    <div className="surface-kicker"><span className="surface-icon">{tabIcon(tab.kind)}</span><span>{tab.kind}</span><span className="surface-badge">{t.local}</span></div>
-    <h1>{tab.title}</h1>
-    <p className="surface-description">{descriptionFor(tab, t)}</p>
-    {ref && <div className="object-id"><span>{t.objectId}</span><code>{ref.id}</code></div>}
-    <div className="surface-grid"><button className="surface-card" onClick={() => shell.toggleAgentPanel(true)}><span>âœ¦</span><strong>{t.askAbout}</strong><small>{t.agentHint}</small></button><button className="surface-card" onClick={() => shell.setNotice(`${t.references}: ${tab.title}`)}><span>â†—</span><strong>{t.references}</strong><small>{t.related}</small></button></div>
-    <TypedReferenceDock tab={tab} shell={shell} t={t} />
-  </div>;
-}
-
-type DesktopFilesPage = Awaited<ReturnType<DesktopFilesRuntime['listFiles']>>;
-
-function FilesSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopFilesRuntime | undefined>(getDesktopFilesRuntime);
-  const [folders, setFolders] = React.useState<readonly DesktopFileFolder[]>([]);
-  const [selectedFolderId, setSelectedFolderId] = React.useState<string>();
-  const [page, setPage] = React.useState<DesktopFilesPage>();
-  const [conflicts, setConflicts] = React.useState<Awaited<ReturnType<DesktopFilesRuntime['conflicts']>>>([]);
-  const [query, setQuery] = React.useState('');
-  const [searchResults, setSearchResults] = React.useState<Awaited<ReturnType<DesktopFilesRuntime['search']>>>([]);
-  const [error, setError] = React.useState('');
-  const [version, setVersion] = React.useState(0);
-  const ru = t.files === 'Ğ¤Ğ°Ğ¹Ğ»Ñ‹';
-
-  React.useEffect(() => subscribeDesktopFilesRuntime(() => setRuntime(getDesktopFilesRuntime())), []);
-  React.useEffect(() => {
-    if (!runtime) return undefined;
-    const unsubscribe = runtime.subscribe?.(() => setVersion(value => value + 1));
-    setVersion(value => value + 1);
-    return unsubscribe;
-  }, [runtime]);
-  React.useEffect(() => {
-    if (!runtime) { setFolders([]); setSelectedFolderId(undefined); return; }
-    const next = runtime.folders();
-    setFolders(next);
-    const tabFolderId = tab.object?.id && next.some(folder => folder.id === tab.object?.id) ? tab.object.id : undefined;
-    setSelectedFolderId(current => tabFolderId ?? (current && next.some(folder => folder.id === current) ? current : next[0]?.id));
-  }, [runtime, tab.object?.id, version]);
-  React.useEffect(() => {
-    if (!runtime || !selectedFolderId) { setPage(undefined); setConflicts([]); return undefined; }
-    let active = true;
-    void Promise.all([
-      runtime.listFiles(selectedFolderId as DesktopFileFolder['id'], { limit: 128 }),
-      runtime.conflicts(selectedFolderId as DesktopFileFolder['id']),
-    ]).then(([nextPage, nextConflicts]) => { if (active) { setPage(nextPage); setConflicts(nextConflicts); setError(''); } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { active = false; };
-  }, [runtime, selectedFolderId, version]);
-  React.useEffect(() => {
-    if (!runtime || !query.trim()) { setSearchResults([]); return undefined; }
-    let active = true;
-    void runtime.search(query.trim(), { limit: 64 }).then(result => { if (active) setSearchResults(result); }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { active = false; };
-  }, [runtime, query, version]);
-
-  const run = async (operation: () => Promise<unknown>) => {
-    try { await operation(); setError(''); setVersion(value => value + 1); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const createFolder = async () => {
-    if (!runtime?.createFolder) return;
-    const name = window.prompt(ru ? 'Ğ˜Ğ¼Ñ Ğ½Ğ¾Ğ²Ğ¾Ğ¹ Ğ¿Ğ°Ğ¿ĞºĞ¸' : 'New folder name');
-    if (!name?.trim()) return;
-    await run(async () => { await runtime.createFolder!({ name: name.trim(), ...(selectedFolderId ? { parentFolderId: selectedFolderId as DesktopFileFolder['id'] } : {}) }); });
-  };
-  const selectedFolder = folders.find(folder => folder.id === selectedFolderId);
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â–£</span><span>{t.files}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.files}</h1><p className="surface-description">{ru ? 'Files host adapter ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.' : 'The Files host adapter is not connected.'}</p><div className="adapter-note"><span>âŒ</span><div><strong>{ru ? 'Ğ¯Ğ²Ğ½Ğ¾Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡ĞµĞ½Ğ¸Ğµ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾Ğ¹ Ğ¿Ğ°Ğ¿ĞºĞ¸' : 'Explicit local-folder binding'}</strong><small>{ru ? 'Desktop Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ĞµÑ‚ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ bounded binding Ğ¾Ñ‚ native host; Ğ¿Ñ€Ğ¾Ğ¸Ğ·Ğ²Ğ¾Ğ»ÑŒĞ½Ñ‹Ğ¹ scan home Ğ½Ğµ Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑĞµÑ‚ÑÑ.' : 'Desktop receives only a bounded binding from the native host; Keystone never scans the home directory implicitly.'}</small></div></div></div>;
-
-  return <div className="object-surface">
-    <div className="surface-kicker"><span className="surface-icon">â–£</span><span>{t.files}</span><span className="surface-badge">LOCAL-FIRST</span></div>
-    <div className="web-library-heading"><div><h1>{t.files}</h1><p className="surface-description">{ru ? 'ĞĞ±Ñ‰Ğ¸Ğµ Ğ¿Ğ°Ğ¿ĞºĞ¸, Ğ²ĞµÑ€ÑĞ¸Ğ¸ Ğ¸ on-demand content Ñ‡ĞµÑ€ĞµĞ· ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰Ğ¸Ğ¹ content-addressed ÑĞ»Ğ¾Ğ¹.' : 'Shared folders, revisions and on-demand content over the existing content-addressed layer.'}</p></div><div className="web-library-actions"><button className="secondary-button" onClick={() => setVersion(value => value + 1)}>{t.refresh}</button><button className="primary-button" onClick={() => void createFolder()}>ï¼‹ {ru ? 'ĞŸĞ°Ğ¿ĞºĞ°' : 'Folder'}</button></div></div>
-    <div className="web-library-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'Ğ˜ÑĞºĞ°Ñ‚ÑŒ Ğ¿Ğ¾ Ğ¸Ğ¼ĞµĞ½Ğ°Ğ¼ Ñ„Ğ°Ğ¹Ğ»Ğ¾Ğ² Ğ¸ Ğ¿Ğ°Ğ¿Ğ¾Ğºâ€¦' : 'Search file and folder namesâ€¦'} aria-label={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Ñ„Ğ°Ğ¹Ğ»Ğ¾Ğ²' : 'File search'} /><span>{ru ? `${folders.length} Ğ¿Ğ°Ğ¿Ğ¾Ğº` : `${folders.length} folders`}</span></div>
-    {error ? <span className="maps-notice">{error}</span> : null}
-    {query.trim() ? <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'Ğ ĞµĞ·ÑƒĞ»ÑŒÑ‚Ğ°Ñ‚Ñ‹ Ğ¿Ğ¾Ğ¸ÑĞºĞ°' : 'Search results'}</span>{searchResults.length ? searchResults.map(result => <button key={result.entry.id} className="web-library-entry" onClick={() => setSelectedFolderId(result.folder.id)}><strong>{result.entry.name}</strong><small>{result.folder.name} Â· {Math.round(result.score * 100)}%</small></button>) : <div className="web-library-empty">{ru ? 'Ğ¡Ğ¾Ğ²Ğ¿Ğ°Ğ´ĞµĞ½Ğ¸Ğ¹ Ğ½ĞµÑ‚.' : 'No matches.'}</div>}</div><div className="web-library-reader"><div className="web-library-reader-empty"><div><span>âŒ•</span><p>{ru ? 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ¿Ğ°Ğ¿ĞºÑƒ, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ Ğ¾Ñ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ ÑĞ¿Ğ¸ÑĞ¾Ğº.' : 'Choose a folder to open its local listing.'}</p></div></div></div></div> : <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'ĞŸĞ°Ğ¿ĞºĞ¸' : 'Folders'}</span>{folders.length ? folders.map(folder => <button key={folder.id} className={`web-library-entry${folder.id === selectedFolderId ? ' active' : ''}`} onClick={() => setSelectedFolderId(folder.id)}><strong>{folder.name}</strong><small>{folder.scope} Â· epoch {folder.epoch}</small></button>) : <div className="web-library-empty">{ru ? 'ĞŸĞ°Ğ¿Ğ¾Ğº Ğ¿Ğ¾ĞºĞ° Ğ½ĞµÑ‚.' : 'No folders yet.'}</div>}<div className="adapter-note"><span>âŒ</span><div><strong>{ru ? 'Filesystem binding' : 'Filesystem binding'}</strong><small>{ru ? 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ°ĞµÑ‚ÑÑ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ ÑĞ²Ğ½Ñ‹Ğ¼ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸ĞµĞ¼ Ğ²Ğ»Ğ°Ğ´ĞµĞ»ÑŒÑ†Ğ° Ñ‡ĞµÑ€ĞµĞ· native host.' : 'Attached only by an explicit owner action through the native host.'}</small></div></div></div><div className="web-library-reader">{selectedFolder ? <><div className="web-library-reader-heading"><div><h2>{selectedFolder.name}</h2><p>{selectedFolder.scope} Â· {selectedFolder.revision} metadata revision Â· epoch {selectedFolder.epoch}</p></div>{runtime.filesystemStatus?.(selectedFolder.id) ? <span className="surface-badge">{runtime.filesystemStatus(selectedFolder.id)?.state}</span> : null}</div><div className="web-library-entry-list">{page?.items.length ? page.items.map(file => <div key={file.fileId} className="surface-card"><strong>{file.entry.name}</strong><small>{file.revision.mimeType} Â· {formatDesktopBytes(file.revision.size)} Â· {file.revisionCount} {ru ? 'Ğ²ĞµÑ€ÑĞ¸Ğ¹' : 'revisions'}</small><small>{ru ? 'Ğ”Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾ÑÑ‚ÑŒ' : 'Availability'}: {file.availability} Â· {file.revision.contentId}</small><div className="web-library-actions">{runtime.keepOnDevice ? <button className="secondary-button" onClick={() => void run(() => runtime.keepOnDevice!(selectedFolder.id, file.fileId))}>{ru ? 'Ğ¥Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ' : 'Keep on device'}</button> : null}{runtime.trash ? <button className="secondary-button" onClick={() => void run(() => runtime.trash!(file.entry.id, true))}>{ru ? 'Ğ’ ĞºĞ¾Ñ€Ğ·Ğ¸Ğ½Ñƒ' : 'Move to trash'}</button> : null}</div></div>) : <div className="web-library-empty">{ru ? 'Ğ¤Ğ°Ğ¹Ğ»Ğ¾Ğ² Ğ² ÑÑ‚Ğ¾Ğ¹ Ğ¿Ğ°Ğ¿ĞºĞµ Ğ½ĞµÑ‚.' : 'No files in this folder.'}</div>}</div>{page && page.total > page.items.length ? <p className="web-library-notice">{ru ? `ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ğ½Ğ° Ğ¿ĞµÑ€Ğ²Ğ°Ñ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ° Ğ¸Ğ· ${page.total} Ğ·Ğ°Ğ¿Ğ¸ÑĞµĞ¹.` : `Showing the first page of ${page.total} entries.`}</p> : null}{conflicts.length ? <div className="adapter-note"><span>!</span><div><strong>{ru ? `ĞÑ‚ĞºÑ€Ñ‹Ñ‚Ñ‹Ñ… ĞºĞ¾Ğ½Ñ„Ğ»Ğ¸ĞºÑ‚Ğ¾Ğ²: ${conflicts.length}` : `${conflicts.length} open conflicts`}</strong><small>{conflicts.slice(0, 3).map(conflict => `${conflict.kind}: ${conflict.details}`).join(' Â· ')}</small></div></div> : null}</> : <div className="web-library-reader-empty"><div><span>â–£</span><p>{ru ? 'Ğ¡Ğ¾Ğ·Ğ´Ğ°Ğ¹Ñ‚Ğµ Ğ¸Ğ»Ğ¸ Ğ²Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ¿Ğ°Ğ¿ĞºÑƒ.' : 'Create or choose a folder.'}</p></div></div>}</div></div>}
-    <TypedReferenceDock tab={tab} shell={shell} t={t} />
-  </div>;
-}
-
-function formatDesktopBytes(value: number): string { if (value < 1024) return `${value} B`; if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`; if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`; return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`; }
-
-type DesktopDocumentFile = Awaited<ReturnType<DesktopDocumentsRuntime['listSupportedFiles']>>[number];
-type DesktopDocumentReader = Awaited<ReturnType<DesktopDocumentsRuntime['open']>>;
-type DesktopDocumentRenderedPage = Awaited<ReturnType<DesktopDocumentReader['renderPage']>>;
-type DesktopDocumentSearchResult = Awaited<ReturnType<DesktopDocumentsRuntime['search']>>[number];
-type DesktopDocumentAnnotation = Awaited<ReturnType<DesktopDocumentsRuntime['listAnnotations']>>[number];
-
-function DocumentsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopDocumentsRuntime | undefined>(getDesktopDocumentsRuntime);
-  const [files, setFiles] = React.useState<readonly DesktopDocumentFile[]>([]);
-  const [recent, setRecent] = React.useState<readonly Awaited<ReturnType<DesktopDocumentsRuntime['recent']>>[number][]>([]);
-  const [selectedFileId, setSelectedFileId] = React.useState<string>();
-  const [reader, setReader] = React.useState<DesktopDocumentReader>();
-  const [pageNumber, setPageNumber] = React.useState(1);
-  const [rendered, setRendered] = React.useState<DesktopDocumentRenderedPage>();
-  const [imageUrl, setImageUrl] = React.useState<string>();
-  const [query, setQuery] = React.useState('');
-  const [results, setResults] = React.useState<readonly DesktopDocumentSearchResult[]>([]);
-  const [annotations, setAnnotations] = React.useState<readonly DesktopDocumentAnnotation[]>([]);
-  const [ocr, setOcr] = React.useState<Awaited<ReturnType<DesktopDocumentsRuntime['recognizePage']>>>();
-  const [ocrJob, setOcrJob] = React.useState<Awaited<ReturnType<DesktopDocumentsRuntime['recognizeDocument']>>>();
-  const [note, setNote] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.documents === 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹';
-  const labels = ru
-    ? { subtitle: 'PDF, EPUB, Markdown Ğ¸ Ñ‚ĞµĞºÑÑ‚ Ğ¿Ğ¾Ğ²ĞµÑ€Ñ… ĞºĞ°Ğ½Ğ¾Ğ½Ğ¸Ñ‡ĞµÑĞºĞ¸Ñ… Files Â· offline-first', search: 'Ğ˜ÑĞºĞ°Ñ‚ÑŒ Ğ² Ğ´Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ğ°Ñ…', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ', previous: 'ĞĞ°Ğ·Ğ°Ğ´', next: 'Ğ”Ğ°Ğ»ĞµĞµ', bookmark: 'Ğ—Ğ°ĞºĞ»Ğ°Ğ´ĞºĞ°', addNote: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºÑƒ', note: 'ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ğ°Ñ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºĞ° Ğº ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğµ', ocrPage: 'Ğ Ğ°ÑĞ¿Ğ¾Ğ·Ğ½Ğ°Ñ‚ÑŒ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ', ocrDocument: 'Ğ Ğ°ÑĞ¿Ğ¾Ğ·Ğ½Ğ°Ñ‚ÑŒ Ğ´Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚', outline: 'ĞĞ³Ğ»Ğ°Ğ²Ğ»ĞµĞ½Ğ¸Ğµ', annotations: 'ĞĞ½Ğ½Ğ¾Ñ‚Ğ°Ñ†Ğ¸Ğ¸', recent: 'ĞĞµĞ´Ğ°Ğ²Ğ½Ğ¸Ğµ', files: 'Ğ”Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ñ‹Ğµ Files', noFiles: 'ĞŸĞ¾Ğ´Ğ´ĞµÑ€Ğ¶Ğ¸Ğ²Ğ°ĞµĞ¼Ñ‹Ñ… Ğ´Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ğ¾Ğ² Ğ½ĞµÑ‚.', choose: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ´Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚ Ğ´Ğ»Ñ Ñ‡Ñ‚ĞµĞ½Ğ¸Ñ.', noRuntime: 'Documents host adapter Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ DocumentService Ñ‡ĞµÑ€ĞµĞ· native host. Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº Ğ¾ÑÑ‚Ğ°Ñ‘Ñ‚ÑÑ Ğ² canonical Files; Ğ²Ğ½ĞµÑˆĞ½ÑÑ OCR/AI Ğ·Ğ°Ğ³Ñ€ÑƒĞ·ĞºĞ° Ğ½Ğµ Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑĞµÑ‚ÑÑ.', page: 'Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ°', chapter: 'Ğ“Ğ»Ğ°Ğ²', safe: 'STATIC_SAFE', raster: 'RASTER', saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', noResults: 'Ğ¡Ğ¾Ğ²Ğ¿Ğ°Ğ´ĞµĞ½Ğ¸Ğ¹ Ğ½ĞµÑ‚.', ocrDone: 'OCR ÑĞ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ° Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾.' }
-    : { subtitle: 'PDF, EPUB, Markdown and text over canonical Files Â· offline-first', search: 'Search documents', open: 'Open', previous: 'Previous', next: 'Next', bookmark: 'Bookmark', addNote: 'Save note', note: 'Private page note', ocrPage: 'Recognize page', ocrDocument: 'Recognize document', outline: 'Outline', annotations: 'Annotations', recent: 'Recent', files: 'Available Files', noFiles: 'No supported documents.', choose: 'Choose a document to read.', noRuntime: 'Documents host adapter is not connected.', boundary: 'Connect DocumentService through the native host. The source remains in canonical Files; no external OCR/AI upload is performed.', page: 'Page', chapter: 'chapters', safe: 'STATIC_SAFE', raster: 'RASTER', saved: 'Saved locally', noResults: 'No matches.', ocrDone: 'OCR saved locally.' };
-
-  React.useEffect(() => subscribeDesktopDocumentsRuntime(() => setRuntime(getDesktopDocumentsRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setFiles([]); setRecent([]); return; }
-    try {
-      const [nextFiles, nextRecent] = await Promise.all([runtime.listSupportedFiles(), runtime.recent()]);
-      setFiles(nextFiles); setRecent(nextRecent);
-      setSelectedFileId(current => tab.object?.id && nextFiles.some(file => file.fileId === tab.object?.id) ? tab.object.id : current && nextFiles.some(file => file.fileId === current) ? current : nextFiles[0]?.fileId);
-      setNotice('');
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  }, [runtime, tab.object?.id]);
-  React.useEffect(() => { void refresh(); return () => { reader?.close(); }; }, [refresh]);
-  React.useEffect(() => {
-    if (!runtime) return undefined;
-    const unsubscribe = runtime.subscribe?.(() => { void refresh(); });
-    return unsubscribe;
-  }, [refresh, runtime]);
-  React.useEffect(() => {
-    if (!reader || !reader.pages.length) { setRendered(undefined); setImageUrl(undefined); return undefined; }
-    const page = Math.max(1, Math.min(pageNumber, reader.pages.length));
-    if (page !== pageNumber) { setPageNumber(page); return undefined; }
-    let active = true;
-    void reader.renderPage(page, { scale: 1 }).then(value => { if (active) { setRendered(value); setImageUrl(value.imageBytes && value.mimeType ? documentBytesToDataUrl(value.imageBytes, value.mimeType) : undefined); } }).catch(reason => { if (active) setNotice(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { active = false; };
-  }, [reader, pageNumber]);
-
-  const openFile = async (fileId: string) => {
-    if (!runtime) return;
-    try {
-      const nextReader = await runtime.open(fileId);
-      const [nextProgress, nextAnnotations] = await Promise.all([runtime.progress(nextReader.document.documentId), runtime.listAnnotations(nextReader.document.documentId)]);
-      reader?.close(); setReader(nextReader); setAnnotations(nextAnnotations); setOcr(undefined); setOcrJob(undefined);
-      const chapterIndex = nextProgress?.locator.chapterId ? nextReader.pages.findIndex(page => page.locator.chapterId === nextProgress.locator.chapterId) : -1;
-      setPageNumber(Math.max(1, Math.min(nextReader.pages.length, nextProgress?.locator.page ?? (chapterIndex >= 0 ? chapterIndex + 1 : 1)))); setNotice('');
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const currentPage = reader?.pages[pageNumber - 1];
-  const saveProgress = async () => { if (!runtime || !reader || !currentPage) return; try { await runtime.saveProgress(reader.document.documentId, currentPage.locator); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const addBookmark = async () => { if (!runtime || !reader || !currentPage) return; try { const value = await runtime.addBookmark({ documentId: reader.document.documentId, locator: currentPage.locator, label: currentPage.text.slice(0, 80) }); setAnnotations(current => [...current.filter(item => item.id !== value.id), value]); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const addNote = async () => { if (!runtime || !reader || !currentPage || !note.trim()) return; try { const value = await runtime.addNote({ documentId: reader.document.documentId, locator: currentPage.locator, body: note.trim() }); setAnnotations(current => [...current.filter(item => item.id !== value.id), value]); setNote(''); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const runSearch = async (event: React.FormEvent) => { event.preventDefault(); if (!runtime || !query.trim()) { setResults([]); return; } try { setResults(reader ? await reader.search(query.trim(), { limit: 64 }) : await runtime.search(query.trim(), { limit: 64 })); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const recognizePage = async () => { if (!runtime || !reader || !currentPage) return; try { setOcr(await runtime.recognizePage(reader.document.documentId, pageNumber)); setNotice(labels.ocrDone); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const recognizeDocument = async () => { if (!runtime || !reader) return; try { const value = await runtime.recognizeDocument(reader.document.documentId, { onProgress: setOcrJob }); setOcrJob(value); setNotice(labels.ocrDone); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â–¥</span><span>{t.documents}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.documents}</h1><p className="surface-description">{labels.noRuntime}</p><div className="adapter-note"><span>âŒ</span><div><strong>{ru ? 'Ğ‘ĞµĞ·Ğ¾Ğ¿Ğ°ÑĞ½Ğ°Ñ Ğ³Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ° Reader' : 'Safe Reader boundary'}</strong><small>{labels.boundary}</small></div></div></div>;
-
-  return <div className="object-surface documents-surface">
-    <div className="surface-kicker"><span className="surface-icon">â–¥</span><span>{t.documents}</span><span className="surface-badge">LOCAL-FIRST</span></div>
-    <div className="web-library-heading"><div><h1>{reader?.document.title ?? t.documents}</h1><p className="surface-description">{labels.subtitle}</p></div><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button></div>
-    <form className="web-library-toolbar" onSubmit={runSearch}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><button className="primary-button" type="submit">âŒ•</button><span>{files.length} Â· {recent.length} {labels.recent.toLowerCase()}</span></form>
-    {notice ? <p className="web-library-notice">{notice}</p> : null}
-    <div className="web-library-layout documents-layout">
-      <div className="web-library-list"><span className="section-label">{labels.files}</span>{files.length ? files.map(file => <button key={file.fileId} className={`web-library-entry${file.fileId === selectedFileId ? ' active' : ''}`} onClick={() => { setSelectedFileId(file.fileId); void openFile(file.fileId); }}><strong>{file.filename}</strong><small>{file.mimeType} Â· {formatDesktopBytes(file.size)}</small></button>) : <div className="web-library-empty">{labels.noFiles}</div>}{recent.length ? <><span className="section-label">{labels.recent}</span>{recent.slice(0, 8).map(item => <button key={item.documentId} className="web-library-entry" onClick={() => void openFile(item.file.fileId)}><strong>{item.title}</strong><small>{item.format} Â· {item.pageCount} {labels.page.toLowerCase()}</small></button>)}</> : null}<div className="adapter-note"><span>âŒ</span><div><strong>{ru ? 'ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğµ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ' : 'Private data'}</strong><small>{ru ? 'Progress Ğ¸ annotations Ğ¿Ñ€Ğ¸Ğ½Ğ°Ğ´Ğ»ĞµĞ¶Ğ°Ñ‚ Ğ²Ğ»Ğ°Ğ´ĞµĞ»ÑŒÑ†Ñƒ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ° Ğ¸ ÑĞ¸Ğ½Ñ…Ñ€Ğ¾Ğ½Ğ¸Ğ·Ğ¸Ñ€ÑƒÑÑ‚ÑÑ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ¿Ğ¾ explicit own-device Ğ¿ÑƒÑ‚Ğ¸.' : 'Progress and annotations belong to the device owner and sync only through an explicit own-device path.'}</small></div></div></div>
-      <div className="web-library-reader">{reader && currentPage ? <><div className="web-library-reader-heading"><div><h2>{reader.document.title}</h2><p>{reader.document.format} Â· {reader.document.pageCount} {labels.page.toLowerCase()} Â· {reader.document.chapterCount} {labels.chapter}</p></div><span className="surface-badge">{rendered?.mode === 'RASTER' ? labels.raster : labels.safe}</span></div><div className="web-library-reader-footer"><div className="web-library-actions"><button className="secondary-button" disabled={pageNumber <= 1} onClick={() => setPageNumber(value => Math.max(1, value - 1))}>{labels.previous}</button><span className="surface-badge">{labels.page} {pageNumber}/{reader.pages.length}</span><button className="secondary-button" disabled={pageNumber >= reader.pages.length} onClick={() => setPageNumber(value => Math.min(reader.pages.length, value + 1))}>{labels.next}</button><button className="secondary-button" onClick={() => void saveProgress()}>â†§</button><button className="secondary-button" onClick={() => void addBookmark()}>â˜† {labels.bookmark}</button></div><code>{reader.document.revision.revisionId}</code></div>{imageUrl ? <img className="document-reader-image" src={imageUrl} alt={`${reader.document.title} ${labels.page} ${pageNumber}`} /> : null}<div className="web-library-reader-content document-reader-content"><pre>{currentPage.text || (ru ? 'Ğ¢ĞµĞºÑÑ‚Ğ¾Ğ²Ñ‹Ğ¹ ÑĞ»Ğ¾Ğ¹ Ğ¾Ñ‚ÑÑƒÑ‚ÑÑ‚Ğ²ÑƒĞµÑ‚; Ğ¸ÑĞ¿Ğ¾Ğ»ÑŒĞ·ÑƒĞ¹Ñ‚Ğµ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ OCR.' : 'No text layer; use local OCR.')}</pre></div>{ocr ? <div className="adapter-note"><span>âŒ</span><div><strong>OCR Â· {ocr.engine}</strong><small>{ocr.text || (ru ? 'Ğ¢ĞµĞºÑÑ‚ Ğ½Ğµ Ñ€Ğ°ÑĞ¿Ğ¾Ğ·Ğ½Ğ°Ğ½.' : 'No text recognized.')}</small></div></div> : null}<div className="web-library-actions"><button className="secondary-button" onClick={() => void recognizePage()} disabled={currentPage.textLayer === 'EXTRACTED'}>{labels.ocrPage}</button><button className="secondary-button" onClick={() => void recognizeDocument()}>{labels.ocrDocument}</button>{ocrJob ? <span className="surface-badge">{ocrJob.state} Â· {ocrJob.completedPages}/{ocrJob.totalPages}</span> : null}</div><div className="document-note-row"><input value={note} onChange={event => setNote(event.target.value)} placeholder={labels.note}/><button className="primary-button" onClick={() => void addNote()} disabled={!note.trim()}>{labels.addNote}</button></div>{reader.outline.length ? <section className="document-section"><span className="section-label">{labels.outline}</span>{reader.outline.slice(0, 64).map(entry => <button className="document-outline-entry" key={entry.id} onClick={() => { if (entry.page) setPageNumber(entry.page); }}>{entry.title}{entry.page ? ` Â· ${labels.page} ${entry.page}` : ''}</button>)}</section> : null}<section className="document-section"><span className="section-label">{labels.annotations} Â· {annotations.length}</span>{annotations.slice(0, 32).map(annotation => <div className="document-annotation" key={annotation.id}><strong>{annotation.kind}</strong><span>{annotation.selectedText ?? annotation.body ?? annotation.label ?? ''}</span></div>)}</section></> : <div className="web-library-reader-empty"><div><span>â–¥</span><p>{labels.choose}</p></div></div>}</div>
-    </div>
-    {results.length ? <section className="document-search-results"><span className="section-label">{labels.search}</span>{results.map(result => <button key={`${result.documentId}:${result.locator.page ?? result.locator.chapterId ?? result.snippet}`} onClick={() => { if (result.locator.page) setPageNumber(result.locator.page); }}>{result.title} Â· {result.source} Â· {result.snippet}</button>)}</section> : query.trim() ? <p className="web-library-notice">{labels.noResults}</p> : null}
-    <TypedReferenceDock tab={tab} shell={shell} t={t} />
-  </div>;
-}
-
-function documentBytesToDataUrl(bytes: Uint8Array, mimeType: string): string | undefined {
-  if (typeof btoa !== 'function') return undefined;
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-  return `data:${mimeType};base64,${btoa(binary)}`;
-}
-
-type DesktopInboxView = 'ALL' | 'UNREAD' | 'NEEDS_ACTION' | 'SNOOZED' | 'ARCHIVE';
-type DesktopInboxResult = Awaited<ReturnType<DesktopInboxRuntime['inbox']['list']>>;
-
-function InboxSurface({ t }: { t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopInboxRuntime | undefined>(getDesktopInboxRuntime);
-  const [view, setView] = React.useState<DesktopInboxView>('ALL');
-  const [query, setQuery] = React.useState('');
-  const [result, setResult] = React.useState<DesktopInboxResult>();
-  const [error, setError] = React.useState('');
-  const ru = t.inbox === 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ';
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setResult(undefined); return; }
-    try { setResult(await runtime.inbox.list({ view, query: query.trim() || undefined, limit: 64 })); setError(''); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-  }, [runtime, view, query]);
-  React.useEffect(() => subscribeDesktopInboxRuntime(() => setRuntime(getDesktopInboxRuntime())), []);
-  React.useEffect(() => { if (!runtime) return undefined; const unsubscribe = runtime.inbox.subscribe(() => { void refresh(); }); void refresh(); const timer = window.setInterval(() => { void refresh(); }, 4_000); return () => { unsubscribe(); window.clearInterval(timer); }; }, [runtime, refresh]);
-  const local = async (action: 'read' | 'archive' | 'restore' | 'pin' | 'save', item: DesktopInboxResult['items'][number]) => {
-    if (!runtime) return;
-    try { if (action === 'read') await runtime.inbox.markRead(item.id, !item.organization.read); else if (action === 'archive') await runtime.inbox.archive(item.id); else if (action === 'restore') await runtime.inbox.restore(item.id); else if (action === 'pin') await runtime.inbox.pin(item.id, !item.organization.pinned); else await runtime.inbox.save(item.id, !item.organization.saved); await refresh(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const runSourceAction = async (item: DesktopInboxResult['items'][number], action: DesktopInboxResult['items'][number]['actions'][number]) => {
-    if (!runtime) return;
-    try { await runtime.inbox.executeAction({ itemId: item.id, action: action.kind, ownerConfirmed: true, send: false }); await refresh(); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âœ‰</span><span>{t.inbox}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.inbox}</h1><p className="surface-description">{ru ? 'Universal Inbox host adapter ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.' : 'The Universal Inbox host adapter is not connected.'}</p></div>;
-  return <div className="object-surface inbox-surface">
-    <div className="surface-kicker"><span className="surface-icon">âœ‰</span><span>{t.inbox}</span><span className="surface-badge">LOCAL PROJECTION</span></div>
-    <div className="surface-heading"><div><h1>{t.inbox}</h1><p className="surface-description">{ru ? 'Ğ•Ğ´Ğ¸Ğ½Ğ°Ñ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ°Ñ Ğ¿Ñ€Ğ¾ĞµĞºÑ†Ğ¸Ñ: Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ¸ Ğ¾ÑÑ‚Ğ°ÑÑ‚ÑÑ authoritative, Ğ¾Ñ€Ğ³Ğ°Ğ½Ğ¸Ğ·Ğ°Ñ†Ğ¸Ñ â€” Ğ½Ğ° ÑÑ‚Ğ¾Ğ¼ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ.' : 'One local projection: source systems remain authoritative, organization stays on this device.'}</p></div><span className="surface-badge">{result?.unreadCount ?? 0} {ru ? 'Ğ½ĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾' : 'unread'}</span></div>
-    <div className="surface-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void refresh(); }} placeholder={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾Ğ¹ Ğ¿Ñ€Ğ¾ĞµĞºÑ†Ğ¸Ğ¸' : 'Search local projection'} aria-label={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Inbox' : 'Search Inbox'} /><button className="secondary-button" onClick={() => void refresh()}>{ru ? 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ' : 'Refresh'}</button>{(['ALL', 'UNREAD', 'NEEDS_ACTION', 'SNOOZED', 'ARCHIVE'] as const).map(value => <button key={value} className={view === value ? 'primary-button' : 'secondary-button'} onClick={() => setView(value)}>{value === 'ALL' ? (ru ? 'Ğ’ÑĞµ' : 'All') : value === 'UNREAD' ? (ru ? 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğµ' : 'Unread') : value === 'NEEDS_ACTION' ? (ru ? 'ĞÑƒĞ¶Ğ½Ğ¾ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ğµ' : 'Needs action') : value === 'SNOOZED' ? (ru ? 'ĞÑ‚Ğ»Ğ¾Ğ¶ĞµĞ½Ğ½Ñ‹Ğµ' : 'Snoozed') : (ru ? 'ĞÑ€Ñ…Ğ¸Ğ²' : 'Archive')}</button>)}</div>
-    {error ? <p className="surface-error">{error}</p> : null}
-    <div className="surface-grid inbox-grid">{result?.items.length ? result.items.map(item => <article className={`surface-card inbox-card${item.organization.read ? '' : ' unread'}`} key={item.id}><div className="inbox-card-heading"><span className="surface-badge">{item.presentation.badge.label}</span><time>{new Date(item.presentation.receivedAt).toLocaleString()}</time></div><h2>{item.presentation.title}</h2>{item.presentation.sender ? <small>{item.presentation.sender}</small> : null}{item.presentation.snippet ? <p>{item.presentation.snippet}</p> : null}<small>{item.presentation.reasons.join(' Â· ')}</small><div className="surface-actions"><button className="secondary-button" onClick={() => void local('read', item)}>{item.organization.read ? (ru ? 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾' : 'Unread') : (ru ? 'ĞŸÑ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾' : 'Read')}</button><button className="secondary-button" onClick={() => void local(item.organization.archived ? 'restore' : 'archive', item)}>{item.organization.archived ? (ru ? 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ' : 'Restore') : (ru ? 'ĞÑ€Ñ…Ğ¸Ğ²' : 'Archive')}</button><button className="secondary-button" onClick={() => void local('pin', item)}>{item.organization.pinned ? 'â˜…' : 'â˜†'}</button>{item.actions.map(action => <button key={action.id} className={action.requiresOwnerConfirmation ? 'primary-button' : 'secondary-button'} onClick={() => void (action.kind === 'OPEN_SOURCE' ? runtime.inbox.openSource(item.id).then(() => undefined).catch(reason => setError(reason instanceof Error ? reason.message : String(reason))) : runSourceAction(item, action))}>{action.label}</button>)}</div></article>) : <div className="surface-card"><p>{ru ? 'Inbox Ğ¿Ğ¾ĞºĞ° Ğ¿ÑƒÑÑ‚.' : 'Inbox is empty.'}</p></div>}</div>
-  </div>;
-}
-
-function PhotosSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopPhotosRuntime | undefined>(getDesktopPhotosRuntime);
-  const [state, setState] = React.useState<Awaited<ReturnType<DesktopPhotosRuntime['open']>>>();
-  const [timeline, setTimeline] = React.useState<Awaited<ReturnType<DesktopPhotosRuntime['timeline']>>>();
-  const [albums, setAlbums] = React.useState<readonly DesktopPhotoAlbum[]>([]);
-  const [selected, setSelected] = React.useState<DesktopPhotoAsset>();
-  const [viewer, setViewer] = React.useState<Awaited<ReturnType<DesktopPhotosRuntime['viewer']>>>();
-  const [query, setQuery] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const [mode, setMode] = React.useState<'TIMELINE' | 'ALBUMS' | 'TRASH'>('TIMELINE');
-  const ru = t.photos === 'Ğ¤Ğ¾Ñ‚Ğ¾Ğ³Ñ€Ğ°Ñ„Ğ¸Ğ¸';
-  const labels = ru ? { subtitle: 'Ğ›Ğ¸Ñ‡Ğ½Ğ°Ñ Ğ¼ĞµĞ´Ğ¸Ğ°Ñ‚ĞµĞºĞ° local-first Â· Ğ¾Ñ€Ğ¸Ğ³Ğ¸Ğ½Ğ°Ğ»Ñ‹ Ğ¾ÑÑ‚Ğ°ÑÑ‚ÑÑ Ğ² content storage', unavailable: 'Photos host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ MediaLibraryService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Shell Ğ½Ğµ Ñ‡Ğ¸Ñ‚Ğ°ĞµÑ‚ Ğ¿ÑƒÑ‚Ğ¸ Ğ¸ Ğ½Ğµ Ğ·Ğ°Ğ³Ñ€ÑƒĞ¶Ğ°ĞµÑ‚ camera roll Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', timeline: 'Ğ›ĞµĞ½Ñ‚Ğ°', albums: 'ĞĞ»ÑŒĞ±Ğ¾Ğ¼Ñ‹', favorites: 'Ğ˜Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', search: 'ĞŸĞ¾Ğ¸ÑĞº', import: 'Ğ˜Ğ¼Ğ¿Ğ¾Ñ€Ñ‚Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', file: 'Ğ’Ñ‹Ğ±Ñ€Ğ°Ñ‚ÑŒ Ñ„Ğ°Ğ¹Ğ»', folder: 'Ğ’Ñ‹Ğ±Ñ€Ğ°Ñ‚ÑŒ Ğ¿Ğ°Ğ¿ĞºÑƒ', camera: 'Ğ’Ñ‹Ğ±Ñ€Ğ°Ñ‚ÑŒ Camera Roll', trash: 'ĞšĞ¾Ñ€Ğ·Ğ¸Ğ½Ğ°', empty: 'ĞœĞµĞ´Ğ¸Ğ° Ğ¿Ğ¾ĞºĞ° Ğ½ĞµÑ‚', viewer: 'ĞŸÑ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€', metadata: 'ĞœĞµÑ‚Ğ°Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ', share: 'ĞŸĞ¾Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒÑÑ ÑĞ²Ğ½Ğ¾', device: 'ĞĞ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ¾', map: 'ĞšĞ°Ñ€Ñ‚Ğ° GPS', restore: 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', remove: 'Ğ’ ĞºĞ¾Ñ€Ğ·Ğ¸Ğ½Ñƒ', local: 'Ğ¢Ğ¾Ğ»ÑŒĞºĞ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', selected: 'Ğ’Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ¾', noLocation: 'GPS Ğ½Ğµ Ğ¸Ğ·Ğ²Ğ»ĞµÑ‡Ñ‘Ğ½', locationWarning: 'ĞŸĞµÑ€ĞµĞ´ sharing ĞºĞ¾Ğ¾Ñ€Ğ´Ğ¸Ğ½Ğ°Ñ‚Ñ‹ embedded GPS Ñ‚Ñ€ĞµĞ±ÑƒÑÑ‚ Ğ¾Ñ‚Ğ´ĞµĞ»ÑŒĞ½Ğ¾Ğ³Ğ¾ Ñ€ĞµÑˆĞµĞ½Ğ¸Ñ Ğ²Ğ»Ğ°Ğ´ĞµĞ»ÑŒÑ†Ğ°.', imported: 'Ğ˜Ğ¼Ğ¿Ğ¾Ñ€Ñ‚ Ğ·Ğ°Ğ²ĞµÑ€ÑˆÑ‘Ğ½', noAlbums: 'ĞĞ»ÑŒĞ±Ğ¾Ğ¼Ğ¾Ğ² Ğ½ĞµÑ‚', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ' } : { subtitle: 'Private local-first library Â· originals remain in content storage', unavailable: 'Photos host is not connected', boundary: 'Connect MediaLibraryService through the typed host adapter. The shell never reads paths and never auto-uploads camera roll.', timeline: 'Timeline', albums: 'Albums', favorites: 'Favorites', search: 'Search', import: 'Import selected', file: 'Choose file', folder: 'Choose folder', camera: 'Choose Camera Roll', trash: 'Trash', empty: 'No media yet', viewer: 'Viewer', metadata: 'Metadata', share: 'Share explicitly', device: 'Send to device', map: 'GPS map', restore: 'Restore', remove: 'Move to trash', local: 'Local only', selected: 'Selected', noLocation: 'No embedded GPS', locationWarning: 'Embedded GPS needs a separate owner decision before sharing.', imported: 'Import complete', noAlbums: 'No albums', refresh: 'Refresh' };
-
-  React.useEffect(() => subscribeDesktopPhotosRuntime(() => setRuntime(getDesktopPhotosRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) return;
-    try { const [nextState, nextTimeline, nextAlbums] = await Promise.all([runtime.open(), runtime.timeline({ limit: 120, includeTrash: mode === 'TRASH' }), runtime.albums()]); setState(nextState); setTimeline(nextTimeline); setAlbums(nextAlbums); setSelected(current => current && nextTimeline.items.some(item => item.mediaId === current.mediaId) ? current : nextTimeline.items[0]); } catch { setNotice(labels.boundary); }
-  }, [labels.boundary, mode, runtime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => runtime?.subscribe?.(() => { void refresh(); }), [refresh, runtime]);
-  const search = async (event: React.FormEvent) => { event.preventDefault(); if (!runtime || !query.trim()) { await refresh(); return; } try { const items = await runtime.search({ query: query.trim(), limit: 120 }); setTimeline({ items, total: items.length, groups: [] }); setNotice(''); } catch { setNotice(labels.boundary); } };
-  const select = async (asset: DesktopPhotoAsset) => { setSelected(asset); if (!runtime) return; try { setViewer(await runtime.viewer(asset.mediaId)); } catch { setViewer(undefined); } };
-  const importSelected = async (kind: 'SELECTED_FILE' | 'SELECTED_FOLDER' | 'CAMERA_ROLL') => { if (!runtime?.importSelected) { setNotice(labels.boundary); return; } try { const result = await runtime.importSelected({ kind }); setNotice(`${labels.imported}: ${result.imported} Â· ${result.duplicates} duplicate Â· ${result.failed} failed`); await refresh(); } catch { setNotice(labels.boundary); } };
-  const share = async () => { if (!runtime?.share || !selected) { setNotice(labels.boundary); return; } if (selected.hasEmbeddedLocation && !window.confirm(labels.locationWarning)) return; try { const result = await runtime.share({ mediaId: selected.mediaId, destination: 'MESSAGES', mode: 'COPY', ownerConfirmed: true, ...(selected.hasEmbeddedLocation ? { locationConfirmed: true } : {}) }); setNotice(`${labels.share}: ${result.status}`); } catch { setNotice(labels.boundary); } };
-  const map = async () => { if (!runtime?.map) { setNotice(labels.boundary); return; } try { const points = await runtime.map({ ownerConfirmed: true }); setNotice(`${labels.map}: ${points.length}`); } catch { setNotice(labels.boundary); } };
-  const changeTrash = async () => { if (!runtime || !selected) return; try { if (mode === 'TRASH' && runtime.restore) await runtime.restore(selected.mediaId); else if (runtime.trash) await runtime.trash(selected.mediaId); await refresh(); } catch { setNotice(labels.boundary); } };
-
-  if (!runtime) return <div className="object-surface photos-surface"><div className="surface-kicker"><span className="surface-icon">â–§</span><span>{t.photos}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.photos}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.photos}</strong><small>{labels.boundary}</small></div></div></div>;
-  const items = timeline?.items ?? [];
-  return <div className="object-surface photos-surface" data-photos-tab={tab.object?.id ?? tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">â–§</span><span>{t.photos}</span><span className="surface-badge">{labels.local}</span></div>
-    <div className="surface-heading"><div><h1>{tab.title === 'Media' || tab.title === 'ĞœĞµĞ´Ğ¸Ğ°' ? t.photos : tab.title}</h1><p className="surface-description">{labels.subtitle}</p></div><button className="secondary-button" onClick={() => void refresh()}>{labels.refresh}</button></div>
-    <div className="surface-grid"><div className="surface-card"><strong>{labels.timeline}</strong><small>{state?.total ?? 0} Â· {state?.favorites ?? 0} {labels.favorites}</small></div><div className="surface-card"><strong>{labels.albums}</strong><small>{state?.albums ?? albums.length}</small></div><div className="surface-card"><strong>{labels.trash}</strong><small>{state?.trashed ?? 0}</small></div><div className="surface-card"><strong>{labels.local}</strong><small>{state?.cameraRoll.replace(/_/g, ' ')}</small></div></div>
-    <div className="surface-grid"><button className={mode === 'TIMELINE' ? 'primary-button' : 'secondary-button'} onClick={() => { setMode('TIMELINE'); void refresh(); }}>{labels.timeline}</button><button className={mode === 'ALBUMS' ? 'primary-button' : 'secondary-button'} onClick={() => setMode('ALBUMS')}>{labels.albums}</button><button className={mode === 'TRASH' ? 'primary-button' : 'secondary-button'} onClick={() => setMode('TRASH')}>{labels.trash}</button><button className="secondary-button" onClick={() => void importSelected('SELECTED_FILE')}>{labels.file}</button><button className="secondary-button" onClick={() => void importSelected('SELECTED_FOLDER')}>{labels.folder}</button><button className="secondary-button" onClick={() => void importSelected('CAMERA_ROLL')}>{labels.camera}</button><button className="secondary-button" onClick={() => void map()}>{labels.map}</button></div>
-    <form className="maps-search" onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><button className="primary-button" disabled={!query.trim()}>{labels.search}</button></form>
-    {mode === 'ALBUMS' ? <div className="surface-grid">{albums.length ? albums.map(album => <button className="surface-card" key={album.id} onClick={() => void runtime.album(album.id).then(values => { setTimeline({ items: values, total: values.length, groups: [] }); setMode('TIMELINE'); }).catch(() => setNotice(labels.boundary))}><strong>{album.name}</strong><small>{album.count} Â· {album.sharing}</small></button>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.noAlbums}</strong><small>{labels.boundary}</small></div></div>}</div> : <div className="surface-grid">{items.length ? items.map(asset => <button className={`surface-card${selected?.mediaId === asset.mediaId ? ' active' : ''}`} key={asset.mediaId} onClick={() => void select(asset)}><strong>{asset.kind === 'VIDEO' ? 'â–¶' : 'â–§'} {asset.filename}</strong><small>{asset.width && asset.height ? `${asset.width}Ã—${asset.height} Â· ` : ''}{asset.capturedAt ?? labels.local}{asset.hasEmbeddedLocation ? ' Â· GPS' : ''}</small><small>{asset.tags.join(' Â· ') || labels.noLocation}</small></button>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}</div>}
-    {selected && <div className="surface-grid"><div className="surface-card"><strong>{labels.selected}: {selected.filename}</strong><small>{viewer?.metadata ? Object.entries(viewer.metadata).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${value}`).join(' Â· ') : labels.metadata}</small><small>{viewer?.original ?? 'â€”'} Â· {viewer?.thumbnail ?? 'â€”'}</small></div><button className="primary-button" onClick={() => void share()}>{labels.share}</button><button className="secondary-button" onClick={() => setNotice(labels.device)}>{labels.device}</button><button className="secondary-button" onClick={() => void changeTrash()}>{mode === 'TRASH' ? labels.restore : labels.remove}</button></div>}
-    {notice && <small className="maps-notice">{notice}</small>}
-  </div>;
-}
-
-function CallsSurface({ t }: { t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopCallsRuntime | undefined>(getDesktopCallsRuntime);
-  const [, redraw] = React.useReducer(value => value + 1, 0);
-  React.useEffect(() => subscribeDesktopCallsRuntime(() => setRuntime(getDesktopCallsRuntime())), []);
-  React.useEffect(() => runtime?.calls.subscribe(() => redraw()), [runtime]);
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â˜</span><span>{t.calls}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.calls}</h1><p className="surface-description">{t.localeUnavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.calls}</strong><small>{t.callBoundary}</small></div></div></div>;
-  const active = runtime.calls.current()[0];
-  const history = runtime.calls.history().slice().reverse().slice(0, 20);
-  return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â˜</span><span>{t.calls}</span><span className="surface-badge">{t.local}</span></div><h1>{t.calls}</h1>{active ? <div className="surface-card"><strong>{active.peerId}</strong><small>{active.mode} Â· {active.state} Â· {runtime.localMediaAvailable ? t.callMediaReady : t.callMediaUnavailable}</small><div className="surface-grid">{active.state === 'RINGING' ? <><button className="surface-card" onClick={() => void runtime.calls.accept(active.callId)}>{t.acceptCall}</button><button className="surface-card" onClick={() => void runtime.calls.reject(active.callId)}>{t.rejectCall}</button></> : <><button className="surface-card" onClick={() => void runtime.calls.setMuted(active.callId, active.localMicrophone === 'enabled')}>{active.localMicrophone === 'enabled' ? t.unmute : t.mute}</button><button className="surface-card" onClick={() => void runtime.calls.setCamera(active.callId, active.localCamera !== 'enabled')}>{active.localCamera === 'enabled' ? t.cameraOff : t.cameraOn}</button><button className="surface-card" onClick={() => void (active.localScreen === 'enabled' ? runtime.calls.stopScreenShare(active.callId) : runtime.calls.startScreenShare(active.callId))}>{active.localScreen === 'enabled' ? t.screenOff : t.screenOn}</button><button className="surface-card" onClick={() => void runtime.calls.hangup(active.callId)}>{t.endCall}</button></>}</div></div> : <p className="surface-description">{t.noActiveCall}</p>}{history.length > 0 && <><span className="section-label">{t.callHistory}</span>{history.map(entry => <div className="object-id" key={entry.sessionId}><span>{entry.participant} Â· {entry.mode}</span><code>{entry.outcome}</code></div>)}</>}</div>;
-}
-
-function PublicationSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopPublicationRuntime | undefined>(getDesktopPublicationRuntime);
-  const [state, setState] = React.useState<DesktopPublicationState | undefined>();
-  const [visibility, setVisibility] = React.useState<DesktopPublicationVisibility>('PUBLIC');
-  const [preview, setPreview] = React.useState<string>();
-  const [busy, setBusy] = React.useState(false);
-  const publicationId = tab.object?.id ?? tab.id;
-  React.useEffect(() => subscribeDesktopPublicationRuntime(() => setRuntime(getDesktopPublicationRuntime())), []);
-  React.useEffect(() => { if (!runtime) return; void runtime.state(publicationId).then(value => { setState(value); if (value) setVisibility(value.visibility); }); }, [runtime, publicationId]);
-  const run = async (action: () => Promise<DesktopPublicationState | undefined>) => { setBusy(true); try { const next = await action(); if (next) { setState(next); setVisibility(next.visibility); } } catch { shell.setNotice(t.locked); } finally { setBusy(false); } };
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âœ</span><span>{t.publication}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{tab.title}</h1><p className="surface-description">{t.publicationAdapter}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.publication}</strong><small>{t.publicationAdapter}</small></div></div></div>;
-  const current = state;
-  return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âœ</span><span>{t.publication}</span><span className="surface-badge">{current?.status ?? 'DRAFT'}</span></div><h1>{current?.title ?? tab.title}</h1><p className="surface-description">{t.publicationDisclosure}</p><div className="surface-grid"><div className="surface-card"><strong>{t.status}</strong><small>{current?.status ?? 'DRAFT'} Â· {current?.revisionNumber ? `${t.revision} ${current.revisionNumber}` : t.draft}</small></div><div className="surface-card"><strong>{t.visibility}</strong><select value={visibility} disabled={busy || current?.status === 'PUBLISHED'} onChange={event => setVisibility(event.target.value as DesktopPublicationVisibility)}><option value="PUBLIC">{t.public}</option><option value="UNLISTED">{t.unlisted}</option><option value="CONTACTS">{t.scoped}</option><option value="FOLLOWERS">{t.scoped}</option><option value="SELECTED_IDENTITIES">{t.scoped}</option><option value="SPACE">{t.scoped}</option></select></div></div><div className="surface-grid"><button className="secondary-button" disabled={busy} onClick={() => void runtime.preview(publicationId).then(value => setPreview(value ? `${value.title} Â· ${value.publisherIdentity}` : t.noPreview))}>{t.preview}</button>{current?.status === 'PUBLISHED' ? <button className="secondary-button" disabled={busy} onClick={() => void run(() => runtime.unpublish(publicationId))}>{t.unpublish}</button> : <button className="primary-button" disabled={busy} onClick={() => { if (typeof window !== 'undefined' && !window.confirm(t.publishConfirm)) return; void run(() => runtime.publish(publicationId, { visibility, ownerConfirmed: true })); }}>{t.publish}</button>}</div>{preview && <div className="adapter-note"><span>âœ“</span><div><strong>{t.preview}</strong><small>{preview}</small></div></div>}{current?.link && <div className="object-id"><span>{t.shareLink}</span><code>{current.link}</code></div>}</div>;
-}
-
-function PluginsSurface({ t }: { t: Copy }) {
-  const [count] = React.useState(0);
-  const ru = t.plugins === 'ĞŸĞ»Ğ°Ğ³Ğ¸Ğ½Ñ‹';
-  return <div className="object-surface" data-plugin-surface="true"><div className="surface-kicker"><span className="surface-icon">âŠ</span><span>{t.plugins}</span><span className="surface-badge">TRUST BOUNDARY</span></div><h1>{t.plugins}</h1><p className="surface-description">{ru ? 'ĞŸĞ»Ğ°Ğ³Ğ¸Ğ½Ñ‹ Ñ€Ğ°ÑÑˆĞ¸Ñ€ÑÑÑ‚ Keystone Ñ‡ĞµÑ€ĞµĞ· capability-filtered PluginHost. Ğ˜ÑĞ¿Ğ¾Ğ»Ğ½ÑĞµĞ¼Ñ‹Ğ¹ ĞºĞ¾Ğ´ Ğ½Ğµ ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑÑ Core Ğ¸ Ğ½Ğµ Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ĞµÑ‚ owner authority.' : 'Plugins extend Keystone through the capability-filtered PluginHost. Executable code does not become Core or inherit owner authority.'}</p><div className="surface-grid"><div className="surface-card"><strong>{ru ? 'Ğ£ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ¾' : 'Installed'}</strong><small>{count}</small></div><div className="surface-card"><strong>{ru ? 'ĞĞ±Ğ·Ğ¾Ñ€ / Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ¸' : 'Discover / Sources'}</strong><small>{ru ? 'Local Â· File Â· URL Â· P2P Â· USB Â· Personal Device' : 'Local Â· File Â· URL Â· P2P Â· USB Â· Personal Device'}</small></div><div className="surface-card"><strong>{ru ? 'ĞĞ±Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ¸Ñ' : 'Updates'}</strong><small>{ru ? 'Ğ¡ĞºĞ°Ñ‡Ğ¸Ğ²Ğ°Ğ½Ğ¸Ğµ â‰  Ğ¿Ñ€Ğ¸Ğ¼ĞµĞ½ĞµĞ½Ğ¸Ğµ; Ñ€Ğ°ÑÑˆĞ¸Ñ€ĞµĞ½Ğ¸Ğµ capabilities Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ review' : 'Downloaded â‰  applied; capability expansion requires review'}</small></div><div className="surface-card"><strong>{ru ? 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ¸Ğµ' : 'Recovery'}</strong><small>{ru ? 'Repair Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ¿Ğ¾ exact content address' : 'Repair only by exact content address'}</small></div><div className="surface-card"><strong>{ru ? 'Ğ‘ĞµĞ·Ğ¾Ğ¿Ğ°ÑĞ½Ğ¾ÑÑ‚ÑŒ' : 'Safety'}</strong><small>{ru ? 'Shared/public output Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ SafetySurfaceGate' : 'Shared/public output requires SafetySurfaceGate'}</small></div></div><p className="surface-description">{ru ? 'Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº â€” provenance, Ğ° Ğ½Ğµ authority. ĞŸĞ¾Ğ»ÑƒÑ‡ĞµĞ½ â‰  ÑƒÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½ â‰  ï¿½ï¿½ĞºĞ»ÑÑ‡Ñ‘Ğ½.' : 'A source is provenance, not authority. Received â‰  installed â‰  enabled.'}</p></div>;
-}
-
-function HomeSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopDailyRuntime | undefined>(getDesktopDailyRuntime);
-  const [brief, setBrief] = React.useState<DesktopDailyBrief>();
-  React.useEffect(() => subscribeDesktopDailyRuntime(() => setRuntime(getDesktopDailyRuntime())), []);
-  React.useEffect(() => { if (runtime) void runtime.brief().then(setBrief).catch(() => setBrief(undefined)); }, [runtime]);
-  const openDailyItem = (item: DesktopDailyItem) => {
-    const type = item.canonicalRef.type.toLowerCase();
-    const kind: KeystoneObjectReference['kind'] = type.includes('message') || type === 'conversation' ? 'chat' : type.includes('calendar') || type === 'event' ? 'calendar' : type.includes('file') ? 'file' : type.includes('workboard') || type.includes('task') ? 'workboard' : type.includes('video') ? 'video' : 'unknown';
-    shell.openReference({ kind, id: item.canonicalRef.id, label: item.title });
-    void runtime?.markSeen?.(item.id);
-  };
-  return <div className="home-surface"><div className="surface-kicker"><span className="surface-icon">âœ¦</span><span>{t.local}</span><span className="surface-badge">{t.privacy}</span></div><h1>{t.home}</h1><p className="surface-description">A single local-first environment for Keystone objects, workspaces and bounded AI.</p>{runtime && brief && <section className="home-daily" aria-label="Daily Layer"><div className="home-daily-heading"><span className="section-label">{brief.hasRelevantChanges ? 'Daily Layer' : 'Quiet'}</span>{brief.hasRelevantChanges && <button className="secondary-button" onClick={() => void runtime.refresh?.().then(setBrief)}>Refresh</button>}</div>{brief.sections.map(section => <div className="home-daily-section" key={section.id}><h2>{section.title}</h2>{section.items.slice(0, 5).map(item => <button className="home-daily-item" key={item.id} onClick={() => openDailyItem(item)}><span><strong>{item.title}</strong>{item.reason && <small>{item.reason}</small>}</span><b>â€º</b></button>)}{section.remaining > 0 && <small>{section.remaining} more</small>}</div>)}</section>}<div className="home-grid"><button className="home-card featured" onClick={() => shell.toggleAgentPanel(true)}><span className="card-symbol">âœ¦</span><strong>{t.agent}</strong><small>{t.agentHint}</small><b>Ctrl + Space</b></button><button className="home-card" onClick={() => shell.openReference({ kind: 'profile', id: 'profile-bob', label: 'Bob' })}><span className="card-symbol">â—</span><strong>{t.openBob}</strong><small>{t.openInTab}</small></button><button className="home-card" onClick={() => shell.openReference({ kind: 'chat', id: 'chat-bob', label: 'Chat Â· Bob' })}><span className="card-symbol">â—Œ</span><strong>{t.openChat}</strong><small>{t.messages}</small></button><button className="home-card" onClick={() => shell.openReference({ kind: 'file', id: 'file-trip-plan', label: 'Trip plan.pdf' })}><span className="card-symbol">â–¤</span><strong>{t.openFile}</strong><small>{t.files}</small></button><button className="home-card" onClick={() => shell.openReference({ kind: 'space', id: 'collaboration', label: t.collaboration })}><span className="card-symbol">â‡„</span><strong>{t.collaboration}</strong><small>{t.local}</small></button></div><div className="home-lower"><div><span className="section-label">{t.workspace}</span><h2>Social Â· Research Â· Planning</h2><p>{t.saved}</p></div><button className="secondary-button" onClick={() => shell.openReference({ kind: 'space', id: 'space-trip', label: 'Trip' })}>{t.openSpace}</button></div></div>;
-}
-
-function AgentSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  return <div className="agent-surface"><div className="agent-orbit">âœ¦</div><span className="surface-kicker">{t.agent} Â· {t.local}</span><h1>One assistant, many bounded contexts.</h1><p>{t.agentHint}</p><button className="primary-button" onClick={() => shell.toggleAgentPanel(true)}>{t.ask}</button><div className="agent-rules"><span>âœ“ {t.privacy}</span><span>âœ“ No unrestricted tools</span><span>âœ“ Current object scope only</span></div></div>;
-}
-
-function WorkboardSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const ru = t.workboard.startsWith('Ğ Ğ°Ğ±Ğ¾Ñ‡Ğ°Ñ');
-  const columns = ru ? ['BACKLOG', 'READY', 'RUNNING', 'BLOCKED', 'NEEDS_USER', 'DONE'] : ['BACKLOG', 'READY', 'RUNNING', 'BLOCKED', 'NEEDS_USER', 'DONE'];
-  const note = ru ? 'Ğ¡Ğ¾ÑÑ‚Ğ¾ÑĞ½Ğ¸Ğµ Ğ·Ğ°Ğ³Ñ€ÑƒĞ¶Ğ°ĞµÑ‚ÑÑ Ñ‡ĞµÑ€ĞµĞ· AgentWorkboardService host adapter. Shell Ğ½Ğµ Ğ´ÑƒĞ±Ğ»Ğ¸Ñ€ÑƒĞµÑ‚ WorkItem Ğ¸ Ğ½Ğµ Ğ¼ĞµĞ½ÑĞµÑ‚ permissions.' : 'State is supplied by the AgentWorkboardService host adapter. The shell does not copy WorkItems or bypass permissions.';
-  return <div className="workboard-surface" data-workboard-id={tab.object?.id ?? tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">â–¥</span><span>{t.workboard}</span><span className="surface-badge">{t.local}</span></div>
-    <div className="workboard-heading"><div><h1>{tab.title}</h1><p className="surface-description">{note}</p></div><div className="workboard-actions"><button className="secondary-button" onClick={() => shell.setNotice(`${t.list}: ${tab.title}`)}>{t.list}</button><button className="secondary-button" onClick={() => shell.setNotice(`${t.activity}: ${tab.title}`)}>{t.activity}</button><button className="primary-button" onClick={() => shell.toggleAgentPanel(true)}>{t.agent}</button></div></div>
-    <div className="workboard-columns">{columns.map(status => <section className="workboard-column" key={status}><header><strong>{status}</strong><span>0</span></header>{status === 'NEEDS_USER' && <button className="workboard-empty-action" onClick={() => shell.setNotice(t.needsUser)}>{t.needsUser}</button>}<p>{ru ? 'ĞĞµÑ‚ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾ Ğ·Ğ°Ğ³Ñ€ÑƒĞ¶ĞµĞ½Ğ½Ñ‹Ñ… ÑĞ»ĞµĞ¼ĞµĞ½Ñ‚Ğ¾Ğ²' : 'No locally loaded items'}</p></section>)}</div>
-  </div>;
-}
-
-type DesktopContactView = 'ALL' | 'FAVORITES' | 'TRASH' | 'ORGANIZATIONS' | 'PEOPLE';
-
-function ContactsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopContactsRuntime | undefined>(getDesktopContactsRuntime);
-  const [view, setView] = React.useState<DesktopContactView>('ALL');
-  const [query, setQuery] = React.useState('');
-  const [page, setPage] = React.useState<{ readonly items: readonly DesktopContact[]; readonly total: number }>();
-  const [groups, setGroups] = React.useState<readonly { readonly id: string; readonly name: string; readonly contactCount: number }[]>([]);
-  const [selectedId, setSelectedId] = React.useState<string>();
-  const [newName, setNewName] = React.useState('');
-  const [newEmail, setNewEmail] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const labels = ru
-    ? { title: 'ĞšĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ñ‹', subtitle: 'Ğ›Ğ¸Ñ‡Ğ½Ğ°Ñ Ğ°Ğ´Ñ€ĞµÑĞ½Ğ°Ñ ĞºĞ½Ğ¸Ğ³Ğ° Â· local-first', search: 'ĞŸĞ¾Ğ¸ÑĞº ĞºĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ğ¾Ğ²â€¦', all: 'Ğ’ÑĞµ', favorites: 'Ğ˜Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ñ‹Ğµ', people: 'Ğ›ÑĞ´Ğ¸', organizations: 'ĞÑ€Ğ³Ğ°Ğ½Ğ¸Ğ·Ğ°Ñ†Ğ¸Ğ¸', trash: 'ĞšĞ¾Ñ€Ğ·Ğ¸Ğ½Ğ°', add: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ ĞºĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚', name: 'Ğ˜Ğ¼Ñ', email: 'Ğ­Ğ»ĞµĞºÑ‚Ñ€Ğ¾Ğ½Ğ½Ğ°Ñ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°', create: 'Ğ¡Ğ¾Ğ·Ğ´Ğ°Ñ‚ÑŒ', empty: 'ĞšĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ğ¾Ğ² Ğ½ĞµÑ‚', unavailable: 'ContactService host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰Ğ¸Ğ¹ ContactService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğµ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºĞ¸ Ğ½Ğµ Ğ¿Ğ¾Ğ¿Ğ°Ğ´Ğ°ÑÑ‚ Ğ² renderer projection.', favorite: 'Ğ˜Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', identity: 'Ğ¡Ğ²ÑĞ·Ğ°Ğ½Ğ½Ñ‹Ğµ Identity', noIdentity: 'Ğ¯Ğ²Ğ½Ğ°Ñ ÑÑÑ‹Ğ»ĞºĞ° Ğ½Ğ° Identity Ğ½Ğµ Ğ´Ğ¾Ğ±Ğ°Ğ²Ğ»ĞµĞ½Ğ°', trashAction: 'Ğ’ ĞºĞ¾Ñ€Ğ·Ğ¸Ğ½Ñƒ', restore: 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', groups: 'Ğ“Ñ€ÑƒĞ¿Ğ¿Ñ‹', noGroups: 'Ğ“Ñ€ÑƒĞ¿Ğ¿ Ğ½ĞµÑ‚' }
-    : { title: 'Contacts', subtitle: 'Personal address book Â· local-first', search: 'Search contactsâ€¦', all: 'All', favorites: 'Favorites', people: 'People', organizations: 'Organizations', trash: 'Trash', add: 'Add contact', name: 'Name', email: 'Email', create: 'Create', empty: 'No contacts', unavailable: 'ContactService host is not connected', boundary: 'Connect the existing ContactService through the typed host adapter. Private notes never enter the renderer projection.', favorite: 'Favorite', identity: 'Linked Identities', noIdentity: 'No explicit Identity link', trashAction: 'Move to trash', restore: 'Restore', groups: 'Groups', noGroups: 'No groups' };
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setPage(undefined); setGroups([]); return; }
-    try {
-      const [nextPage, nextGroups] = await Promise.all([
-        runtime.contacts({ view, query: query.trim() || undefined, includePrivateNotes: false, limit: 128 }),
-        runtime.groups(),
-      ]);
-      setPage(nextPage); setGroups(nextGroups); setSelectedId(current => current && nextPage.items.some(contact => contact.id === current) ? current : nextPage.items[0]?.id); setNotice('');
-    } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); }
-  }, [labels.unavailable, query, runtime, view]);
-  React.useEffect(() => subscribeDesktopContactsRuntime(() => setRuntime(getDesktopContactsRuntime())), []);
-  React.useEffect(() => { if (!runtime?.subscribe) return undefined; return runtime.subscribe(() => void refresh()); }, [refresh, runtime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  const run = async (action: () => Promise<unknown>) => { try { await action(); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); } };
-  const create = async (event: React.FormEvent) => { event.preventDefault(); if (!runtime || !newName.trim()) return; await run(() => runtime.create({ displayName: newName.trim(), ...(newEmail.trim() ? { emails: [{ value: newEmail.trim(), preferred: true }] } : {}) })); setNewName(''); setNewEmail(''); };
-  const selected = page?.items.find(contact => contact.id === selectedId);
-  const views: readonly [DesktopContactView, string][] = [['ALL', labels.all], ['FAVORITES', labels.favorites], ['PEOPLE', labels.people], ['ORGANIZATIONS', labels.organizations], ['TRASH', labels.trash]];
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â—</span><span>{labels.title}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{tab.title || labels.title}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>âŒ</span><div><strong>{labels.title}</strong><small>{labels.boundary}</small></div></div></div>;
-  return <div className="contacts-surface">
-    <div className="surface-kicker"><span className="surface-icon">â—</span><span>{labels.title}</span><span className="surface-badge">{labels.subtitle}</span></div>
-    <div className="surface-heading"><div><h1>{tab.title === 'Contacts' || tab.title === 'ĞšĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ñ‹' ? labels.title : tab.title}</h1><p className="surface-description">{labels.subtitle}</p></div><button className="primary-button" onClick={() => shell.toggleAgentPanel(true)}>{t.agent}</button></div>
-    <div className="tasks-toolbar"><div className="tasks-view-switcher">{views.map(([value, label]) => <button key={value} className={view === value ? 'active' : ''} onClick={() => setView(value)}>{label}</button>)}</div><span>{page?.total ?? 0}</span></div>
-    <div className="tasks-quick-add"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/></div>
-    <form className="contacts-create" onSubmit={create}><input value={newName} onChange={event => setNewName(event.target.value)} placeholder={labels.name} aria-label={labels.name}/><input type="email" value={newEmail} onChange={event => setNewEmail(event.target.value)} placeholder={labels.email} aria-label={labels.email}/><button className="primary-button" type="submit">{labels.create}</button></form>
-    {notice && <div className="tasks-notice">{notice}</div>}
-    <div className="tasks-layout"><main className="tasks-list">{page?.items.length ? page.items.map(contact => <article className={contact.id === selectedId ? 'tasks-row active' : 'tasks-row'} key={contact.id} onClick={() => setSelectedId(contact.id)}><button className="tasks-check" aria-label={labels.favorite} onClick={event => { event.stopPropagation(); void run(() => runtime.favorite(contact.id, !contact.favorite)); }}>{contact.favorite ? 'â˜…' : 'â˜†'}</button><div className="tasks-row-copy"><strong>{contact.displayName}</strong><small>{contact.emails[0]?.value ?? contact.phones[0]?.value ?? contact.organization?.name ?? ''}{contact.tags.length ? ` Â· ${contact.tags.join(', ')}` : ''}</small></div><button className="secondary-button" onClick={event => { event.stopPropagation(); void run(() => view === 'TRASH' ? runtime.restore(contact.id) : runtime.trash(contact.id)); }}>{view === 'TRASH' ? labels.restore : labels.trashAction}</button></article>) : <div className="adapter-note"><span>â—</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}</main><aside className="tasks-detail">{selected ? <><span className="section-label">{selected.kind === 'ORGANIZATION' ? labels.organizations : labels.people}</span><h2>{selected.displayName}</h2>{selected.organization && <p>{[selected.organization.name, selected.organization.jobTitle, selected.organization.department].filter(Boolean).join(' Â· ')}</p>}{selected.emails.map(email => <small key={email.id}>{email.label ? `${email.label}: ` : ''}{email.value}</small>)}{selected.phones.map(phone => <small key={phone.id}>{phone.label ? `${phone.label}: ` : ''}{phone.value}</small>)}<span className="section-label">{labels.identity}</span>{selected.linkedIdentityIds.length ? selected.linkedIdentityIds.map(identityId => <small key={identityId}>{identityId}</small>) : <small>{labels.noIdentity}</small>}<span className="section-label">{labels.groups}</span>{selected.groupIds.length ? selected.groupIds.map(groupId => <small key={groupId}>{groups.find(group => group.id === groupId)?.name ?? groupId}</small>) : <small>{labels.noGroups}</small>}</> : <div className="tasks-detail-empty">{labels.empty}</div>}</aside></div>
-  </div>;
-}
-
-type DesktopTaskView = 'INBOX' | 'TODAY' | 'UPCOMING' | 'ALL' | 'COMPLETED' | 'OVERDUE' | 'SOMEDAY' | 'ASSIGNED_TO_ME' | 'SHARED' | 'TRASH';
-
-function TasksSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopTaskRuntime | undefined>(getDesktopTasksRuntime);
-  const [view, setView] = React.useState<DesktopTaskView>(tab.object?.id === 'today' ? 'TODAY' : tab.object?.id === 'overdue' ? 'OVERDUE' : 'INBOX');
-  const [page, setPage] = React.useState<{ readonly items: readonly DesktopTask[]; readonly total: number }>();
-  const [lists, setLists] = React.useState<readonly { readonly id: string; readonly name: string; readonly scope: string; readonly memberCount: number }[]>([]);
-  const [query, setQuery] = React.useState('');
-  const [quick, setQuick] = React.useState('');
-  const [preview, setPreview] = React.useState<ReturnType<DesktopTaskRuntime['previewQuickCapture']>>();
-  const [selectedId, setSelectedId] = React.useState<string>();
-  const [notice, setNotice] = React.useState('');
-  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const labels = ru
-    ? { title: 'Ğ—Ğ°Ğ´Ğ°Ñ‡Ğ¸', subtitle: 'Ğ›Ğ¸Ñ‡Ğ½Ñ‹Ğµ Ğ¿Ğ»Ğ°Ğ½Ñ‹, ÑÑ€Ğ¾ĞºĞ¸ Ğ¸ Ğ½Ğ°Ğ¿Ğ¾Ğ¼Ğ¸Ğ½Ğ°Ğ½Ğ¸Ñ Â· local-first', inbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ', today: 'Ğ¡ĞµĞ³Ğ¾Ğ´Ğ½Ñ', upcoming: 'ĞŸÑ€ĞµĞ´ÑÑ‚Ğ¾ÑÑ‰Ğ¸Ğµ', all: 'Ğ’ÑĞµ', completed: 'Ğ—Ğ°Ğ²ĞµÑ€ÑˆÑ‘Ğ½Ğ½Ñ‹Ğµ', overdue: 'ĞŸÑ€Ğ¾ÑÑ€Ğ¾Ñ‡ĞµĞ½Ğ½Ñ‹Ğµ', someday: 'ĞšĞ¾Ğ³Ğ´Ğ°-Ğ½Ğ¸Ğ±ÑƒĞ´ÑŒ', shared: 'ĞĞ±Ñ‰Ğ¸Ğµ', trash: 'ĞšĞ¾Ñ€Ğ·Ğ¸Ğ½Ğ°', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ·Ğ°Ğ´Ğ°Ñ‡â€¦', add: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ·Ğ°Ğ´Ğ°Ñ‡Ñƒ', preview: 'ĞŸÑ€ĞµĞ´Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€', empty: 'Ğ—Ğ°Ğ´Ğ°Ñ‡ Ğ½ĞµÑ‚', unavailable: 'TaskService host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰Ğ¸Ğ¹ TaskService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Shell Ğ½Ğµ ÑĞ¾Ğ·Ğ´Ğ°Ñ‘Ñ‚ Ğ²Ñ‚Ğ¾Ñ€Ğ¾Ğ¹ store, ĞºĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€ÑŒ Ğ¸Ğ»Ğ¸ scheduler.', complete: 'Ğ“Ğ¾Ñ‚Ğ¾Ğ²Ğ¾', reopen: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ ÑĞ½Ğ¾Ğ²Ğ°', trashAction: 'Ğ’ ĞºĞ¾Ñ€Ğ·Ğ¸Ğ½Ñƒ', local: 'Ğ¡Ğ½Ğ°Ñ‡Ğ°Ğ»Ğ° Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', list: 'ÑĞ¿Ğ¸ÑĞ¾Ğº', due: 'Ğ¡Ñ€Ğ¾Ğº', ambiguous: 'Ğ”Ğ°Ñ‚Ğ° Ğ½ĞµĞ¾Ğ´Ğ½Ğ¾Ğ·Ğ½Ğ°Ñ‡Ğ½Ğ°' }
-    : { title: 'Tasks', subtitle: 'Personal planning, due dates and reminders Â· local-first', inbox: 'Inbox', today: 'Today', upcoming: 'Upcoming', all: 'All', completed: 'Completed', overdue: 'Overdue', someday: 'Someday', shared: 'Shared', trash: 'Trash', search: 'Search tasksâ€¦', add: 'Add task', preview: 'Preview', empty: 'No tasks', unavailable: 'TaskService host is not connected', boundary: 'Connect the existing TaskService through the typed host adapter. The shell never creates a second store, calendar or scheduler.', complete: 'Complete', reopen: 'Reopen', trashAction: 'Move to trash', local: 'Local-first', list: 'list', due: 'Due', ambiguous: 'Ambiguous date' };
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setPage(undefined); setLists([]); return; }
-    try {
-      const [nextPage, nextLists] = await Promise.all([runtime.tasks({ view, query: query.trim() || undefined, includeTrash: view === 'TRASH', limit: 128 }), runtime.lists()]);
-      setPage(nextPage); setLists(nextLists); setSelectedId(current => current && nextPage.items.some(task => task.id === current) ? current : nextPage.items[0]?.id); setNotice('');
-    } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); }
-  }, [labels.unavailable, query, runtime, view]);
-  React.useEffect(() => subscribeDesktopTasksRuntime(() => setRuntime(getDesktopTasksRuntime())), []);
-  React.useEffect(() => { if (!runtime?.subscribe) return undefined; const unsubscribe = runtime.subscribe(() => void refresh()); return unsubscribe; }, [refresh, runtime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => { if (!quick.trim() || !runtime) { setPreview(undefined); return; } try { setPreview(runtime.previewQuickCapture(quick, { locale: ru ? 'ru' : 'en' })); } catch { setPreview(undefined); } }, [quick, ru, runtime]);
-
-  const run = async (action: () => Promise<unknown>) => { try { await action(); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); } };
-  const add = async (event: React.FormEvent) => { event.preventDefault(); if (!runtime || !quick.trim()) return; await run(() => runtime.quickCapture(quick.trim(), { locale: ru ? 'ru' : 'en' })); setQuick(''); setPreview(undefined); };
-  const selected = page?.items.find(task => task.id === selectedId);
-  const views: readonly [DesktopTaskView, string][] = [['INBOX', labels.inbox], ['TODAY', labels.today], ['UPCOMING', labels.upcoming], ['ALL', labels.all], ['COMPLETED', labels.completed], ['OVERDUE', labels.overdue], ['SOMEDAY', labels.someday], ['SHARED', labels.shared], ['TRASH', labels.trash]];
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âœ“</span><span>{labels.title}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{tab.title || labels.title}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>âŒ</span><div><strong>{labels.title}</strong><small>{labels.boundary}</small></div></div></div>;
-  return <div className="tasks-surface">
-    <div className="surface-kicker"><span className="surface-icon">âœ“</span><span>{labels.title}</span><span className="surface-badge">{labels.local}</span></div>
-    <div className="surface-heading"><div><h1>{tab.title === 'Tasks' || tab.title === 'Ğ—Ğ°Ğ´Ğ°Ñ‡Ğ¸' ? labels.title : tab.title}</h1><p className="surface-description">{labels.subtitle}</p></div><button className="primary-button" onClick={() => shell.toggleAgentPanel(true)}>{t.agent}</button></div>
-    <div className="tasks-toolbar"><div className="tasks-view-switcher">{views.map(([value, label]) => <button key={value} className={view === value ? 'active' : ''} onClick={() => setView(value)}>{label}</button>)}</div><span>{page?.total ?? 0} Â· {lists.length} {labels.list}</span></div>
-    <form className="tasks-quick-add" onSubmit={add}><input value={quick} onChange={event => setQuick(event.target.value)} placeholder={labels.add} aria-label={labels.add}/><button className="primary-button" type="submit">ï¼‹</button></form>
-    {preview && <div className="tasks-preview"><span>{labels.preview}</span><strong>{preview.title}</strong>{preview.due && <small>{labels.due}: {preview.due.value}{preview.ambiguous ? ` Â· ${labels.ambiguous}` : ''}</small>}</div>}
-    {notice && <div className="tasks-notice">{notice}</div>}
-    <div className="tasks-layout"><main className="tasks-list">{page?.items.length ? page.items.map(task => <article className={task.id === selectedId ? 'tasks-row active' : 'tasks-row'} key={task.id} onClick={() => setSelectedId(task.id)}><button className="tasks-check" aria-label={task.status === 'COMPLETED' ? labels.reopen : labels.complete} onClick={event => { event.stopPropagation(); void run(() => task.status === 'COMPLETED' ? runtime.reopen(task.id) : runtime.complete(task.id)); }}>{task.status === 'COMPLETED' ? 'âœ“' : 'â—‹'}</button><div className="tasks-row-copy"><strong>{task.title}</strong><small>{task.priority !== 'NONE' ? task.priority : ''}{task.due ? ` Â· ${labels.due} ${task.due.value}` : ''}{task.tags.length ? ` Â· ${task.tags.join(', ')}` : ''}</small></div><button className="secondary-button" onClick={event => { event.stopPropagation(); void run(() => runtime.trash(task.id)); }}>{labels.trashAction}</button></article>) : <div className="adapter-note"><span>âœ“</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}</main><aside className="tasks-detail">{selected ? <><span className="section-label">{labels.title}</span><h2>{selected.title}</h2><p>{selected.note ?? labels.empty}</p><small>{selected.listId} Â· {selected.status} Â· r{selected.updatedAt}</small>{selected.parentId && <small>Parent: {selected.parentId}</small>}{selected.reminders.length > 0 && <div className="surface-card"><strong>Reminders</strong>{selected.reminders.map(reminder => <small key={reminder.id}>{reminder.kind} Â· {reminder.at?.value ?? reminder.minutesBefore ?? ''}</small>)}</div>}</> : <div className="tasks-detail-empty">{labels.empty}</div>}</aside></div>
-  </div>;
-}
-
-function CollaborationSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopCollaborationRuntime | undefined>(getDesktopCollaborationRuntime);
-  const [objects, setObjects] = React.useState<ReturnType<DesktopCollaborationRuntime['collaboration']['listObjects']>>([]);
-  const [selectedId, setSelectedId] = React.useState<string>();
-  const ru = t.collaboration.startsWith('Ğ¡Ğ¾Ğ²Ğ¼ĞµÑÑ‚');
-  const labels = ru ? { unavailable: 'Collaboration host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ CollaborationService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Shell Ğ½Ğµ ÑĞ¾Ğ·Ğ´Ğ°Ñ‘Ñ‚ shared state ÑĞ°Ğ¼.', empty: 'ĞĞµÑ‚ shared objects', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', participants: 'Ğ£Ñ‡Ğ°ÑÑ‚Ğ½Ğ¸ĞºĞ¸', invitations: 'ĞŸÑ€Ğ¸Ğ³Ğ»Ğ°ÑˆĞµĞ½Ğ¸Ñ', pending: 'Ğ’ Ğ¾Ñ‡ĞµÑ€ĞµĞ´Ğ¸', epoch: 'Epoch', local: 'Ğ¡Ğ½Ğ°Ñ‡Ğ°Ğ»Ğ° Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾' } : { unavailable: 'Collaboration host is not connected', boundary: 'Connect CollaborationService through the typed host adapter. The shell never invents shared state.', empty: 'No shared objects', refresh: 'Refresh', participants: 'Participants', invitations: 'Invitations', pending: 'Pending', epoch: 'Epoch', local: 'Local-first' };
-  const refresh = React.useCallback(() => { if (!runtime) return; const next = runtime.collaboration.listObjects(); setObjects(next); setSelectedId(value => value && next.some(object => object.id === value) ? value : next[0]?.id); }, [runtime]);
-  React.useEffect(() => subscribeDesktopCollaborationRuntime(() => setRuntime(getDesktopCollaborationRuntime())), []);
-  React.useEffect(() => { refresh(); if (!runtime) return; return runtime.collaboration.subscribe(refresh); }, [refresh, runtime]);
-  const selected = objects.find(object => object.id === selectedId);
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â‡„</span><span>{t.collaboration}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{tab.title}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.collaboration}</strong><small>{labels.boundary}</small></div></div></div>;
-  return <div className="object-surface" data-collaboration-surface="true"><div className="surface-kicker"><span className="surface-icon">â‡„</span><span>{t.collaboration}</span><span className="surface-badge">{labels.local}</span></div><div className="surface-heading"><div><h1>{tab.title}</h1><p className="surface-description">Yjs state-vector deltas, scoped roles and expiring presence. Presence never enters durable history.</p></div><button className="secondary-button" onClick={refresh}>{labels.refresh}</button></div><div className="surface-grid">{objects.length ? objects.map(object => <button className={`surface-card${object.id === selectedId ? ' active' : ''}`} key={object.id} onClick={() => setSelectedId(object.id)}><strong>{object.kind} Â· {object.id}</strong><small>{labels.epoch} {object.epoch} Â· {object.participants.length} {labels.participants} Â· {object.pendingUpdates} {labels.pending}</small></button>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}</div>{selected && <div className="surface-grid"><div className="surface-card"><strong>{labels.participants}</strong>{selected.participants.map(participant => <small key={participant.identityId}>{participant.identityId} Â· {participant.role} Â· {participant.status}</small>)}</div><div className="surface-card"><strong>{labels.invitations}</strong>{selected.invitations.length ? selected.invitations.map(invitation => <small key={invitation.id}>{invitation.invitee} Â· {invitation.role} Â· {invitation.status}</small>) : <small>{labels.empty}</small>}</div></div>}{selected && <button className="primary-button" onClick={() => shell.setNotice(`${t.collaboration}: ${selected.id}`)}>{t.askAbout}</button>}</div>;
-}
-
-function BrowserSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [webLibraryRuntime, setWebLibraryRuntime] = React.useState<DesktopWebLibraryRuntime | undefined>(getDesktopWebLibraryRuntime);
-  const state = shell.browserState(tab.id);
-  const page = state?.page;
-  const activity = state?.activity ?? tab.browserActivity ?? 'IDLE';
-  const ru = t.browserPrivacy.startsWith('Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñ‹');
-  const pageLabel = ru ? 'Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ° Ğ±Ñ€Ğ°ÑƒĞ·ĞµÑ€Ğ°' : 'Browser page';
-  const takeControl = ru ? 'Ğ’Ğ·ÑÑ‚ÑŒ ÑƒĞ¿Ñ€Ğ°Ğ²Ğ»ĞµĞ½Ğ¸Ğµ' : 'Take control';
-  const resumeAgent = ru ? 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ğ°Ğ³ĞµĞ½Ñ‚Ğ°' : 'Resume agent';
-  const manualHint = ru ? 'Ğ ÑƒÑ‡Ğ½Ğ¾Ğµ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ğµ Ğ´ĞµĞ»Ğ°ĞµÑ‚ ÑÑ‚Ğ°Ñ€Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñ‹ Ğ½ĞµĞ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ñ‚ĞµĞ»ÑŒĞ½Ñ‹Ğ¼Ğ¸.' : 'Manual actions invalidate stale page references.';
-  const resumeHint = ru ? 'Typed intents Ğ¾ÑÑ‚Ğ°ÑÑ‚ÑÑ Ğ¾Ğ³Ñ€Ğ°Ğ½Ğ¸Ñ‡ĞµĞ½Ğ½Ñ‹Ğ¼Ğ¸ BrowserPolicy.' : 'Typed intents remain bounded by BrowserPolicy.';
-  React.useEffect(() => subscribeDesktopWebLibraryRuntime(() => setWebLibraryRuntime(getDesktopWebLibraryRuntime())), []);
-  const savePage = async (mode: 'READER_SNAPSHOT' | 'SAFE_PAGE_ARCHIVE') => { if (!page?.url || !webLibraryRuntime?.captureFromBrowser) { shell.setNotice(ru ? 'Web Library host Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.' : 'Web Library host is not connected.'); return; } try { await webLibraryRuntime.captureFromBrowser({ url: page.url, title: page.title, mode }); shell.setNotice(ru ? 'Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ° ÑĞ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ° Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾.' : 'Page saved locally.'); } catch { shell.setNotice(ru ? 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ ÑĞ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñƒ.' : 'Page could not be saved.'); } };
-  return <div className="browser-surface"><div className="browser-toolbar"><span className="browser-lock">âŒ</span><code>{page?.url ?? tab.url ?? 'about:blank'}</code><span className="surface-badge">SANDBOX</span><span className="surface-badge">{activity}</span></div>{page ? <div className="browser-page-preview"><div className="surface-kicker"><span className="surface-icon">â—</span><span>{pageLabel}</span><span className="surface-badge">{page.dataClass}</span></div><h1>{page.title || pageLabel}</h1><p className="surface-description">{t.browserPrivacy}</p><div className="object-id"><span>{ru ? 'Origin Â· revision' : 'Origin Â· revision'}</span><code>{page.origin} Â· {page.pageRevision}</code></div><p className="browser-untrusted">{ru ? 'UNTRUSTED-ĞšĞĞĞ¢Ğ•ĞĞ¢ Ğ¡Ğ¢Ğ ĞĞĞ˜Ğ¦Ğ«' : 'UNTRUSTED PAGE CONTENT'} Â· {page.interactiveCount ?? 0} {ru ? 'ÑĞµĞ¼Ğ°Ğ½Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸Ñ… ÑĞ»ĞµĞ¼ĞµĞ½Ñ‚Ğ¾Ğ²' : 'semantic controls'}</p><div className="surface-grid"><button className="surface-card" onClick={() => void savePage('READER_SNAPSHOT')}><span>â–¤</span><strong>{ru ? 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Reader' : 'Save Reader snapshot'}</strong><small>{ru ? 'Ğ¯Ğ²Ğ½Ğ¾Ğµ ÑĞ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¸Ğµ Ğ² Web Library' : 'Explicit save to Web Library'}</small></button><button className="surface-card" onClick={() => void savePage('SAFE_PAGE_ARCHIVE')}><span>â–£</span><strong>{ru ? 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ offline' : 'Save safe archive'}</strong><small>{ru ? 'Ğ¡Ñ‚Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ°Ñ ĞºĞ¾Ğ¿Ğ¸Ñ Ğ±ĞµĞ· JS Ğ¸ Ñ„Ğ¾Ñ€Ğ¼' : 'Static copy without JS or forms'}</small></button><button className="surface-card" onClick={() => shell.toggleAgentPanel(true)}><span>âœ¦</span><strong>{t.agent}</strong><small>{t.agentHint}</small></button><button className="surface-card" onClick={() => { shell.setBrowserActivity(tab.id, 'PAUSED', true); shell.setNotice(ru ? 'Browser agent Ğ¿Ñ€Ğ¸Ğ¾ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½ Ğ´Ğ»Ñ Ñ€ÑƒÑ‡Ğ½Ğ¾Ğ³Ğ¾ ÑƒĞ¿Ñ€Ğ°Ğ²Ğ»ĞµĞ½Ğ¸Ñ.' : 'Browser agent paused for human takeover.'); }}><span>â…¡</span><strong>{takeControl}</strong><small>{manualHint}</small></button><button className="surface-card" onClick={() => { shell.setBrowserActivity(tab.id, 'IDLE', false); shell.setNotice(ru ? 'Browser agent Ğ¼Ğ¾Ğ¶ĞµÑ‚ Ğ¿Ñ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ñ‡ĞµÑ€ĞµĞ· host adapter.' : 'Browser agent may resume through the host adapter.'); }}><span>â–¶</span><strong>{resumeAgent}</strong><small>{resumeHint}</small></button></div></div> : <div className="browser-empty"><span className="browser-globe">â—</span><h1>{ru ? 'ĞŸĞ¾Ğ²ĞµÑ€Ñ…Ğ½Ğ¾ÑÑ‚ÑŒ Ğ±Ñ€Ğ°ÑƒĞ·ĞµÑ€Ğ°' : 'Browser surface'}</h1><p>{t.browserPrivacy}</p><small>{t.placeholder}</small></div>}</div>;
-}
-
-function SubscriptionsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopSubscriptionsRuntime | undefined>(getDesktopSubscriptionsRuntime);
-  const [subscriptions, setSubscriptions] = React.useState<readonly { readonly id: string; readonly title: string; readonly hostname: string; readonly unreadCount: number; readonly state: string }[]>([]);
-  const [folders, setFolders] = React.useState<readonly { readonly id: string; readonly name: string; readonly subscriptionCount: number }[]>([]);
-  const [entries, setEntries] = React.useState<readonly DesktopSubscriptionEntry[]>([]);
-  const [selectedId, setSelectedId] = React.useState(tab.object?.id !== 'subscriptions' ? tab.object?.id : undefined);
-  const [reader, setReader] = React.useState<DesktopSubscriptionReader>();
-  const [query, setQuery] = React.useState('');
-  const [filter, setFilter] = React.useState<'ALL' | 'UNREAD' | 'FAVORITES' | 'PODCASTS'>('ALL');
-  const [folderId, setFolderId] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const labels = ru
-    ? { title: 'ĞŸĞ¾Ğ´Ğ¿Ğ¸ÑĞºĞ¸', subtitle: 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğµ RSS, Atom, JSON Feed Ğ¸ Ğ¿Ğ¾Ğ´ĞºĞ°ÑÑ‚Ñ‹', all: 'Ğ’ÑĞµ', unread: 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğµ', favorites: 'Ğ˜Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', podcasts: 'ĞŸĞ¾Ğ´ĞºĞ°ÑÑ‚Ñ‹', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾ Ğ¿Ğ¾Ğ´Ğ¿Ğ¸ÑĞºĞ°Ğ¼', add: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ URL', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', read: 'ĞŸÑ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾', unreadAction: 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾', favorite: 'Ğ’ Ğ¸Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', unfavorite: 'Ğ£Ğ±Ñ€Ğ°Ñ‚ÑŒ Ğ¸Ğ· Ğ¸Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğ³Ğ¾', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ¾Ñ€Ğ¸Ğ³Ğ¸Ğ½Ğ°Ğ»', share: 'ĞŸĞ¾Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒÑÑ ÑÑÑ‹Ğ»ĞºĞ¾Ğ¹', save: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ğ² Web Library', continue: 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ', download: 'Ğ¡ĞºĞ°Ñ‡Ğ°Ñ‚ÑŒ ÑĞ²Ğ½Ğ¾', play: 'Ğ’Ğ¾ÑĞ¿Ñ€Ğ¾Ğ¸Ğ·Ğ²ĞµÑÑ‚Ğ¸', noReader: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ ÑĞ»ĞµĞ¼ĞµĞ½Ñ‚', empty: 'ĞĞµÑ‚ Ğ¼Ğ°Ñ‚ĞµÑ€Ğ¸Ğ°Ğ»Ğ¾Ğ²', unavailable: 'Subscriptions host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ SubscriptionService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Origin Ğ¸ enclosure storage Ğ½Ğµ Ñ‡Ğ¸Ñ‚Ğ°ÑÑ‚ÑÑ shell Ğ½Ğ°Ğ¿Ñ€ÑĞ¼ÑƒÑ.', noFolders: 'Ğ‘ĞµĞ· Ğ¿Ğ°Ğ¿ĞºĞ¸', safe: 'Sanitized local reader Â· 0 external requests', noRuntime: 'Ğ¥Ğ¾ÑÑ‚ Ğ¿Ğ¾Ğ´Ğ¿Ğ¸ÑĞ¾Ğº Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½' }
-    : { title: 'Subscriptions', subtitle: 'Local RSS, Atom, JSON Feed and podcasts', all: 'All', unread: 'Unread', favorites: 'Favorites', podcasts: 'Podcasts', search: 'Search subscriptions', add: 'Add URL', refresh: 'Refresh', read: 'Read', unreadAction: 'Unread', favorite: 'Favorite', unfavorite: 'Remove favorite', open: 'Open original', share: 'Share link', save: 'Save to Web Library', continue: 'Continue on device', download: 'Download explicitly', play: 'Play', noReader: 'Choose an item', empty: 'No feed items', unavailable: 'Subscriptions host is not connected', boundary: 'Connect SubscriptionService through a typed host adapter. The shell never reads origins or enclosure storage directly.', noFolders: 'Unfiled', safe: 'Sanitized local reader Â· 0 external requests', noRuntime: 'Subscriptions host unavailable' };
-
-  React.useEffect(() => subscribeDesktopSubscriptionsRuntime(() => setRuntime(getDesktopSubscriptionsRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setSubscriptions([]); setFolders([]); setEntries([]); setReader(undefined); return; }
-    try {
-      const [nextSubscriptions, nextFolders, page] = await Promise.all([
-        runtime.listSubscriptions(), runtime.listFolders(), runtime.listEntries({ ...(filter === 'UNREAD' ? { readState: 'UNREAD' as const } : {}), ...(filter === 'FAVORITES' ? { favorite: true } : {}), ...(filter === 'PODCASTS' ? { podcastsOnly: true } : {}), ...(query.trim() ? { query: query.trim() } : {}), ...(folderId ? { folderId } : {}), limit: 128 }),
-      ]);
-      setSubscriptions(nextSubscriptions); setFolders(nextFolders); setEntries(page.items);
-      setSelectedId(current => current && page.items.some(entry => entry.id === current) ? current : page.items[0]?.id);
-      setNotice('');
-    } catch { setNotice(labels.unavailable); }
-  }, [filter, folderId, labels.unavailable, query, runtime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => { if (!runtime?.subscribe) return; const unsubscribe = runtime.subscribe(() => void refresh()); return unsubscribe; }, [refresh, runtime]);
-  React.useEffect(() => { if (!runtime || !selectedId) { setReader(undefined); return; } void runtime.reader(selectedId).then(setReader).catch(() => setReader(undefined)); }, [runtime, selectedId]);
-
-  const selected = entries.find(entry => entry.id === selectedId);
-  const run = async (action: () => Promise<unknown>) => { try { await action(); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); } };
-  const addSubscription = async () => { if (!runtime?.add) { setNotice(labels.unavailable); return; } const url = window.prompt(labels.add, 'https://'); if (!url?.trim()) return; await run(() => runtime.add!({ url: url.trim(), ownerConfirmed: true })); };
-  const toggleRead = () => selected && runtime?.markRead ? void run(() => runtime.markRead!(selected.id, selected.readState !== 'READ')) : undefined;
-  const toggleFavorite = () => selected && runtime?.setFavorite ? void run(() => runtime.setFavorite!(selected.id, !selected.favorite)) : undefined;
-  const refreshSelected = () => { const subscriptionId = selected?.subscriptionId; if (subscriptionId && runtime?.refresh) void run(() => runtime.refresh!(subscriptionId)); else void refresh(); };
-  const openOriginal = () => selected && runtime?.openOriginal ? void run(() => runtime.openOriginal!(selected.id)) : setNotice(labels.unavailable);
-  const shareEntry = () => selected && runtime?.shareEntry ? void run(() => runtime.shareEntry!(selected.id)) : setNotice(labels.unavailable);
-  const saveArticle = () => selected && runtime?.saveArticle ? void run(() => runtime.saveArticle!(selected.id)) : setNotice(labels.unavailable);
-  const continueEntry = () => selected && runtime?.continueEntry ? void run(() => runtime.continueEntry!(selected.id, { kind: selected.enclosures.length ? 'PODCAST' : 'ARTICLE', ...(selected.enclosures[0] ? { enclosureId: selected.enclosures[0].id } : {}) })) : setNotice(labels.unavailable);
-  const download = (enclosureId: string) => selected && runtime?.downloadEnclosure ? void run(() => runtime.downloadEnclosure!(selected.id, enclosureId)) : setNotice(labels.unavailable);
-  const play = (enclosureId: string) => selected && runtime?.playEnclosure ? void run(() => runtime.playEnclosure!(selected.id, enclosureId)) : setNotice(labels.unavailable);
-
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">â—´</span><span>{t.subscriptions}</span><span className="surface-badge">{t.local}</span></div><h1>{labels.title}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{labels.noRuntime}</strong><small>{labels.boundary}</small></div></div></div>;
-  return <div className="subscriptions-surface" data-subscriptions-surface="true"><div className="surface-kicker"><span className="surface-icon">â—´</span><span>{t.subscriptions}</span><span className="surface-badge">{t.local}</span></div><div className="surface-heading"><div><h1>{labels.title}</h1><p className="surface-description">{labels.subtitle}</p></div><div className="surface-actions"><button className="secondary-button" onClick={refreshSelected}>{labels.refresh}</button><button className="primary-button" onClick={() => void addSubscription()}>+ {labels.add}</button></div></div><div className="web-library-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><select value={folderId} onChange={event => setFolderId(event.target.value)} aria-label={labels.noFolders}><option value="">{labels.noFolders}</option>{folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}</select><span>{entries.length} Â· {subscriptions.reduce((sum, item) => sum + item.unreadCount, 0)} {labels.unread.toLocaleLowerCase()}</span></div><div className="subscriptions-layout"><aside className="web-library-list"><button className={filter === 'ALL' ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setFilter('ALL')}>{labels.all}</button><button className={filter === 'UNREAD' ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setFilter('UNREAD')}>{labels.unread}</button><button className={filter === 'FAVORITES' ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setFilter('FAVORITES')}>{labels.favorites}</button><button className={filter === 'PODCASTS' ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setFilter('PODCASTS')}>{labels.podcasts}</button><span className="section-label">{labels.title}</span>{subscriptions.map(subscription => <button key={subscription.id} className="web-library-filter" onClick={() => setFolderId('')}>{subscription.title}<small>{subscription.unreadCount} Â· {subscription.hostname}</small></button>)}<div className="web-library-entry-list">{entries.map(entry => <button key={entry.id} className={entry.id === selectedId ? 'web-library-entry active' : 'web-library-entry'} onClick={() => setSelectedId(entry.id)}><strong>{entry.favorite ? 'â˜… ' : ''}{entry.title}</strong><small>{entry.subscriptionTitle} Â· {entry.readState === 'READ' ? labels.read : labels.unread}{entry.enclosures.length ? ' Â· â—‰' : ''}</small><span>{entry.author ?? entry.contentText.slice(0, 120)}</span></button>)}{!entries.length && <p className="web-library-empty">{labels.empty}</p>}</div></aside><main className="web-library-reader">{selected && reader ? <><div className="web-library-reader-heading"><div><h2>{reader.entry.title}</h2><p>{reader.entry.subscriptionTitle} Â· {reader.entry.publishedAt ?? reader.entry.firstSeenAt}</p></div><div className="web-library-reader-actions"><button className="secondary-button" onClick={toggleRead}>{selected.readState === 'READ' ? labels.unreadAction : labels.read}</button><button className="secondary-button" onClick={toggleFavorite}>{selected.favorite ? labels.unfavorite : labels.favorite}</button></div></div><div className="web-library-proof-row"><span>{labels.safe}</span><span>{reader.scriptsExecuted} scripts</span><span>{reader.formsSubmitted} forms</span></div><article className="web-library-reader-content" dangerouslySetInnerHTML={{ __html: reader.safeHtml }}/><div className="web-library-reader-footer"><code>{selected.url ?? labels.noReader}</code><div><button className="secondary-button" onClick={openOriginal}>{labels.open}</button><button className="secondary-button" onClick={shareEntry}>{labels.share}</button><button className="secondary-button" onClick={saveArticle}>{labels.save}</button><button className="secondary-button" onClick={continueEntry}>{labels.continue}</button></div></div>{selected.enclosures.length ? <div className="surface-grid">{selected.enclosures.map(enclosure => <div className="surface-card" key={enclosure.id}><strong>{enclosure.title ?? enclosure.mimeType ?? labels.podcasts}</strong><small>{enclosure.download?.state ?? labels.download}</small><div className="surface-actions"><button className="secondary-button" onClick={() => download(enclosure.id)}>{labels.download}</button><button className="secondary-button" disabled={enclosure.download?.state !== 'DOWNLOADED'} onClick={() => play(enclosure.id)}>{labels.play}</button></div></div>)}</div> : null}</> : <div className="web-library-reader-empty"><span>â—´</span><p>{labels.noReader}</p></div>}</main></div>{notice && <div className="web-library-notice">{notice}</div>}</div>;
-}
-
-function WebLibrarySurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopWebLibraryRuntime | undefined>(getDesktopWebLibraryRuntime);
-  const [entries, setEntries] = React.useState<readonly DesktopWebLibraryEntry[]>([]);
-  const [collections, setCollections] = React.useState<readonly { id: string; name: string; isSystem: boolean }[]>([]);
-  const [selectedId, setSelectedId] = React.useState(tab.object?.id !== 'web-library' ? tab.object?.id : undefined);
-  const [reader, setReader] = React.useState<DesktopWebLibraryReader>();
-  const [query, setQuery] = React.useState('');
-  const [collectionId, setCollectionId] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const labels = ru
-    ? { saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ğµ ÑÑ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ñ‹', later: 'Read Later', all: 'Ğ’ÑĞµ', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾ Web Library', collections: 'ĞšĞ¾Ğ»Ğ»ĞµĞºÑ†Ğ¸Ğ¸', revisions: 'Ğ’ĞµÑ€ÑĞ¸Ğ¸', source: 'Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº', offline: 'Ğ”Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾ offline', bookmark: 'Ğ¢Ğ¾Ğ»ÑŒĞºĞ¾ bookmark', partial: 'Ğ§Ğ°ÑÑ‚Ğ¸Ñ‡Ğ½Ğ¾ ÑĞ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¾', read: 'ĞŸÑ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾', unread: 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ¾', favorite: 'Ğ˜Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', markRead: 'ĞÑ‚Ğ¼ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğ¼', markUnread: 'ĞÑ‚Ğ¼ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ½ĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğ¼', removeFavorite: 'Ğ£Ğ±Ñ€Ğ°Ñ‚ÑŒ Ğ¸Ğ· Ğ¸Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğ³Ğ¾', addFavorite: 'Ğ’ Ğ¸Ğ·Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğµ', note: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºÑƒ', highlight: 'Ğ’Ñ‹Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒ Ñ„Ñ€Ğ°Ğ³Ğ¼ĞµĞ½Ñ‚', share: 'ĞŸĞ¾Ğ´ĞµĞ»Ğ¸Ñ‚ÑŒÑÑ ĞºĞ¾Ğ¿Ğ¸ĞµĞ¹', continue: 'ĞŸÑ€Ğ¾Ğ´Ğ¾Ğ»Ğ¶Ğ¸Ñ‚ÑŒ Ğ½Ğ° ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğµ', vault: 'Ğ­ĞºÑĞ¿Ğ¾Ñ€Ñ‚Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ Ğ² Vault', noReader: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ ÑĞ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ğ¹ ÑĞ»ĞµĞ¼ĞµĞ½Ñ‚', empty: 'ĞŸĞ¾ĞºĞ° Ğ½Ğ¸Ñ‡ĞµĞ³Ğ¾ Ğ½Ğµ ÑĞ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¾', unavailable: 'Web Library host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ WebLibraryService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Shell Ğ½Ğµ Ñ‡Ğ¸Ñ‚Ğ°ĞµÑ‚ archive storage Ğ¸ Ğ½Ğµ Ğ¾Ğ±Ñ€Ğ°Ñ‰Ğ°ĞµÑ‚ÑÑ Ğº origin.', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ' }
-    : { saved: 'Saved pages', later: 'Read Later', all: 'All', search: 'Search Web Library', collections: 'Collections', revisions: 'Revisions', source: 'Source', offline: 'Available offline', bookmark: 'Bookmark only', partial: 'Partially saved', read: 'Read', unread: 'Unread', favorite: 'Favorite', markRead: 'Mark read', markUnread: 'Mark unread', removeFavorite: 'Remove favorite', addFavorite: 'Add favorite', note: 'Add note', highlight: 'Highlight', share: 'Share copy', continue: 'Continue on device', vault: 'Export to Vault', noReader: 'Choose a saved item', empty: 'Nothing saved yet', unavailable: 'Web Library host is not connected', boundary: 'Connect WebLibraryService through a typed host adapter. The shell never reads archive storage or contacts an origin.', refresh: 'Refresh' };
-
-  React.useEffect(() => subscribeDesktopWebLibraryRuntime(() => setRuntime(getDesktopWebLibraryRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setEntries([]); setCollections([]); setReader(undefined); return; }
-    try {
-      const [nextEntries, nextCollections] = await Promise.all([query.trim() ? runtime.search(query.trim()).then(results => results.map(result => result.entry)) : runtime.list(collectionId ? { collectionId } : undefined), runtime.collections()]);
-      setEntries(nextEntries); setCollections(nextCollections);
-      setSelectedId(current => current && nextEntries.some(entry => entry.id === current) ? current : nextEntries[0]?.id);
-      setNotice('');
-    } catch { setNotice(labels.unavailable); }
-  }, [collectionId, labels.unavailable, query, runtime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => { if (!runtime?.subscribe) return; const subscribe = runtime.subscribe; return subscribe(() => void refresh()); }, [refresh, runtime]);
-  React.useEffect(() => { if (!runtime || !selectedId) { setReader(undefined); return; } void runtime.reader(selectedId).then(setReader).catch(() => setReader(undefined)); }, [runtime, selectedId]);
-
-  const selected = entries.find(entry => entry.id === selectedId);
-  const setRead = async () => { if (!runtime?.setReadState || !selected) return; await runtime.setReadState(selected.id, selected.readState === 'READ' ? 'UNREAD' : 'READ'); await refresh(); };
-  const setFavorite = async () => { if (!runtime?.setFavorite || !selected) return; await runtime.setFavorite(selected.id, !selected.favorite); await refresh(); };
-  const addNote = async () => { if (!runtime?.addNote || !selected || !reader?.revision) { setNotice(labels.unavailable); return; } const body = window.prompt(labels.note); if (body?.trim()) { await runtime.addNote({ entryId: selected.id, revisionId: reader.revision.id, body: body.trim() }); setNotice(t.saved); } };
-  const highlight = async () => { if (!runtime?.addHighlight || !selected || !reader?.revision) { setNotice(labels.unavailable); return; } const quote = window.prompt(labels.highlight); const start = quote ? reader.text.indexOf(quote) : -1; if (quote && start >= 0) { await runtime.addHighlight({ entryId: selected.id, revisionId: reader.revision.id, start, end: start + quote.length, quote }); setNotice(t.saved); } else if (quote) setNotice(ru ? 'Ğ¤Ñ€Ğ°Ğ³Ğ¼ĞµĞ½Ñ‚ Ğ½Ğµ Ğ½Ğ°Ğ¹Ğ´ĞµĞ½ Ğ² ÑÑ‚Ğ¾Ğ¹ Ğ²ĞµÑ€ÑĞ¸Ğ¸.' : 'The fragment is not present in this revision.'); };
-  const openBookmark = async () => { if (!runtime?.saveBookmark) { setNotice(labels.unavailable); return; } const url = window.prompt(labels.source, 'https://'); if (!url?.trim()) return; await runtime.saveBookmark({ url: url.trim() }); await refresh(); };
-
-  if (!runtime) return <div className="web-library-surface"><div className="surface-kicker"><span className="surface-icon">â–¤</span><span>{t.webLibrary}</span><span className="surface-badge">{t.local}</span></div><h1>{t.webLibrary}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.webLibrary}</strong><small>{labels.boundary}</small></div></div></div>;
-  return <div className="web-library-surface" data-web-library-id={tab.object?.id ?? tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">â–¤</span><span>{t.webLibrary}</span><span className="surface-badge">{t.local}</span></div>
-    <div className="web-library-heading"><div><h1>{labels.saved}</h1><p className="surface-description">{t.webLibraryDescription}</p></div><div className="web-library-actions"><button className="secondary-button" onClick={() => void refresh()}>{labels.refresh}</button><button className="primary-button" onClick={() => void openBookmark()}>+ {ru ? 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ URL' : 'Save URL'}</button></div></div>
-    <div className="web-library-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><select value={collectionId} onChange={event => setCollectionId(event.target.value)} aria-label={labels.collections}><option value="">{labels.all}</option>{collections.map(collection => <option key={collection.id} value={collection.id}>{collection.name}</option>)}</select><span>{entries.length} Â· {t.local}</span></div>
-    <div className="web-library-layout"><aside className="web-library-list"><button className={!collectionId ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setCollectionId('')}>{labels.all}</button><button className={collectionId === 'read-later' ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setCollectionId('read-later')}>{labels.later}</button><span className="section-label">{labels.collections}</span>{collections.map(collection => <button key={collection.id} className={collectionId === collection.id ? 'web-library-filter active' : 'web-library-filter'} onClick={() => setCollectionId(collection.id)}>{collection.name}</button>)}<div className="web-library-entry-list">{entries.map(entry => <button key={entry.id} className={entry.id === selectedId ? 'web-library-entry active' : 'web-library-entry'} onClick={() => setSelectedId(entry.id)}><strong>{entry.favorite ? 'â˜… ' : ''}{entry.title}</strong><small>{entry.kind === 'ARCHIVE' ? labels.offline : labels.bookmark} Â· {entry.readState === 'READ' ? labels.read : labels.unread}</small><span>{entry.sourceUrl}</span></button>)}{!entries.length && <p className="web-library-empty">{labels.empty}</p>}</div></aside><main className="web-library-reader">{selected && reader ? <><div className="web-library-reader-heading"><div><h2>{reader.entry.title}</h2><p>{reader.revision ? `${labels.offline} Â· ${reader.revision.title} Â· ${reader.revision.capturedAt}` : labels.bookmark}</p></div><div className="web-library-reader-actions"><button className="secondary-button" onClick={() => void setRead()}>{selected.readState === 'READ' ? labels.markUnread : labels.markRead}</button><button className="secondary-button" onClick={() => void setFavorite()}>{selected.favorite ? labels.removeFavorite : labels.addFavorite}</button></div></div>{reader.revision ? <><div className="web-library-proof-row"><span>{labels.offline}</span><span>{reader.externalRequestCount} requests</span><span>{reader.scriptsExecuted} scripts</span><span>{reader.formsSubmitted} forms</span><span>{reader.missingResources} missing assets</span></div><article className="web-library-reader-content"><pre>{reader.text}</pre></article><div className="web-library-reader-footer"><code>{labels.source}: {reader.revision.sourceUrl}</code><div><button className="secondary-button" onClick={() => void highlight()}>{labels.highlight}</button><button className="secondary-button" onClick={() => void addNote()}>{labels.note}</button><button className="secondary-button" onClick={() => void runtime.shareArchive?.(selected.id, reader.revision?.id)}>{labels.share}</button><button className="secondary-button" onClick={() => void runtime.continueOnDevice?.(selected.id, reader.revision?.id)}>{labels.continue}</button><button className="secondary-button" onClick={() => void runtime.exportToVault?.(selected.id, reader.revision?.id)}>{labels.vault}</button></div></div></> : <div className="web-library-bookmark"><p>{labels.bookmark}</p><a href={selected.sourceUrl} target="_blank" rel="noreferrer">{selected.sourceUrl}</a></div>}</> : <div className="web-library-reader-empty"><span>â–¤</span><p>{labels.noReader}</p></div>}</main></div>{notice && <div className="web-library-notice">{notice}</div>}
-  </div>;
-}
-
-function ContinuitySurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopContinuityRuntime | undefined>(getDesktopContinuityRuntime);
-  const [devices, setDevices] = React.useState<readonly DesktopContinuityDevice[]>([]);
-  const [inbox, setInbox] = React.useState<readonly DesktopContinuityItem[]>([]);
-  const [outbox, setOutbox] = React.useState<readonly DesktopContinuityItem[]>([]);
-  const [selectedDevice, setSelectedDevice] = React.useState('');
-  const [automaticClipboard, setAutomaticClipboard] = React.useState(false);
-  const [notice, setNotice] = React.useState('');
-  const ru = t.continuity.startsWith('Continuity ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²');
-
-  React.useEffect(() => subscribeDesktopContinuityRuntime(() => setRuntime(getDesktopContinuityRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setDevices([]); setInbox([]); setOutbox([]); return; }
-    try {
-      const [nextDevices, nextInbox, nextOutbox, clipboard] = await Promise.all([runtime.devices(), runtime.inbox(), runtime.outbox(), runtime.automaticClipboardContinuityEnabled()]);
-      setDevices(nextDevices); setInbox(nextInbox); setOutbox(nextOutbox); setAutomaticClipboard(clipboard);
-      setSelectedDevice(current => current && nextDevices.some(device => device.deviceId === current) ? current : nextDevices.find(device => !device.isCurrent && device.trustState === 'TRUSTED' && device.availability !== 'OFFLINE')?.deviceId ?? nextDevices.find(device => !device.isCurrent && device.trustState === 'TRUSTED')?.deviceId ?? '');
-    } catch { setNotice(t.noContinuityRuntime); }
-  }, [runtime, t.noContinuityRuntime]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => { if (!runtime?.subscribe) return; return runtime.subscribe(() => { void refresh(); }); }, [refresh, runtime]);
-
-  const statusLabel = (status: DesktopContinuityItem['status']) => ({ QUEUED: t.queued, SENDING: t.sending, DELIVERED_TO_DEVICE: t.delivered, ACCEPTED: t.accepted, OPENED: t.opened, FAILED: t.failed, EXPIRED: t.expired, CANCELLED: t.cancelled }[status]);
-  const availabilityLabel = (device: DesktopContinuityDevice) => device.availability === 'AVAILABLE' ? t.available : device.availability === 'RECENTLY_AVAILABLE' ? t.recentlyAvailable : t.notAvailable;
-  const supportedTabType = (tab: DesktopTab): DesktopContinuityObjectType | undefined => ({ file: 'file', vault: 'vault', browser: 'browser', map: 'place', mail: 'mail', publication: 'publication', space: 'collaboration', chat: 'messaging', canvas: 'document', workboard: 'collaboration', calendar: 'document', tasks: 'document' } as Partial<Record<DesktopTab['kind'], DesktopContinuityObjectType>>)[tab.kind];
-  const workspaceReference = () => {
-    const snapshot = shell.getSnapshot();
-    const tabs = snapshot.workspace.tabs.flatMap(tab => { const type = supportedTabType(tab); const objectId = tab.object?.id ?? tab.id; if (!type || !objectId || type === 'clipboard' || type === 'workspace') return []; return [{ id: tab.id, type, objectId, ...(tab.object?.label ? { title: tab.object.label } : { title: tab.title }), ...(tab.url ? { url: tab.url } : {}) }]; }).slice(0, 32);
-    const activeTabId = snapshot.workspace.tabs.find(tab => supportedTabType(tab) && tab.id === shell.currentTab?.id)?.id;
-    return { kind: 'workspace' as const, objectId: snapshot.workspace.id, workspaceId: snapshot.workspace.id, label: snapshot.workspace.name, tabs, ...(activeTabId ? { activeTabId } : {}) };
-  };
-  const sendWorkspace = async (action: 'OPEN' | 'CONTINUE') => {
-    if (!runtime || !selectedDevice) { setNotice(t.chooseDevice); return; }
-    try {
-      const input = { targetDeviceId: selectedDevice, type: 'workspace' as const, reference: workspaceReference() };
-      const item = action === 'CONTINUE' ? await runtime.continueOnDevice(input) : await runtime.sendToDevice(input);
-      setNotice(`${action === 'CONTINUE' ? t.continueOnDevice : t.sendToDevice}: ${statusLabel(item.status)}`); await refresh();
-    } catch (error) { setNotice(error instanceof Error ? error.message : t.offline); }
-  };
-  const openItem = async (requestId: string) => { if (!runtime) return; try { const item = await runtime.openIncoming(requestId); setNotice(`${t.open}: ${statusLabel(item.status)}`); await refresh(); } catch { setNotice(t.noInbox); } };
-  const cancelItem = async (requestId: string) => { if (!runtime) return; try { await runtime.cancel(requestId); await refresh(); } catch { setNotice(t.offline); } };
-  const flush = async () => { if (!runtime) return; try { const result = await runtime.flush(selectedDevice || undefined); setNotice(`${t.flush}: ${result.delivered}/${result.attempted}`); await refresh(); } catch { setNotice(t.offline); } };
-  const toggleClipboard = async (enabled: boolean) => {
-    if (!runtime) return;
-    try {
-      if (enabled && !window.confirm(t.automaticClipboardWarning)) return;
-      await runtime.setAutomaticClipboardContinuity(enabled, enabled);
-      setAutomaticClipboard(enabled);
-    } catch { setNotice(t.automaticClipboardWarning); }
-  };
-
-  if (!runtime) return <div className="settings-surface continuity-surface"><div className="surface-kicker"><span className="surface-icon">â‡†</span><span>{t.continuityTitle}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.continuityTitle}</h1><p className="surface-description">{t.noContinuityRuntime}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.continuityTitle}</strong><small>{t.handoffBoundary}</small></div></div></div>;
-  const trustedDevices = devices.filter(device => !device.isCurrent && device.trustState === 'TRUSTED');
-  return <div className="settings-surface continuity-surface"><div className="surface-kicker"><span className="surface-icon">â‡†</span><span>{t.continuityTitle}</span><span className="surface-badge">{t.local}</span></div><div className="continuity-heading"><div><h1>{t.continuityTitle}</h1><p className="surface-description">{t.handoffBoundary}</p></div><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button></div>
-    <div className="continuity-layout"><section><span className="section-label">{t.chooseDevice}</span><div className="continuity-devices">{trustedDevices.length ? trustedDevices.map(device => <button key={device.deviceId} className={`continuity-device${selectedDevice === device.deviceId ? ' active' : ''}`} onClick={() => setSelectedDevice(device.deviceId)}><span><strong>{device.label}</strong><small>{device.platform} Â· {availabilityLabel(device)}</small></span><small>{device.capabilities.length} capabilities</small></button>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{t.noDevices}</strong><small>{t.offline}</small></div></div>}</div><div className="continuity-actions"><button className="primary-button" disabled={!selectedDevice} onClick={() => void sendWorkspace('OPEN')}>{t.sendWorkspace}</button><button className="secondary-button" disabled={!selectedDevice} onClick={() => void sendWorkspace('CONTINUE')}>{t.continueWorkspace}</button><button className="secondary-button" disabled={!selectedDevice} onClick={() => void flush()}>{t.flush}</button></div></section><section className="continuity-policy"><span className="section-label">{t.automaticClipboard}</span><div className="settings-row"><span><strong>{t.automaticClipboard}</strong><small>{t.automaticClipboardWarning}</small></span><input type="checkbox" checked={automaticClipboard} onChange={event => void toggleClipboard(event.target.checked)} /></div><p>{t.clipboardExplicit}</p></section></div>
-    <section className="continuity-list"><div className="continuity-list-heading"><span className="section-label">{t.deviceInbox}</span><small>{inbox.length} Â· {outbox.length}</small></div>{inbox.length ? inbox.map(item => <ContinuityItemRow key={item.requestId} item={item} t={t} statusLabel={statusLabel} onOpen={() => void openItem(item.requestId)} onCancel={() => void cancelItem(item.requestId)} incoming />) : <p className="continuity-empty">{t.noInbox}</p>}{outbox.length > 0 && <><span className="section-label continuity-outbox-label">{t.sendToDevice}</span>{outbox.slice(0, 32).map(item => <ContinuityItemRow key={item.requestId} item={item} t={t} statusLabel={statusLabel} onCancel={() => void cancelItem(item.requestId)} />)}</>}{notice && <small className="continuity-notice">{notice}</small>}</section>
-  </div>;
-}
-
-function ContinuityItemRow({ item, t, statusLabel, onOpen, onCancel, incoming = false }: { item: DesktopContinuityItem; t: Copy; statusLabel: (status: DesktopContinuityItem['status']) => string; onOpen?: () => void; onCancel?: () => void; incoming?: boolean }) {
-  const canCancel = ['QUEUED', 'SENDING', 'DELIVERED_TO_DEVICE'].includes(item.status);
-  return <div className="continuity-item"><div className="continuity-item-copy"><strong>{item.title || item.type}</strong><small>{item.type} Â· {item.action} Â· {statusLabel(item.status)}</small><code>{item.requestId.slice(0, 12)} Â· {new Date(item.updatedAt).toLocaleString()}</code>{item.lastError && <small className="continuity-error">{item.lastError}</small>}</div><div className="continuity-item-actions">{incoming && onOpen && !['OPENED', 'ACCEPTED', 'CANCELLED', 'EXPIRED'].includes(item.status) && <button className="secondary-button" onClick={onOpen}>{t.open}</button>}{canCancel && onCancel && <button className="secondary-button" onClick={onCancel}>{t.cancel}</button>}</div></div>;
-}
-
-function NearbyExchangeSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopNearbyExchangeRuntime | undefined>(getDesktopNearbyExchangeRuntime);
-  const [endpoints, setEndpoints] = React.useState<readonly DesktopNearbyEndpoint[]>([]);
-  const [offers, setOffers] = React.useState<readonly DesktopNearbyOffer[]>([]);
-  const [transfers, setTransfers] = React.useState<readonly DesktopNearbyTransfer[]>([]);
-  const [mode, setMode] = React.useState<{ policy: 'NOT_ACCEPTING' | 'CONTACTS_ONLY' | 'TEMPORARILY_VISIBLE' | 'ASK_EVERY_TIME'; active: boolean; until?: string }>({ policy: 'NOT_ACCEPTING', active: false });
-  const [qr, setQr] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.nearbyTitle.startsWith('ĞĞ±Ğ¼ĞµĞ½');
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setEndpoints([]); setOffers([]); setTransfers([]); return; }
-    try {
-      const [nextEndpoints, nextMode, incoming, outgoing, nextTransfers] = await Promise.all([runtime.listNearby(), runtime.receiveMode(), runtime.incomingOffers(), runtime.outgoingOffers(), runtime.transfers()]);
-      setEndpoints(nextEndpoints); setMode(nextMode); setOffers([...incoming, ...outgoing]); setTransfers(nextTransfers);
-    } catch { setNotice(t.nearbyUnavailable); }
-  }, [runtime, t.nearbyUnavailable]);
-  React.useEffect(() => subscribeDesktopNearbyExchangeRuntime(() => setRuntime(getDesktopNearbyExchangeRuntime())), []);
-  React.useEffect(() => { void refresh(); return runtime?.subscribe?.(() => { void refresh(); }); }, [refresh, runtime]);
-  const run = async (action: () => Promise<unknown>, success?: string) => { try { await action(); if (success) setNotice(success); await refresh(); } catch { setNotice(t.nearbyBoundary); } };
-  const accept = (offerId: string) => void run(() => runtime!.accept(offerId), t.nearbyReceived);
-  const reject = (offerId: string) => void run(() => runtime!.reject(offerId), t.nearbyReject);
-  const cancel = (id: string) => void run(() => runtime!.cancel(id), t.nearbyCancel);
-  const resume = (id: string) => void run(() => runtime!.resume(id), t.nearbyResume);
-  const disclose = (endpointId: string) => void run(() => runtime!.discloseIdentity ? runtime!.discloseIdentity(endpointId, ['displayName']) : Promise.reject(new Error('Disclosure adapter unavailable')), t.nearbyDisclosure);
-  const addContact = (endpointId: string) => void run(() => runtime!.addContact ? runtime!.addContact(endpointId) : Promise.reject(new Error('Contact adapter unavailable')), t.nearbyAddContact);
-  if (!runtime) return <div className="settings-surface nearby-surface"><div className="surface-kicker"><span className="surface-icon">â‡„</span><span>{t.nearbyTitle}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.nearbyTitle}</h1><p className="surface-description">{t.nearbyUnavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.nearbyTitle}</strong><small>{t.nearbyBoundary}</small></div></div></div>;
-  return <div className="settings-surface nearby-surface" data-nearby-exchange-surface="true">
-    <div className="surface-kicker"><span className="surface-icon">â‡„</span><span>{t.nearbyTitle}</span><span className="surface-badge">{t.local}</span></div>
-    <div className="continuity-heading"><div><h1>{t.nearbyTitle}</h1><p className="surface-description">{t.nearbyBoundary}</p></div><button className="secondary-button" onClick={() => void refresh()}>{t.nearbyRefresh}</button></div>
-    <div className="surface-grid"><div className="surface-card"><strong>{t.nearbyReceive}</strong><small>{mode.active ? `${mode.policy}${mode.until ? ` Â· ${new Date(mode.until).toLocaleTimeString()}` : ''}` : t.nearbyStop}</small><div className="surface-grid"><button className="primary-button" onClick={() => void run(() => runtime.startReceive({ policy: 'ASK_EVERY_TIME' }), t.nearbyReceive)}>{t.nearbyReceive}</button><button className="secondary-button" onClick={() => void run(() => runtime.stopReceive(), t.nearbyStop)}>{t.nearbyStop}</button><button className="secondary-button" onClick={() => void run(async () => setQr(await runtime.createReceiveQr()), t.nearbyShareQr)}>{t.nearbyQr}</button></div></div><div className="surface-card"><strong>{t.nearbyAnonymity}</strong><small>{t.nearbyDisclosure}</small></div></div>
-    {qr && <div className="adapter-note"><span>â–£</span><div><strong>{t.nearbyQr}</strong><small>{t.nearbyShareQr}</small><code className="nearby-qr-code">{qr}</code></div></div>}
-    <span className="section-label">{t.nearbyTitle} Â· {endpoints.length}</span>
-    <div className="surface-grid">{endpoints.length ? endpoints.map(endpoint => <div className="surface-card" key={endpoint.endpointId}><strong>{endpoint.alias}</strong><small>{endpoint.socialState} Â· {endpoint.capabilities.join(', ')}</small><code>{endpoint.verificationCode}</code><div className="surface-grid"><button className="secondary-button" onClick={() => disclose(endpoint.endpointId)} disabled={!runtime.discloseIdentity}>{t.nearbyDisclosure}</button><button className="secondary-button" onClick={() => addContact(endpoint.endpointId)} disabled={!runtime.addContact}>{t.nearbyAddContact}</button></div></div>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{t.nearbyNoEndpoints}</strong><small>{t.nearbyAnonymity}</small></div></div>}</div>
-    <span className="section-label">{t.nearbyOffers}</span>
-    <div className="surface-grid">{offers.filter(offer => offer.direction === 'INCOMING' && offer.status === 'OFFERED').length ? offers.filter(offer => offer.direction === 'INCOMING' && offer.status === 'OFFERED').map(offer => <div className="surface-card" key={offer.offerId}><strong>{offer.title}</strong><small>{offer.objectType}{offer.subtitle ? ` Â· ${offer.subtitle}` : ''}{offer.byteLength ? ` Â· ${offer.byteLength} B` : ''}</small><code>{offer.verificationCode}</code><div className="surface-grid"><button className="primary-button" onClick={() => accept(offer.offerId)}>{t.nearbyAccept}</button><button className="secondary-button" onClick={() => reject(offer.offerId)}>{t.nearbyReject}</button></div></div>) : <div className="adapter-note"><span>â—Œ</span><div><strong>{t.nearbyNoOffers}</strong><small>{t.nearbyDisclosure}</small></div></div>}</div>
-    {transfers.length > 0 && <><span className="section-label">{t.nearbyReceived}</span><div className="continuity-list">{transfers.slice(-32).reverse().map(transfer => <div className="continuity-item" key={transfer.transferId}><div className="continuity-item-copy"><strong>{transfer.objectType} Â· {Math.round(transfer.progress * 100)}%</strong><small>{transfer.status} Â· {transfer.completedBytes}{transfer.totalBytes ? `/${transfer.totalBytes} B` : ''}</small>{transfer.lastError && <small className="continuity-error">{transfer.lastError}</small>}</div><div className="continuity-item-actions">{['OFFERED', 'ACCEPTED', 'TRANSFERRING'].includes(transfer.status) && <button className="secondary-button" onClick={() => cancel(transfer.transferId)}>{t.nearbyCancel}</button>}{transfer.status === 'PAUSED_WAITING_ROUTE' && <button className="secondary-button" onClick={() => resume(transfer.transferId)}>{t.nearbyResume}</button>}</div></div>)}</div></>}
-    {notice && <small className="continuity-notice">{notice}</small>}
-  </div>;
-}
-
-function SettingsSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  const [safety, setSafety] = React.useState<DesktopSafetyRuntime | undefined>(getDesktopSafetyRuntime);
-  const [integrity, setIntegrity] = React.useState<DesktopIntegrityRuntime | undefined>(getDesktopIntegrityRuntime);
-  const ru = t.settings.startsWith('ĞĞ°ÑÑ‚');
-  React.useEffect(() => subscribeDesktopSafetyRuntime(() => setSafety(getDesktopSafetyRuntime())), []);
-  React.useEffect(() => safety?.subscribe?.(() => setSafety(getDesktopSafetyRuntime())), [safety]);
-  React.useEffect(() => subscribeDesktopIntegrityRuntime(() => setIntegrity(getDesktopIntegrityRuntime())), []);
-  React.useEffect(() => integrity?.subscribe?.(() => setIntegrity(getDesktopIntegrityRuntime())), [integrity]);
-  const status = safety?.runtime.status(); const metrics = safety?.runtime.metrics();
-  const core = integrity?.core; const snapshot = integrity?.snapshot?.() ?? core?.snapshot(); const locked = snapshot?.locked === true || snapshot?.stage === 'LOCKDOWN';
-  return <div className="settings-surface"><div className="surface-kicker"><span className="surface-icon">âš™</span><span>{t.settings}</span></div><h1>{t.settings}</h1><p className="surface-description">{ru ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğµ Ğ½Ğ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ¸ Ğ¸ Ğ±ĞµĞ·Ğ¾Ğ¿Ğ°ÑĞ½Ğ¾ÑÑ‚ÑŒ. Mandatory policy Ğ½ĞµĞ»ÑŒĞ·Ñ Ğ¾Ñ‚ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ.' : 'Local settings and safety. Mandatory policy cannot be disabled.'}</p><div className="settings-list"><button onClick={() => shell.setNotice(`${t.mode}: ${t.local}`)}><span>AI resources</span><strong>{t.mode}</strong></button><button onClick={() => shell.toggleContextSidebar()}><span>{t.context}</span><strong>{shell.chromeState.contextSidebarOpen ? t.show : t.hide}</strong></button><button onClick={() => shell.toggleAgentPanel()}><span>{t.agent}</span><strong>{shell.chromeState.agentPanelOpen ? t.show : t.hide}</strong></button><button onClick={() => shell.setNotice(t.privacy)}><span>{t.privacy}</span><strong>{t.configure}</strong></button><div className="settings-row"><span><strong>{ru ? 'Safety Runtime' : 'Safety Runtime'}</strong><small>{status ?? (ru ? 'Host adapter Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½' : 'Host adapter not connected')} Â· {ru ? 'Mandatory policy Ğ°ĞºÑ‚Ğ¸Ğ²Ğ½Ğ°' : 'Mandatory policy active'}</small></span><strong>{metrics ? `${metrics.evaluated} ${ru ? 'Ğ¿Ñ€Ğ¾Ğ²ĞµÑ€Ğ¾Ğº' : 'evaluations'} Â· ${metrics.quarantined} ${ru ? 'quarantine' : 'quarantined'}` : 'â€”'}</strong></div><div className="settings-row"><span><strong>{ru ? 'Ğ¦ĞµĞ»Ğ¾ÑÑ‚Ğ½Ğ¾ÑÑ‚ÑŒ core' : 'Build integrity'}</strong><small>{snapshot ? `${snapshot.officialStatus} Â· ${snapshot.stage}` : (ru ? 'Host verifier Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½' : 'Host verifier not connected')}</small></span><strong className={locked ? 'settings-danger' : undefined}>{locked ? 'LOCKDOWN' : (ru ? 'Ğ“Ğ¾Ñ‚Ğ¾Ğ²Ğ¾' : 'Ready')}</strong></div>{locked && <div className="settings-recovery"><strong>{ru ? 'ĞšÑ€Ğ¸Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸Ğµ Ñ„Ğ°Ğ¹Ğ»Ñ‹ Ğ¸Ğ·Ğ¼ĞµĞ½ĞµĞ½Ñ‹ Ğ¸Ğ»Ğ¸ Ğ¿Ğ¾Ğ²Ñ€ĞµĞ¶Ğ´ĞµĞ½Ñ‹' : 'Security-critical files were modified or corrupted'}</strong><small>{snapshot?.failure?.category ?? 'â€”'} Â· {snapshot?.failure?.componentId ?? snapshot?.failure?.path ?? 'core'}</small><div className="settings-actions"><button onClick={() => void integrity?.verifyAgain?.()}>{ru ? 'ĞŸÑ€Ğ¾Ğ²ĞµÑ€Ğ¸Ñ‚ÑŒ ĞµÑ‰Ñ‘ Ñ€Ğ°Ğ·' : 'Verify again'}</button><button onClick={() => void integrity?.repairHost?.()}>{ru ? 'Ğ’Ğ¾ÑÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ host' : 'Repair host'}</button><button onClick={() => void integrity?.verifyRecoveryArtifact?.()}>{ru ? 'ĞŸÑ€Ğ¾Ğ²ĞµÑ€Ğ¸Ñ‚ÑŒ artifact' : 'Verify artifact'}</button></div></div>}</div></div>;
-}
-
-function SkillsSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopSkillRuntime | undefined>(getDesktopSkillRuntime);
-  const [skills, setSkills] = React.useState<readonly { skillId: string; name: string; version: string; enabled: boolean; integrity: string; capabilities: readonly string[] }[]>([]);
-  const [candidates, setCandidates] = React.useState<readonly { candidateId: string; title: string; status: string; evidenceCount: number }[]>([]);
-  const ru = t.settings.startsWith('ĞĞ°ÑÑ‚');
-  React.useEffect(() => subscribeDesktopSkillRuntime(() => setRuntime(getDesktopSkillRuntime())), []);
-  const refresh = React.useCallback(() => { if (!runtime) return; void runtime.list().then(setSkills).catch(() => setSkills([])); if (runtime.candidates) void runtime.candidates().then(setCandidates).catch(() => setCandidates([])); }, [runtime]);
-  React.useEffect(() => { refresh(); return runtime?.subscribe?.(refresh); }, [refresh, runtime]);
-  return <div className="settings-surface"><div className="surface-kicker"><span className="surface-icon">âœ¦</span><span>{ru ? 'Skills' : 'Skills'}</span><span className="surface-badge">{t.local}</span></div><h1>{ru ? 'Skills' : 'Skills'}</h1><p className="surface-description">{ru ? 'Ğ”ĞµĞºĞ»Ğ°Ñ€Ğ°Ñ‚Ğ¸Ğ²Ğ½Ñ‹Ğµ Ğ¿Ñ€Ğ¾Ñ†ĞµĞ´ÑƒÑ€Ñ‹. Permissions Ğ¸ ToolPolicy Ğ¾ÑÑ‚Ğ°ÑÑ‚ÑÑ Ğ² core.' : 'Declarative procedures. Permissions and ToolPolicy stay in core.'}</p>{runtime ? <><div className="settings-list">{skills.map(skill => <div key={skill.skillId} className="settings-row"><span><strong>{skill.name}</strong><small>{skill.skillId} Â· v{skill.version} Â· {skill.integrity}</small></span><button className="secondary-button" onClick={() => { if (skill.enabled) void runtime.disable?.(skill.skillId).then(refresh); else void runtime.enable?.(skill.skillId).then(refresh); }}>{skill.enabled ? (ru ? 'ĞÑ‚ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ' : 'Disable') : (ru ? 'Ğ’ĞºĞ»ÑÑ‡Ğ¸Ñ‚ÑŒ' : 'Enable')}</button></div>)}</div><h2>{ru ? 'ĞšĞ°Ğ½Ğ´Ğ¸Ğ´Ğ°Ñ‚Ñ‹' : 'Candidates'}</h2><div className="settings-list">{candidates.map(candidate => <div key={candidate.candidateId} className="settings-row"><span><strong>{candidate.title}</strong><small>{candidate.status} Â· {candidate.evidenceCount} {ru ? 'Ğ¿Ğ¾Ğ´Ñ‚Ğ²ĞµÑ€Ğ¶Ğ´ĞµĞ½Ğ¸Ğ¹' : 'successful runs'}</small></span><button className="secondary-button" onClick={() => shell.setNotice(ru ? 'ĞšĞ°Ğ½Ğ´Ğ¸Ğ´Ğ°Ñ‚ Ñ‚Ñ€ĞµĞ±ÑƒĞµÑ‚ ÑĞ²Ğ½Ğ¾Ğ³Ğ¾ review.' : 'Candidate requires explicit review.')}>{ru ? 'Review' : 'Review'}</button></div>)}</div></> : <div className="placeholder-surface"><span className="placeholder-icon">âœ¦</span><h2>{ru ? 'Skill host Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½' : 'Skill host is not connected'}</h2><p>{ru ? 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ SkillPackageRegistry Ñ‡ĞµÑ€ĞµĞ· typed host adapter.' : 'Connect SkillPackageRegistry through the typed host adapter.'}</p></div>}</div>;
-}
-
-function VaultSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopVaultRuntime | undefined>(getDesktopVaultRuntime);
-  const [vaultId, setVaultId] = React.useState(tab.object?.vaultId ?? (tab.object?.id && tab.object.id !== 'new-note' ? tab.object.id : ''));
-  const [vaults, setVaults] = React.useState<readonly { id: string; name: string; visibility: string }[]>([]);
-  const [notes, setNotes] = React.useState<readonly Pick<DesktopVaultNote, 'id' | 'path' | 'title' | 'modifiedAt'>[]>([]);
-  const [selectedId, setSelectedId] = React.useState(tab.object?.id && tab.object.id !== 'new-note' ? tab.object.id : '');
-  const [note, setNote] = React.useState<DesktopVaultNote>();
-  const [draft, setDraft] = React.useState('');
-  const [query, setQuery] = React.useState('');
-  const [results, setResults] = React.useState<readonly { note: Pick<DesktopVaultNote, 'id' | 'path' | 'title' | 'modifiedAt'>; score: number; snippet: string }[]>([]);
-  const [backlinks, setBacklinks] = React.useState<readonly { sourceNoteId: string; sourcePath: string; target: string }[]>([]);
-  const [notice, setNotice] = React.useState('');
-  const [preview, setPreview] = React.useState<string>();
-  const [showPreview, setShowPreview] = React.useState(false);
-  const ru = t.vault.startsWith('Ğ¥');
-  const labels = ru ? { unavailable: 'Vault host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'Ğ£ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚Ğµ VaultService Ñ‡ĞµÑ€ĞµĞ· typed host adapter; shell Ğ½Ğµ Ñ‡Ğ¸Ñ‚Ğ°ĞµÑ‚ Ñ„Ğ°Ğ¹Ğ»Ğ¾Ğ²ÑƒÑ ÑĞ¸ÑÑ‚ĞµĞ¼Ñƒ Ğ½Ğ°Ğ¿Ñ€ÑĞ¼ÑƒÑ.', notes: 'Ğ—Ğ°Ğ¼ĞµÑ‚ĞºĞ¸', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾ Vault', create: 'ĞĞ¾Ğ²Ğ°Ñ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºĞ°', folder: 'ĞĞ¾Ğ²Ğ°Ñ Ğ¿Ğ°Ğ¿ĞºĞ°', save: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ', rename: 'ĞŸĞµÑ€ĞµĞ¸Ğ¼ĞµĞ½Ğ¾Ğ²Ğ°Ñ‚ÑŒ', remove: 'Ğ£Ğ´Ğ°Ğ»Ğ¸Ñ‚ÑŒ', links: 'ĞĞ±Ñ€Ğ°Ñ‚Ğ½Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸', outline: 'Ğ¡Ñ‚Ñ€ÑƒĞºÑ‚ÑƒÑ€Ğ°', properties: 'Ğ¡Ğ²Ğ¾Ğ¹ÑÑ‚Ğ²Ğ°', empty: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºÑƒ', saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½ĞµĞ½Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾', readonly: 'Ğ¢Ğ¾Ğ»ÑŒĞºĞ¾ Ñ‡Ñ‚ĞµĞ½Ğ¸Ğµ: host adapter Ğ½Ğµ ÑƒÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½', source: 'Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº', preview: 'ĞŸÑ€ĞµĞ´Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€', graph: 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ Ğ³Ñ€Ğ°Ñ„' } : { unavailable: 'Vault host is not connected', boundary: 'Install VaultService through the typed host adapter; the shell never reads the filesystem directly.', notes: 'Notes', search: 'Search Vault', create: 'New note', folder: 'New folder', save: 'Save', rename: 'Rename', remove: 'Delete', links: 'Backlinks', outline: 'Outline', properties: 'Properties', empty: 'Select a note', saved: 'Saved locally', readonly: 'Read-only: no host adapter installed', source: 'Source', preview: 'Preview', graph: 'Local graph' };
-  React.useEffect(() => subscribeDesktopVaultRuntime(() => setRuntime(getDesktopVaultRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) return;
-    const nextVaults = await runtime.listVaults(); setVaults(nextVaults);
-    const selectedVault = vaultId || nextVaults[0]?.id; if (!selectedVault) return; if (!vaultId) setVaultId(selectedVault);
-    const nextNotes = (await runtime.listNotes(selectedVault)).slice().sort((left, right) => right.modifiedAt.localeCompare(left.modifiedAt)); setNotes(nextNotes);
-    const nextId = selectedId && nextNotes.some(value => value.id === selectedId) ? selectedId : nextNotes[0]?.id; if (!nextId) { setNote(undefined); return; }
-    setSelectedId(nextId); const loaded = await runtime.getNote(selectedVault, nextId); setNote(loaded); setDraft(loaded?.content ?? ''); if (runtime.backlinks) setBacklinks(await runtime.backlinks(selectedVault, nextId));
-  }, [runtime, selectedId, vaultId]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  React.useEffect(() => { if (!runtime?.subscribe) return; return runtime.subscribe(() => void refresh()); }, [runtime, refresh]);
-  React.useEffect(() => { if (!runtime || !vaultId || !query.trim()) { setResults([]); return; } const timer = window.setTimeout(() => { void runtime.search(vaultId, query).then(setResults).catch(() => setResults([])); }, 220); return () => window.clearTimeout(timer); }, [runtime, vaultId, query]);
-  React.useEffect(() => { if (!runtime?.updateNote || !vaultId || !note || draft === note.content) return; const timer = window.setTimeout(() => { void runtime.updateNote!(vaultId, note.id, { content: draft, baseRevision: note.revision }).then(updated => { setNote(updated); setDraft(updated.content); setNotice(labels.saved); }).catch(() => setNotice(labels.readonly)); }, 900); return () => window.clearTimeout(timer); }, [draft, labels.saved, labels.readonly, note, runtime, vaultId]);
-  React.useEffect(() => { if (!runtime?.renderTransclusion || !vaultId || !note) { setPreview(undefined); return; } void runtime.renderTransclusion(vaultId, note.id).then(value => setPreview(value.rendered)).catch(() => setPreview(undefined)); }, [note?.id, note?.revision, runtime, vaultId]);
-  const choose = async (id: string) => { setSelectedId(id); if (!runtime || !vaultId) return; const loaded = await runtime.getNote(vaultId, id); setNote(loaded); setDraft(loaded?.content ?? ''); if (runtime.backlinks) setBacklinks(await runtime.backlinks(vaultId, id)); };
-  const create = async () => { if (!runtime?.createNote || !vaultId) { setNotice(labels.boundary); return; } const created = await runtime.createNote(vaultId, { path: `New note ${new Date().toISOString().slice(0, 10)}.md`, title: ru ? 'ĞĞ¾Ğ²Ğ°Ñ Ğ·Ğ°Ğ¼ĞµÑ‚ĞºĞ°' : 'New note', content: '' }); setSelectedId(created.id); setNote(created); setDraft(created.content); setNotice(labels.saved); await refresh(); };
-  const createFolder = async () => { if (!runtime?.createFolder || !vaultId) { setNotice(labels.boundary); return; } const path = window.prompt(labels.folder, 'New folder'); if (path) { await runtime.createFolder(vaultId, path); await refresh(); } };
-  const save = async () => { if (!runtime?.updateNote || !vaultId || !note) { setNotice(labels.readonly); return; } const updated = await runtime.updateNote(vaultId, note.id, { content: draft, baseRevision: note.revision }); setNote(updated); setDraft(updated.content); setNotice(labels.saved); await refresh(); };
-  const rename = async () => { if (!runtime?.renameNote || !vaultId || !note) { setNotice(labels.readonly); return; } const path = window.prompt(labels.rename, note.path); if (!path) return; const updated = await runtime.renameNote(vaultId, note.id, path); setNote(updated); setDraft(updated.content); await refresh(); };
-  const remove = async () => { if (!runtime?.deleteNote || !vaultId || !note || !window.confirm(labels.remove)) { if (!runtime?.deleteNote) setNotice(labels.readonly); return; } await runtime.deleteNote(vaultId, note.id); setNote(undefined); setDraft(''); await refresh(); };
-  return <div className="vault-surface" data-vault-id={vaultId || tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">â–±</span><span>{t.vault}</span><span className="surface-badge">{t.local}</span></div>
-    <div className="vault-heading"><div><h1>{vaults.find(value => value.id === vaultId)?.name ?? tab.title}</h1><p className="surface-description">{runtime ? `${notes.length} ${labels.notes} Â· ${t.privacy}` : labels.unavailable}</p></div><div className="vault-actions"><button className="secondary-button" onClick={() => note && shell.openReference({ kind: 'graph', id: note.id, vaultId, label: labels.graph })} disabled={!note}>{labels.graph}</button><button className="secondary-button" onClick={() => void createFolder()}>{labels.folder}</button><button className="secondary-button" onClick={() => void create()}>{labels.create}</button><button className="primary-button" onClick={() => void save()} disabled={!note}>{labels.save}</button></div></div>
-    {!runtime && <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.unavailable}</strong><small>{labels.boundary}</small></div></div>}
-    <div className="vault-layout"><aside className="vault-tree"><label className="section-label">{labels.search}<input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search}/></label>{query && <div className="vault-search-results">{results.map(result => <button key={result.note.id} onClick={() => void choose(result.note.id)}><strong>{result.note.title}</strong><small>{result.note.path}</small><span>{result.snippet}</span></button>)}</div>}<span className="section-label">{labels.notes}</span><div className="vault-note-list">{notes.map(value => <button key={value.id} className={value.id === selectedId ? 'active' : ''} onClick={() => void choose(value.id)}><strong>{value.title}</strong><small>{value.path}</small></button>)}</div></aside><main className="vault-editor">{note ? <><div className="vault-editor-toolbar"><span>{note.path} Â· r{note.revision}</span><div><button className="secondary-button" onClick={() => setShowPreview(value => !value)}>{showPreview ? labels.source : labels.preview}</button><button className="secondary-button" onClick={() => void rename()}>{labels.rename}</button><button className="secondary-button danger" onClick={() => void remove()}>{labels.remove}</button></div></div>{showPreview ? <pre className="vault-preview" aria-label={labels.preview}>{preview ?? draft}</pre> : <textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b') { event.preventDefault(); const start = event.currentTarget.selectionStart; const end = event.currentTarget.selectionEnd; setDraft(`${draft.slice(0, start)}**${draft.slice(start, end)}**${draft.slice(end)}`); } else if (event.key === 'Tab') { event.preventDefault(); const start = event.currentTarget.selectionStart; setDraft(`${draft.slice(0, start)}  ${draft.slice(event.currentTarget.selectionEnd)}`); } }} aria-label={note.title} spellCheck={false}/>}<small className="untrusted-note">UNTRUSTED MARKDOWN Â· {labels.source}</small>{notice && <small className="vault-notice">{notice}</small>}</> : <div className="vault-empty"><span>â–±</span><p>{runtime ? labels.empty : labels.readonly}</p></div>}</main><aside className="vault-inspector"><span className="section-label">{labels.outline}</span>{note?.headings.map(heading => <div key={`${heading.id}-${heading.line}`} className={`vault-heading-level-${heading.level}`}>{heading.text}</div>)}<span className="section-label">{labels.links}</span>{backlinks.map(link => <button key={`${link.sourceNoteId}-${link.sourcePath}`} onClick={() => void choose(link.sourceNoteId)}>{link.sourcePath}</button>)}<span className="section-label">{labels.properties}</span>{note && Object.entries(note.properties).map(([key, value]) => <div className="vault-property" key={key}><strong>{key}</strong><span>{Array.isArray(value.value) ? value.value.join(', ') : String(value.value)}</span></div>)}</aside></div>
-  </div>;
-}
-
-function VaultGraphSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopVaultRuntime | undefined>(getDesktopVaultRuntime);
-  const [projection, setProjection] = React.useState<DesktopVaultGraphProjection>();
-  const [query, setQuery] = React.useState('');
-  const [local, setLocal] = React.useState(tab.object?.id === 'local');
-  const [depth, setDepth] = React.useState(1);
-  const [includeUnresolved, setIncludeUnresolved] = React.useState(true);
-  const [notice, setNotice] = React.useState('');
-  const vaultId = tab.object?.vaultId ?? (tab.object?.id && tab.object.id !== 'local' ? tab.object.id : '');
-  const ru = t.vault.startsWith('Ğ¥');
-  const labels = ru ? { title: 'Ğ“Ñ€Ğ°Ñ„ Vault', local: 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ Ğ³Ñ€Ğ°Ñ„', global: 'Ğ“Ğ»Ğ¾Ğ±Ğ°Ğ»ÑŒĞ½Ñ‹Ğ¹ Ğ³Ñ€Ğ°Ñ„', search: 'Ğ¤Ğ¸Ğ»ÑŒÑ‚Ñ€ Ğ¿Ğ¾ Ğ³Ñ€Ğ°Ñ„Ñƒ', depth: 'Ğ“Ğ»ÑƒĞ±Ğ¸Ğ½Ğ°', unresolved: 'ĞĞµÑ€Ğ°Ğ·Ñ€ĞµÑˆÑ‘Ğ½Ğ½Ñ‹Ğµ', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ', orphans: 'Ğ‘ĞµĞ· ÑĞ²ÑĞ·ĞµĞ¹', empty: 'Graph host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'Ğ£ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚Ğµ VaultGraphService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Ğ“Ñ€Ğ°Ñ„ ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑÑ Ğ¸Ğ· VaultLinkIndex Ğ¸ Ğ½Ğµ Ğ·Ğ°Ğ¼ĞµĞ½ÑĞµÑ‚ Markdown.', nodes: 'ÑƒĞ·Ğ»Ğ¾Ğ²', edges: 'ÑĞ²ÑĞ·ĞµĞ¹', truncated: 'ĞŸĞ¾ĞºĞ°Ğ· Ğ¾Ğ³Ñ€Ğ°Ğ½Ğ¸Ñ‡ĞµĞ½ viewport/bounds.' } : { title: 'Vault Graph', local: 'Local graph', global: 'Global graph', search: 'Filter graph', depth: 'Depth', unresolved: 'Unresolved', open: 'Open', orphans: 'Orphans', empty: 'Graph host is not connected', boundary: 'Install VaultGraphService through the typed host adapter. The graph derives from VaultLinkIndex and never replaces Markdown.', nodes: 'nodes', edges: 'edges', truncated: 'Viewport/bounds limit the rendered projection.' };
-  React.useEffect(() => subscribeDesktopVaultRuntime(() => setRuntime(getDesktopVaultRuntime())), []);
-  const refresh = React.useCallback(async () => { if (!runtime?.graph || !vaultId) return; try { const next = local && runtime.graph.local && tab.object?.id && tab.object.id !== 'local' ? await runtime.graph.local(vaultId, tab.object.id, depth) : await runtime.graph.global(vaultId, { text: query || undefined, depth, limitNodes: 240, limitEdges: 480, includeUnresolved }); setProjection(next); setNotice(''); } catch { setNotice(labels.empty); } }, [depth, includeUnresolved, labels.empty, local, query, runtime, tab.object?.id, vaultId]);
-  React.useEffect(() => { void refresh(); }, [refresh]);
-  const openNode = (node: DesktopVaultGraphProjection['nodes'][number]) => { if (node.kind === 'NOTE' && !node.unresolved) shell.openReference({ kind: 'vault', id: node.id, vaultId, label: node.label }); else if (node.kind === 'ATTACHMENT') shell.openReference({ kind: 'file', id: node.id, vaultId, label: node.label }); else setNotice(node.unresolved ? `${labels.unresolved}: ${node.label}` : node.label); };
-  const orphans = projection?.orphanNodeIds.length ?? 0;
-  return <div className="vault-graph-surface" data-vault-id={vaultId || tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">âŒ˜</span><span>{local ? labels.local : labels.title}</span><span className="surface-badge">{t.local}</span></div>
-    <div className="graph-heading"><div><h1>{local ? labels.local : labels.title}</h1><p className="surface-description">{runtime?.graph ? `${projection?.nodes.length ?? 0} ${labels.nodes} Â· ${projection?.edges.length ?? 0} ${labels.edges}` : labels.empty}</p></div><div className="graph-actions"><button className={local ? 'secondary-button' : 'primary-button'} onClick={() => setLocal(false)}>{labels.global}</button><button className={!local ? 'secondary-button' : 'primary-button'} onClick={() => setLocal(true)}>{labels.local}</button><button className="secondary-button" onClick={() => setNotice(`${labels.orphans}: ${orphans}`)}>{labels.orphans} Â· {orphans}</button></div></div>
-    {!runtime?.graph && <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}
-    <div className="graph-toolbar"><label>{labels.search}<input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search}/></label><label>{labels.depth}<input type="number" min={0} max={8} value={depth} onChange={event => setDepth(Math.max(0, Math.min(8, Number(event.target.value) || 0)))}/></label><label className="graph-check"><input type="checkbox" checked={includeUnresolved} onChange={event => setIncludeUnresolved(event.target.checked)}/>{labels.unresolved}</label><button className="secondary-button" onClick={() => void refresh()}>{t.reset}</button></div>
-    {projection && <div className="graph-layout" aria-label={labels.title}><section className="graph-node-list" aria-label={labels.nodes}>{projection.nodes.slice(0, 240).map(node => <button key={node.id} className={`graph-node graph-node-${node.kind.toLowerCase()}${node.unresolved ? ' unresolved' : ''}`} onDoubleClick={() => openNode(node)} onKeyDown={event => { if (event.key === 'Enter') openNode(node); }}><span className="graph-node-kind">{node.kind}</span><strong>{node.label}</strong><small>{node.path ?? (node.unresolved ? labels.unresolved : '')}</small></button>)}</section><section className="graph-edge-list" aria-label={labels.edges}>{projection.edges.slice(0, 480).map(edge => <div key={edge.id} className="graph-edge"><span>{edge.kind}</span><strong>{projection.nodes.find(node => node.id === edge.source)?.label ?? edge.source}</strong><b>â†’</b><strong>{projection.nodes.find(node => node.id === edge.target)?.label ?? edge.target}</strong></div>)}{projection.truncated && <p className="graph-truncated">{labels.truncated}</p>}</section></div>}
-    {notice && <small className="vault-notice">{notice}</small>}
-  </div>;
-}
-
-function VaultCanvasSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopVaultRuntime | undefined>(getDesktopVaultRuntime);
-  const [canvases, setCanvases] = React.useState<readonly Pick<DesktopVaultCanvasDocument, 'id' | 'revision' | 'metadata'>[]>([]);
-  const [document, setDocument] = React.useState<DesktopVaultCanvasDocument>();
-  const [selected, setSelected] = React.useState<string[]>([]);
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×úß¤èµ©hºÚn¶X§zÍZ[\Ü™XXİœ›ÛH	Ü™XXİ	ÎÂš[\ÜÂˆXİ]š]P˜\’][KˆÛÛ^›İšY\”™YÚ\İKˆ\ÚİÜÚ[ÛÛ›Û\‹ˆ\ÚİÜX‹ˆTÒÕÔÔURPÒ×ĞĞTT‘WÑU‘S•ˆÙ^\İÛ™SØš™Xİ™Y™\™[˜ÙKˆ[™S›ÙKˆÚ[ÛÛ[X[™ˆÜ™X]QY˜][ÛÛ^™YÚ\İKˆY˜][Ú[ÛÛ[X[™ËˆÙ^\İÛ™S[šÑ›Ü”™Y™\™[˜ÙKˆ\Ôš[X\S[ÙYšY\‹ˆØš™Xİ]Kˆ\œÙRÙ^\İÛ™S[šËˆ™\ÛÛ™SÛ[šX›Ş[œ]ŸHœ›ÛH	Ë‹Ù\ÚİÜ\Ú[[[Ù[	ÎÂš[\Ü	Ë‹Ù\ÚİÜ\Ú[˜ÜÜÉÎÂš[\Ü	Ë‹Ù\ÚİÜ\›ÙXİ^˜][Û‹˜ÜÜÉÎÂš[\ÜÙÛÕ\›œ›ÛH	Ë‹‹Ë‹‹Ë‹‹Øœ˜[™[™ËÛÙÛÜËÛÙÛËœ™ÉÎÂš[\ÜÙÛÓØÚİ\\›œ›ÛH	Ë‹‹Ë‹‹Ë‹‹Øœ˜[™[™ËÛÙÛÜËÛÙÛÊİ^[Ù‹[ÙÛËœ™ÉÎÂš[\ÜÈXÛÛ‹XÛÛ]Û‹\HXÛÛ“˜[YHHœ›ÛH	Ë‹Ù\ÚİÜZXÛÛœÉÎÂš[\ÜÈ\H\ÚİÜ™Y™\™[˜Ù\ÈHœ›ÛH	Ë‹Ù\ÚİÜ\™Y™\™[˜Ù\ÉÎÂš[\ÜÂˆ\Q\ÚİÜÙ][™ÜËˆTÒÕÔĞPĞÑS•Ëˆ\ÚİÜ[YPÛÛÜœËˆ\ÚİÜÙ][™ÜÔİÜ™KˆTÒÕÔÔÑUS‘×Ô‘QÒTÕ–Kˆš[™\ÚİÜÚÜİ]ÛÛ™›XİËˆ\Ñ\ÚİÜÙ\ÜÚ[Û”™\İÜ™Q[˜X›YˆÙ][™ÜÑ›ÜØ]YÛÜKˆ\H\ÚİÜÛÛÜ“İ™\œšY\Ëˆ\H\ÚİÜ™\Ù]Yˆ\H\ÚİÜÙ][™ÑYš[š][Û‹ˆ\H\ÚİÜÙ][™ĞØ]YÛÜKˆ\H\ÚİÜÙ][™ÒYˆ\H\ÚİÜÙ][™ÔØÛÜKˆ\H\ÚİÜÙ][™ÜĞÛÛ^ˆ\H\ÚİÜÙ][™ÜÑØİ[Y[ˆ\H\ÚİÜÙ][™ÜÒ[\Ü™]šY]Ëˆ\H\ÚİÜÙ][™ÜÔÛ˜\Úİˆ\H\ÚİÜÚÜİ]ÛÛ™›Xİˆ\HÛYTÙXİ[Û’Yˆ˜[Y]Pİ\İÛPÜÜËŸHœ›ÛH	Ë‹Ù\ÚİÜ\Ù][™ÜÉÎÂš[\ÜÈÙ]\ÚİÜØ[[™\”[[YKİXœØÜšX™Q\ÚİÜØ[[™\”[[YK\H\ÚİÜØ[[™\‘]™[\H\ÚİÜØ[[™\”[[YHHœ›ÛH	Ë‹Ù\ÚİÜXØ[[™\‹\[[YIÎÂš[\ÜÈÙ]\ÚİÜ˜][[[YKİXœØÜšX™Q\ÚİÜ˜][[[YK\H\ÚİÜ˜][Ø[˜\ÑØİ[Y[\H\ÚİÜ˜][Ü˜\›Ú™Xİ[Û‹\H\ÚİÜ˜][›İK\H\ÚİÜ˜][[[YHHœ›ÛH	Ë‹Ù\ÚİÜ]˜][\[[YIÎÂš[\ÜÈÙ]\ÚİÜÚÚ[[[YKİXœØÜšX™Q\ÚİÜÚÚ[[[YK\H\ÚİÜÚÚ[[[YHHœ›ÛH	Ë‹Ù\ÚİÜ\ÚÚ[\[[YIÎÂš[\ÜÈÙ]\ÚİÜØY™]T[[YKİXœØÜšX™Q\ÚİÜØY™]T[[YK\H\ÚİÜØY™]T[[YHHœ›ÛH	Ë‹Ù\ÚİÜ\ØY™]K\[[YIÎÂš[\ÜÈÙ]\ÚİÜ[YÜš]T[[YKİXœØÜšX™Q\ÚİÜ[YÜš]T[[YK\H\ÚİÜ[YÜš]T[[YHHœ›ÛH	Ë‹Ù\ÚİÜZ[YÜš]K\[[YIÎÂš[\ÜÈÙ]\ÚİÜZ[T[[YKİXœØÜšX™Q\ÚİÜZ[T[[YK\H\ÚİÜZ[PœšYY‹\H\ÚİÜZ[R][K\H\ÚİÜZ[T[[YHHœ›ÛH	Ë‹Ù\ÚİÜYZ[K\[[YIÎÂš[\ÜÈÙ]\ÚİÜØ[Ô[[YKİXœØÜšX™Q\ÚİÜØ[Ô[[YK\H\ÚİÜØ[Ô[[YHHœ›ÛH	Ë‹Ù\ÚİÜXØ[Ë\[[YIÎÂš[\ÜÈÙ]\ÚİÜX›XØ][Û”[[YKİXœØÜšX™Q\ÚİÜX›XØ][Û”[[YK\H\ÚİÜX›XØ][Û”[[YK\H\ÚİÜX›XØ][Û”İ]K\H\ÚİÜX›XØ][Û•š\ÚXš[]HHœ›ÛH	Ë‹Ù\ÚİÜ\X›XØ][Û‹\[[YIÎÂš[\ÜÈÙ]\ÚİÜÛÛX›Ü˜][Û”[[YKİXœØÜšX™Q\ÚİÜÛÛX›Ü˜][Û”[[YK\H\ÚİÜÛÛX›Ü˜][Û”[[YHHœ›ÛH	Ë‹Ù\ÚİÜXÛÛX›Ü˜][Û‹\[[YIÎÂš[\ÜÈÙ]\ÚİÜX\Ô[[YKİXœØÜšX™Q\ÚİÜX\Ô[[YK\H\ÚİÜX\XÙK\H\ÚİÜX\™[™\‹\H\ÚİÜX\›İ]K\H\ÚİÜX\Ô[[YK\H\ÚİÜX\Ôİ\™˜XÙTİ]HHœ›ÛH	Ë‹Ù\ÚİÜ[X\Ë\[[YIÎÂš[\ÜÈÙ]\ÚİÜXZ[[[YKİXœØÜšX™Q\ÚİÜXZ[[[YK\H\ÚİÜXZ[XØÛİ[\H\ÚİÜXZ[Y™\ÜË\H\ÚİÜXZ[˜Y\H\ÚİÜXZ[›Û\‹\H\ÚİÜXZ[Y\ÜØYÙK\H\ÚİÜXZ[İ]›Ş[K\H\ÚİÜXZ[[[YHHœ›ÛH	Ë‹Ù\ÚİÜ[XZ[\[[YIÎÂš[\ÜÈÙ]\ÚİÜÛÛ[Z]T[[YKİXœØÜšX™Q\ÚİÜÛÛ[Z]T[[YK\H\ÚİÜÛÛ[Z]Q]šXÙK\H\ÚİÜÛÛ[Z]R][K\H\ÚİÜÛÛ[Z]SØš™Xİ\K\H\ÚİÜÛÛ[Z]T[[YHHœ›ÛH	Ë‹Ù\ÚİÜXÛÛ[Z]K\[[YIÎÂš[\ÜÈÙ]\ÚİÜ™X\˜Q^Ú[™ÙT[[YKİXœØÜšX™Q\ÚİÜ™X\˜Q^Ú[™ÙT[[YK\H\ÚİÜ™X\˜Q[™Ú[\H\ÚİÜ™X\˜Q^Ú[™ÙT[[YK\H\ÚİÜ™X\˜SÙ™™\‹\H\ÚİÜ™X\˜U˜[œÙ™\ˆHœ›ÛH	Ë‹Ù\ÚİÜ[™X\˜KY^Ú[™ÙK\[[YIÎÂš[\ÜÈÙ]\ÚİÜİÜÔ[[YKİXœØÜšX™Q\ÚİÜİÜÔ[[YK\H\ÚİÜİĞ[[K\H\ÚİÜİĞ\ÜÙ]\H\ÚİÜİÜÔ[[YHHœ›ÛH	Ë‹Ù\ÚİÜ\İÜË\[[YIÎÂš[\ÜÈÙ]\ÚİÜÙX“Xœ˜\T[[YKİXœØÜšX™Q\ÚİÜÙX“Xœ˜\T[[YK\H\ÚİÜÙX“Xœ˜\Q[K\H\ÚİÜÙX“Xœ˜\T™XY\‹\H\ÚİÜÙX“Xœ˜\T[[YHHœ›ÛH	Ë‹Ù\ÚİÜ]ÙX‹[Xœ˜\K\[[YIÎÂš[\ÜÈÙ]\ÚİÜİXœØÜš\[ÛœÔ[[YKİXœØÜšX™Q\ÚİÜİXœØÜš\[ÛœÔ[[YK\H\ÚİÜİXœØÜš\[Û‘[K\H\ÚİÜİXœØÜš\[Û”™XY\‹\H\ÚİÜİXœØÜš\[ÛœÔ[[YHHœ›ÛH	Ë‹Ù\ÚİÜ\İXœØÜš\[ÛœË\[[YIÎÂš[\ÜÈÙ]\ÚİÜ\ÚÜÔ[[YKİXœØÜšX™Q\ÚİÜ\ÚÜÔ[[YK\H\ÚİÜ\ÚË\H\ÚİÜ\ÚÔ[[YHHœ›ÛH	Ë‹Ù\ÚİÜ]\ÚÜË\[[YIÎÂš[\ÜÈÙ]\ÚİÜÛÛXİÔ[[YKİXœØÜšX™Q\ÚİÜÛÛXİÔ[[YK\H\ÚİÜÛÛXİ\H\ÚİÜÛÛXİÔ[[YHHœ›ÛH	Ë‹Ù\ÚİÜXÛÛXİË\[[YIÎÂš[\ÜÈÙ]\ÚİÜ[˜›Ş[[YKİXœØÜšX™Q\ÚİÜ[˜›Ş[[YK\H\ÚİÜ[˜›Ş[[YHHœ›ÛH	Ë‹Ù\ÚİÜZ[˜›Ş\[[YIÎÂš[\ÜÈÙ]\ÚİÜš[\Ô[[YKİXœØÜšX™Q\ÚİÜš[\Ô[[YK\H\ÚİÜš[Q›Û\‹\H\ÚİÜš[T›Ú™Xİ[Û‹\H\ÚİÜš[\Ô[[YHHœ›ÛH	Ë‹Ù\ÚİÜYš[\Ë\[[YIÎÂš[\ÜÈÙ]\ÚİÜØİ[Y[Ô[[YKİXœØÜšX™Q\ÚİÜØİ[Y[Ô[[YK\H\ÚİÜØİ[Y[Ô[[YHHœ›ÛH	Ë‹Ù\ÚİÜYØİ[Y[Ë\[[YIÎÂš[\ÜÈÙ]\ÚİÜØ\\™T[[YKİXœØÜšX™Q\ÚİÜØ\\™T[[YK\H\ÚİÜØ\\™T[[YHHœ›ÛH	Ë‹Ù\ÚİÜXØ\\™K\[[YIÎÂš[\ÜÈÙ]ØØ[\ÚİÜ›Ùš[K\H\ÚİÜØØ[Øİ[Y[Ô[[YHHœ›ÛH	Ë‹Ù\ÚİÜ[ØØ[\[[YIÎÂš[\ÜÈÙ]\ÚİÜ]\ÚXÔ[[YKÙ]\ÚİÜÚÜÔ[[YKÙ]\ÚİÜšY[Ô[[YKİXœØÜšX™Q\ÚİÜ]\ÚXÔ[[YKİXœØÜšX™Q\ÚİÜÚÜÔ[[YKİXœØÜšX™Q\ÚİÜšY[Ô[[YK\H\ÚİÜ]\ÚXÔ[[YK\H\ÚİÜÚÜÔ[[YK\H\ÚİÜšY[Ô[[YHHœ›ÛH	Ë‹Ù\ÚİÜ[YYXK\[[YIÎÂš[\ÜÈXÚÑ\ÚİÜš[HHœ›ÛH	Ë‹Ù\ÚİÜZÜİXœšYÙIÎÂš[\ÜÈÙ]\ÚİÜRT[[YKİXœØÜšX™Q\ÚİÜRT[[YK\H\ÚİÜRT[[YK\H\ÚİÜØØ[RT›İšY\’Ú[™\H\ÚİÜØØ[RS[Ù[Hœ›ÛH	Ë‹Ù\ÚİÜXZK\[[YIÎÂš[\ÜÈÙ]\ÚİÜ\ØÛİ™\T[[YKİXœØÜšX™Q\ÚİÜ\ØÛİ™\T[[YK\H\ÚİÜ\ØÛİ™\T[[YHHœ›ÛH	Ë‹Ù\ÚİÜY\ØÛİ™\K\[[YIÎÂš[\ÜÈÜ™X]Q\ÚİÜRPÛÛ™\œØ][Û‹™XY\ÚİÜRPÛÛ™\œØ][ÛœËÜš]Q\ÚİÜRPÛÛ™\œØ][ÛœË\H\ÚİÜRPÛÛ™\œØ][ÛˆHœ›ÛH	Ë‹Ù\ÚİÜXZKXÛÛ™\œØ][ÛœÉÎÂš[\ÜÈÙ]\ÚİÜ™]ÛÜšÔ[[YKİXœØÜšX™Q\ÚİÜ™]ÛÜšÔ[[YK\H\ÚİÜ™]ÛÜšÔ[[YHHœ›ÛH	Ë‹Ù\ÚİÜ[™]ÛÜšË\[[YIÎÂš[\Ü\HÈØ\\™Q\İ[˜][Û’Ú[™Hœ›ÛH	ĞÙ^\İÛ™KØÛÜ™IÎÂš[\ÜÈ\ÚİÜÚ[™İĞœšYÙKÙ]\ÚİÜÚ[™İĞÛÛ^\Ñ\ÚİÜ[ØœÙ\™Q\ÚİÜÚ[™İÑÙ[ÛY]K™\]Y\İ\ÚİÜ]Z]™\İÜ™Q]XÚYÚ[™İÜÈHœ›ÛH	Ë‹Ù\ÚİÜ]Ú[™İË\[[YIÎÂš[\ÜÈÜ™X]Q\ÚİÜXİ[ÛÛÛ[X[™ÈHœ›ÛH	Ë‹Ù\ÚİÜXXİ[ÛœÉÎÂš[\ÜÈÛÛ™Q\ÚİÜ˜[œÙ™\•X‹Ü™X]Q\ÚİÜ˜[œÙ™\’YTÒÕÔÕP—ÕS”Ñ‘T—ÑUKTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÑÓWÑU‘S•TÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÔÕÔQÑWÒÑVK[Z]\ÚİÜÚ[™İÕ˜[œÙ™\‹\İ[‘\ÚİÜÚ[™İÕ˜[œÙ™\œË\œÙQ\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[\H\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[\H\ÚİÜÚ[™İÕ˜[œÙ™\”İ\Hœ›ÛH	Ë‹Ù\ÚİÜ]Ú[™İË]˜[œÙ™\‰ÎÂ‚\HØØ[HH	Ù[‰È	ÜIÎÂ‚˜ÛÛœİÛÜHHÂˆ[ˆÂˆØ\\™Nˆ	Ô]ZXÚÈØ\\™IËØ\\™R[ˆ	ÔØ]™H^[šÜËš[\È[™™Y™\™[˜Ù\ÈÈ[İ\ˆš]˜]HÜXÙK‰ËØ\\™TXÙZÛ\ˆ	Ô\İH^Üˆ[ˆÎ‹ËÈT“8 )‰ËØ\\™PÛ\›Ø\™ˆ	ĞØ\\™HÛ\›Ø\™Û˜ÙIËØ\\™Pœ›İÜÙ\ˆ	ĞØ\\™Hİ\œ™[YÙIËØ\\™TÙ[Xİ[Ûˆ	ĞØ\\™HÙ[Xİ[Û‰ËØ\\™Q›Üˆ	Ñ›ÜHš[HÜˆ›Û\ˆ\™IËØ\\™U˜^Nˆ	Ôš]˜]HØ\\™IËØ\\™S›Ô[[YNˆ	ĞØ\\™H\È›İÛÛ›™XİYÈ^[œ]İ[ÛÜšÜÈØØ[K‰ËØ\\™S›Ò][\Îˆ	Ó›İ[™ÈØ\\™YY]‰ËØ\\™T›İ]Nˆ	Ô›İ]IËØ\\™Q\ÛZ\ÜÎˆ	Ñ\ÛZ\ÜÉËØ\\™T™\İÜ™Nˆ	Ô™\İÜ™IËØ\\™T™]šY]Îˆ	Ô™]šY]È\İ[˜][Û‰ËØ\\™PÛÛ™š\›Nˆ	ĞÛÛ™š\›H›İ]IËØ\\™TÛİ\˜ÙNˆ	ÔÛİ\˜ÙIËØ\\™Tİ]Nˆ	Ôİ]IËØ\\™TİYÙÙ\İ[ÛœÎˆ	ÔİYÙÙ\İ[ÛœÉËØ\\™U[œØY™Nˆ	ÓÛ›HØY™H
+ÊH[šÜÈ[™Ù^\İÛ™H[šÜÈ\™HXØÙ\Y‰Ëˆ[˜›Şˆ	Ò[˜›Ş	ËXZ[ˆ	Ñ^\›˜[[XZ[	ËˆİXœØÜš\[ÛœÎˆ	ÔİXœØÜš\[ÛœÉËˆ™X\˜Nˆ	Ó™X\˜H^Ú[™ÙIËˆ™X\˜U]Nˆ	Ó™X\˜H^Ú[™ÙIË™X\˜P›İ[™\Nˆ	Ó™X\˜H\ØÛİ™\H\È[›Û[[İ\Ëˆ˜[œÙ™\œÈİ^H[˜Ü\Y[™İ\Û›HY\ˆ[İ\ˆXİ[Û‹‰Ë™X\˜U[˜]˜Z[X›Nˆ	Ó™X\˜H^Ú[™ÙH\È›İÛÛ›™XİY‰Ë™X\˜T™XÙZ]™Nˆ	Ô™XÙZ]™H™X\˜IË™X\˜TİÜˆ	ÔİÜ™XÙZ]š[™ÉË™X\˜T\ˆ	ÔÚİÈ™XÙZ]™HT‰Ë™X\˜T™Yœ™\Úˆ	Ô™Yœ™\Ú™X\˜IË™X\˜S›Ñ[™Ú[Îˆ	Ó›È™X\˜H]šXÙ\È\™Hš\ÚX›K‰Ë™X\˜SÙ™™\œÎˆ	Ò[˜ÛÛZ[™ÈÙ™™\œÉË™X\˜S›ÓÙ™™\œÎˆ	Ó›ÈÙ™™\œÈ]ØZ][™ÈÛÛœÙ[‰Ë™X\˜PXØÙ\ˆ	ĞXØÙ\	Ë™X\˜T™Z™Xİˆ	Ô™Z™Xİ	Ë™X\˜PØ[˜Ù[ˆ	ĞØ[˜Ù[	Ë™X\˜T™\İ[YNˆ	Ô™\İ[YIË™X\˜Q\ØÛÜİ\™Nˆ	ÒY[]H\È[›Û[[İ\È[[[İH^XÚ]HÚÛÜÙHšY[ÈÈ\ØÛÜÙK‰Ë™X\˜PYÛÛXİˆ	ĞYÛÛXİY\ˆ\ØÛÜİ\™IË™X\˜P[›Û[Z]Nˆ	Ó›ÈÔË\İ[˜ÙH˜XÚÚ[™Ë[˜Ûİ[\ˆ\İÜHÜˆ]]ÛX]XÈÛÛXİÜ™X][Û‹‰Ë™X\˜T™XÙZ]™Yˆ	Ô™XÙZ]™Y	Ë™X\˜TÚ\™T\ˆ	Ô™XÙZ]™HTˆ^\™\È]ZXÚÛH[™\ÈÛ›H›Üˆ™X\˜H^Ú[™ÙK‰ËˆÛYNˆ	ÒÛYIËÙX\˜Úˆ	ÔÙX\˜Ú	Ë]\ÚXÎˆ	Ó]\ÚXÉËšY[Îˆ	ÕšY[ÉËÚÜÎˆ	ÔÚÜÉËØØ[RNˆ	ÓØØ[RIËÛÛ›™Xİ]š]Nˆ	ĞÛÛ›™Xİ]š]IËYÙ[ˆ	ÒÙ^\İÛ™H\ÜÚ\İ[	Ë\ÚĞYÙ[ˆ	Ğ\ÚÈÙ^\İÛ™x )‰ËY\ÜØYÙ\Îˆ	ÓY\ÜØYÙ\ÉËÜXÙ\Îˆ	ÔÜXÙ\ÉË˜][ˆ	Õ˜][	ËØ[[™\ˆ	ĞØ[[™\‰ËÛÛXİÎˆ	ĞÛÛXİÉËX\Îˆ	ÓX\ÉËš[\Îˆ	Ñš[\ÉËØİ[Y[Îˆ	ÑØİ[Y[ÉËYYXNˆ	ÓYYXIËİÜÎˆ	ÔİÜÉËØ[Îˆ	ĞØ[ÉËÛÜšØ›Ø\™ˆ	ÕÛÜšØ›Ø\™	ËÙX“Xœ˜\Nˆ	ÕÙXˆXœ˜\IËÙX“Xœ˜\Q\ØÜš\[Ûˆ	ÔØ]™YYÙ\È[™™XY]\ˆ][\Èİ^H]˜Z[X›HÙ™›[™KˆH™XY\ˆ™]™\ˆÛÛXİÈ^\›˜[Ú]\Ë‰ËÛÛX›Ü˜][Ûˆ	ĞÛÛX›Ü˜][Û‰ËÛÛ[Z]Nˆ	ĞÛÛ[Z]IËYÚ[œÎˆ	ÔYÚ[œÉËÙ][™ÜÎˆ	ÔÙ][™ÜÉËØØ[U[˜]˜Z[X›Nˆ	ĞØ[È\™H›İÛÛ™šYİ\™YÛˆ\È]šXÙHY]‰ËØ[›İ[™\Nˆ	ĞØ[È™YY[ˆ\›İ™YÛÛ›™Xİ[ÛˆY]Ùˆ™XÛÜ™[™È™]™\ˆİ\È]]ÛX]XØ[K‰ËØ[YYXT™XYNˆ	ÓYYXH™XYIËØ[YYXU[˜]˜Z[X›Nˆ	ÓYYXH[˜]˜Z[X›IË›ĞXİ]™PØ[ˆ	Ó›ÈXİ]™HØ[‰ËØ[\İÜNˆ	ĞØ[\İÜIËXØÙ\Ø[ˆ	ĞXØÙ\	Ë™Z™XİØ[ˆ	Ô™Z™Xİ	Ë]]Nˆ	Ó]]IË[›]]Nˆ	Õ[›]]IËØ[Y\˜SÛˆ	Ñ[˜X›HØ[Y\˜IËØ[Y\˜SÙ™ˆ	Ñ\ØX›HØ[Y\˜IËØÜ™Y[“Ûˆ	ÔÚ\™HØÜ™Y[‰ËØÜ™Y[“Ù™ˆ	ÔİÜØÜ™Y[ˆÚ\™IË[™Ø[ˆ	Ñ[™Ø[	Ëˆ˜XÚÎˆ	Ğ˜XÚÉË›ÜØ\™ˆ	Ñ›ÜØ\™	ËÛ[šX›Şˆ	ÔÙX\˜ÚØš™XİËÛÛ[X[™Ë[šÜËÜˆ\ÚÈÙ^\İÛ™x )‰ËÛÛ[X[™ˆ	ĞÛÛ[X[™[]IË™]Îˆ	Ó™]ÉËÛÜšÜÜXÙNˆ	ÕÛÜšÜÜXÙIËÛÛ^ˆ	ĞÛÛ^	ËYÙ[ØÛÜNˆ	ÔÙ[XİYØš™Xİ	Ë\ÚÎˆ	Ğ\ÚÈÙ^\İÛ™IËÛÜÙNˆ	ĞÛÜÙIË\XØ]Nˆ	Ñ\XØ]IË[ˆ	Ô[ˆX‰Ë[œ[ˆ	Õ[œ[ˆX‰ËÜ]Üš^›Û[ˆ	ÔÜ]Üš^›Û[IËÜ]™\XØ[ˆ	ÔÜ]™\XØ[IË™\İÜ™Nˆ	Ô™[Ü[ˆÛÜÙYX‰Ëİ\İÛZ^™Nˆ	Ğİ\İÛZ^™HXİ]š]H˜\‰ËYNˆ	ÒYIËÚİÎˆ	ÔÚİÉË[İ™U\ˆ	Ó[İ™H\	Ë[İ™QİÛˆ	Ó[İ™HİÛ‰Ë[\Nˆ	ÓÜ[ˆ[ˆØš™XİÈ™YÚ[‰ËÜ[ˆ	ÓÜ[‰ËÜ[’[•Xˆ	ÓÜ[ˆ[ˆ™]ÈX‰ËØØ[ˆ	ÓØØ[Yš\œİ	Ëš]˜XŞNˆ	Ôš]˜]HÛÛ^İ^\ÈÛˆ\È]šXÙIËXÙZÛ\ˆ	Ó›İÛÛ›™XİYY]	ËXÙZÛ\›ÙNˆ	Õ\È™X]\™HÚ[\X\ˆÚ[ˆ]ÈØØ[ÛÛ›™Xİ[Ûˆ\È™XYK‰Ë™Y™\™[˜Ù\Îˆ	Ó[šÙYØš™XİÉË›Üˆ	Ñ›ÜH™Y™\™[˜ÙH\™IË™[]Yˆ	Ô™[]YØš™XİÉË›Ü\Y\Îˆ	Ô›Ü\Y\ÉË[šÜÎˆ	Ó[šÜÉËXİ]š]Nˆ	ĞXİ]š]IËÙX\˜Ú[ˆ	ÔÙX\˜Ú\ÈØØ[[™\›Z\ÜÚ[Û‹X]Ø\™K‰ËYÙ[[ˆ	ÓÛ›HHÙ[XİYØš™Xİ\È\ÙYˆÙ^\İÛ™HÙ\È›İÙ[™HÚÛHÛÜšÜÜXÙH]]ÛX]XØ[K‰ËÙ[™ˆ	Ô[ˆØØ[IË›ÓØš™Xİˆ	Ó›ÈØš™XİÙ[XİY	Ëœ›İÜÙ\”š]˜XŞNˆ	Ğœ›İÜÙ\ˆYÙ\ÈÈ›İ™XÙZ]™HÙ^\İÛ™Hš]˜]HÛÛ^]]ÛX]XØ[K‰Ëİ\œ™[ÛÜšÜÜXÙNˆ	Ğİ\œ™[ÛÜšÜÜXÙIË™]ÕÛÜšÜÜXÙNˆ	Ó™]ÈÛÜšÜÜXÙIË™[˜[YNˆ	Ô™[˜[YIË[]Nˆ	Ñ[]IËİÚ]Ú\ˆ	ÔİÚ]ÚÛÜšÜÜXÙIËÛ™Nˆ	ÑÛ™IË™\Ù]ˆ	Ô™\Ù]	ËYˆ	ĞY	ËØš™XİYˆ	ÓØš™XİQ	ËÛÛ[X[™[ˆ	Õ\HÈš[\ˆÛÛ[X[™ø )‰Ë›ĞÛÛ[X[™Îˆ	Ó›ÈX]Ú[™ÈÛÛ[X[™ÉËX“\İˆ	ÕXˆ\İ	ËXœÎˆ	İXœÉË˜]šYØ]Nˆ	Ó˜]šYØ]IË[ˆ	Ô[‰ËÛİ\˜ÙNˆ	ÜÛİ\˜ÙIËÛİ\˜Ù\Îˆ	ÜÛİ\˜Ù\ÉËœ›İÜÙ\ˆ	Ğœ›İÜÙ\‰Ë™]š\Ú[Û“X™[ˆ	Ü™]š\Ú[Û‰Ë™\İ[YNˆ	Ô™\İ[YIËÜ[’[“™]ÕÚ[™İÎˆ	ÓÜ[ˆ[ˆ™]ÈÚ[™İÉË[İ™UX•Îˆ	Ó[İ™HXˆÉËY\™ÙUÚ[™İÒ[Îˆ	ÓY\™ÙHÚ[™İÈ[ÉËÛÜÙSİ\•XœÎˆ	ĞÛÜÙHİ\ˆXœÉË]ZXÚĞXİ[ÛœÎˆ	Ô]ZXÚÈXİ[ÛœÉËY\ÜØYÙNˆ	ÓY\ÜØYÙIËÜ›İ\ˆ	ÑÜ›İ\	ËÜXÙNˆ	ÔÜXÙIË›İNˆ	Ó›İIËØ[˜\Îˆ	ĞØ[˜\ÉË]™[ˆ	ĞØ[[™\ˆ]™[	Ë\ÚÎˆ	Õ\ÚÉËš[Nˆ	Ñš[IËÛÛ[][š]Nˆ	ĞÛÛ[][š]IËØ]™Yˆ	ÔØ]™YØØ[IË[ÙNˆ	Ğ˜[[˜ÙY	Ëİ]\Îˆ	Ô™XYIËØÚÙYˆ	Ô\›Z\ÜÚ[Ûˆ™\]Z\™Y	ËÜ[›Øˆ	ÓÜ[ˆ›Øˆ›Ùš[IËÜ[Ú]ˆ	ÓÜ[ˆÚ]	ËÜ[‘š[Nˆ	ÓÜ[ˆš\š[IËÜ[”ÜXÙNˆ	ÓÜ[ˆš\ÜXÙIË\ÚĞX›İ]ˆ	Ğ\ÚÈX›İ]\ÈØš™Xİ	ËÛÛ™šYİ\™Nˆ	ĞÛÛ™šYİ\™IË[™İXYÙNˆ	Ó[™İXYÙIË[™Û\Úˆ	Ñ[™Û\Ú	Ë\ÜÚX[ˆ	ô(4`ô`t`t.´.4.IË^[œÚ[Û”Ûİˆ	Ñ^[œÚ[ÛœÈ[ˆÛ›HY\ˆ[İ\ˆ\›Z\ÜÚ[Û‹‰Ë™YYÕ\Ù\ˆ	Ó™YYÈİÛ™\ˆ[œ]	Ë›Ø\™ˆ	Ğ›Ø\™	Ë\İˆ	Ó\İ	Ë]\ÙNˆ	Ô]\ÙIËØ[˜Ù[ˆ	ĞØ[˜Ù[	Ë™]Nˆ	Ô™]IË\ÜÚYÛˆ	Ğ\ÜÚYÛ‰Ëš[Üš]Nˆ	Ôš[Üš]IËX›XØ][Ûˆ	ÔX›XØ][Û‰ËX›XØ][ÛY\\ˆ	ÔX›\Ú[™È™XÛÛY\È]˜Z[X›HY\ˆ]\ÈÛÛ›™XİY[ˆÙ][™ÜË‰ËX›XØ][Û‘\ØÛÜİ\™Nˆ	Ñ˜YÈİ^HØØ[[[HİÛ™\ˆ^XÚ]HX›\Ú\È[KˆX›XÈÛÛ[X^H™HØXÚYÈ[›\İY\È›İÙXÜ™]‰Ëš\ÚXš[]Nˆ	Õš\ÚXš[]IËX›XÎˆ	ÔX›XÉË[›\İYˆ	ĞH[šÉËØÛÜYˆ	ÔØÛÜY	Ë˜Yˆ	Ñ˜Y	Ë™]š\Ú[Ûˆ	Ô™]š\Ú[Û‰Ë™]šY]Îˆ	Ô™]šY]ÉËX›\Úˆ	ÔX›\Ú	Ë[œX›\Úˆ	Õ[œX›\Ú	ËX›\ÚÛÛ™š\›Nˆ	ÔX›\Ú\ÈÛÛ[Ú]HÙ[XİYš\ÚXš[]OÉËÚ\™S[šÎˆ	ÒÙ^\İÛ™H[šÉË›Ô™]šY]Îˆ	Ó›È™]šY]È]˜Z[X›K‰ËÛÛ[Z]U]Nˆ	Ñ]šXÙHÛÛ[Z]IËÙ[™Ñ]šXÙNˆ	ÔÙ[™È]šXÙIËÛÛ[YSÛ‘]šXÙNˆ	ĞÛÛ[YHÛˆ]šXÙIË]šXÙR[˜›Şˆ	Ñ]šXÙH[˜›Ş	Ë]šXÙ\Îˆ	Ñ]šXÙ\ÉË›ĞÛÛ[Z]T[[YNˆ	Ñ]šXÙK]ËY]šXÙHÛÛ[Z]H\È›İÛÛ›™XİYY]‰Ë›Ñ]šXÙ\Îˆ	Ó›È\İY]šXÙ\È\™H]˜Z[X›K‰Ë›Ò[˜›Şˆ	Ó›È[˜ÛÛZ[™È[™Ù™œË‰ËÚÛÜÙQ]šXÙNˆ	ĞÚÛÜÙHH\İY]šXÙIËÙ[™ÛÜšÜÜXÙNˆ	ÔÙ[™İ\œ™[ÛÜšÜÜXÙIËÛÛ[YUÛÜšÜÜXÙNˆ	ĞÛÛ[YHİ\œ™[ÛÜšÜÜXÙIË™Yœ™\Úˆ	Ô™Yœ™\Ú	Ë›\Úˆ	ÕH[]™\IË[]™\™Yˆ	Ñ[]™\™YÈ]šXÙIËÜ[™Yˆ	ÓÜ[™Y	ËXØÙ\Yˆ	ĞXØÙ\Y	Ë]Y]YYˆ	Ô]Y]YY	ËÙ[™[™Îˆ	ÔÙ[™[™ÉË˜Z[Yˆ	Ñ˜Z[Y	Ë^\™Yˆ	Ñ^\™Y	ËØ[˜Ù[Yˆ	ĞØ[˜Ù[Y	ËÙ™›[™Nˆ	ÓÙ™›[™HÜˆØZ][™È›ÜˆH›İ]IË]˜Z[X›Nˆ	Ğ]˜Z[X›IË™XÙ[P]˜Z[X›Nˆ	Ô™XÙ[H]˜Z[X›IË›İ]˜Z[X›Nˆ	Ó›İ]˜Z[X›IË]]ÛX]XĞÛ\›Ø\™ˆ	Ğ]]ÛX]XÈÛ\›Ø\™ÛÛ[Z]IË]]ÛX]XĞÛ\›Ø\™Ø\›š[™Îˆ	ÓÙ™ˆHY˜][ˆ[˜X›[™È™\]Z\™\È^XÚ]İÛ™\ˆÛÛ™š\›X][Ûˆ[™™]™\ˆ]]Ë\\İ\Ë‰ËÛ\›Ø\™^XÚ]ˆ	ĞÛ\›Ø\™\È^XÚ][Û›NÈ›È]]Ë\\İHÜˆÛ\›Ø\™\İÜH\ÈİÜ™Y‰Ë[™Ù™›İ[™\Nˆ	ĞÛÛ›™XİH\İY]šXÙH[ˆÙ][™ÜËˆ˜[œÙ™\œÈ\™H[˜Ü\Y[™İ\Û›HY\ˆ[İ\ˆXİ[Û‹‰ËˆKˆNˆÂˆØ\\™Nˆ	ô$tbô`t`´`4bô.H4-ô,4at,´,4`‰ËØ\\™R[ˆ	ô(t/´at`4,4/tcô.t`´-H4`´-t.´`t`‹4`t`tbô.ô.´.4a4,4.t.ôbÈ4.4`t`tbô.ô.´.4/t,4/´,tb´-t.´`´bÈ4,ˆ4.ô.4aô/t/´-H4/ô`4/´`t`´`4,4/t`t`´,´/‹‰ËØ\\™TXÙZÛ\ˆ	ô$´`t`´,4,´c4`´-H4`´-t.´`t`ˆ4.4.ô.T“Î‹Ëø )‰ËØ\\™PÛ\›Ø\™ˆ	ô%ô,4at,´,4`´.4`´c4,t`ôa4-t`4/´,t/4-t/t,4/´-4.4/H4`4,4-ÉËØ\\™Pœ›İÜÙ\ˆ	ô%ô,4at,´,4`´.4`´c4`´-t.´`ôbt`ôcˆ4`t`´`4,4/t.4a´`ÉËØ\\™TÙ[Xİ[Ûˆ	ô%ô,4at,´,4`´.4`´c4,´bô-4-t.ô-t/t.4-IËØ\\™Q›Üˆ	ô'ô-t`4-t`´,4bt.4`´-H4`tc´-4,4a4,4.t.È4.4.ô.4/ô,4/ô.´`ÉËØ\\™U˜^Nˆ	ô&ô.4aô/tbô.H4-ô,4at,´,4`‰ËØ\\™S›Ô[[YNˆ	ô%ô,4at,´,4`ˆ4`t-t.taô,4`H4/t-t-4/´`t`´`ô/ô-t/NÈ4`´-t.´`t`ˆ4/4/´-´/t/ˆ4`t/´at`4,4/t.4`´c4.ô/´.´,4.ôc4/t/‹‰ËØ\\™S›Ò][\Îˆ	ô'ô/´.´,4/t.4aô-t,ô/ˆ4/t-H4-ô,4at,´,4aô-t/t/‹‰ËØ\\™T›İ]Nˆ	ô'4,4`4b4`4`ô`´.4-ô.4`4/´,´,4`´c	ËØ\\™Q\ÛZ\ÜÎˆ	ô(t.´`4bô`´c	ËØ\\™T™\İÜ™Nˆ	ô$´/´`t`t`´,4/t/´,´.4`´c	ËØ\\™T™]šY]Îˆ	ô'ô`4-t-4/ô`4/´`t/4/´`´`4/t,4-ô/t,4aô-t/t.4cÉËØ\\™PÛÛ™š\›Nˆ	ô'ô/´-4`´,´-t`4-4.4`´c4/4,4`4b4`4`ô`‰ËØ\\™TÛİ\˜ÙNˆ	ô&4`t`´/´aô/t.4.‰ËØ\\™Tİ]Nˆ	ô(t/´`t`´/´cô/t.4-IËØ\\™TİYÙÙ\İ[ÛœÎˆ	ô'ô`4-t-4.ô/´-´-t/t.4cÉËØ\\™U[œØY™Nˆ	ô'ô`4.4/t.4/4,4c´`´`tcÈ4`´/´.ôc4.´/ˆ4,t-t-ô/´/ô,4`t/tbô-H
+ÊKt`t`tbô.ô.´.4.4`t`tbô.ô.´.Ù^\İÛ™K‰Ëˆ[˜›Şˆ	ô$´at/´-4côbt.4-IËXZ[ˆ	ô$´/t-tb4/tcôcÈ4/ô/´aô`´,	ËˆİXœØÜš\[ÛœÎˆ	ô'ô/´-4/ô.4`t.´.	Ëˆ™X\˜Nˆ	ô'´,t/4-t/H4`4cô-4/´/	Ëˆ™X\˜U]Nˆ	ô'´,t/4-t/H4`4cô-4/´/	Ë™X\˜P›İ[™\Nˆ	ô'´,t/t,4`4`ô-´-t/t.4-H4`4cô-4/´/4,4/t/´/t.4/4/t/‹ˆ4'ô-t`4-t-4,4aô,4b4.4a4`4`ô-t`´`tcÈ4.4/t,4aô.4/t,4-t`´`tcÈ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4,´,4b4-t,ô/ˆ4-4-t.t`t`´,´.4cË‰Ë™X\˜U[˜]˜Z[X›Nˆ	ô'´,t/4-t/H4`4cô-4/´/4/t-H4/ô/´-4.´.ôc´aôdt/K‰Ë™X\˜T™XÙZ]™Nˆ	ô'ô`4.4/t.4/4,4`´c4`4cô-4/´/	Ë™X\˜TİÜˆ	ô'´`t`´,4/t/´,´.4`´c4/ô`4.4dt/	Ë™X\˜T\ˆ	ô'ô/´.´,4-ô,4`´cTˆ4-4.ôcÈ4/ô`4.4dt/4,	Ë™X\˜T™Yœ™\Úˆ	ô'´,t/t/´,´.4`´c4`t/ô.4`t/´.‰Ë™X\˜S›Ñ[™Ú[Îˆ	ô(ô`t`´`4/´.t`t`´,´,4`4cô-4/´/4/t-H4/t,4.t-4-t/tbË‰Ë™X\˜SÙ™™\œÎˆ	ô$´at/´-4côbt.4-H4/ô`4-t-4.ô/´-´-t/t.4cÉË™X\˜S›ÓÙ™™\œÎˆ	ô't-t`ˆ4/ô`4-t-4.ô/´-´-t/t.4.K4/´-´.4-4,4c´bt.4aH4`t/´,ô.ô,4`t.4cË‰Ë™X\˜PXØÙ\ˆ	ô'ô`4.4/tcô`´c	Ë™X\˜T™Z™Xİˆ	ô'´`´.´.ô/´/t.4`´c	Ë™X\˜PØ[˜Ù[ˆ	ô'´`´/4-t/t.4`´c	Ë™X\˜T™\İ[YNˆ	ô'ô`4/´-4/´.ô-´.4`´c	Ë™X\˜Q\ØÛÜİ\™Nˆ	ô&ô.4aô/t/´`t`´c4,4/t/´/t.4/4/t,4/ô/´.´,4,´bÈ4cô,´/t/ˆ4/t-H4,´bô,t-t`4-t`´-H4/ô/´.ôcÈ4-4.ôcÈ4`4,4`t.´`4bô`´.4cË‰Ë™X\˜PYÛÛXİˆ	ô%4/´,t,4,´.4`´c4.´/´/t`´,4.´`ˆ4/ô/´`t.ô-H4`4,4`t.´`4bô`´.4cÉË™X\˜P[›Û[Z]Nˆ	ô$t-t-ÈÔË4/´`´`t.ô-t-´.4,´,4/t.4cÈ4`4,4`t`t`´/´cô/t.4cË4.4`t`´/´`4.4.4,´`t`´`4-taÈ4.4,4,´`´/´/4,4`´.4aô-t`t.´/´,ô/ˆ4`t/´-ô-4,4/t.4cÈ4.´/´/t`´,4.´`´/´,‹‰Ë™X\˜T™XÙZ]™Yˆ	ô'ô/´.ô`ôaô-t/t/‰Ë™X\˜TÚ\™T\ˆ	ÔTˆ4-4.ôcÈ4/ô`4.4dt/4,4,tbô`t`´`4/ˆ4.4`t`´-t.´,4-t`ˆ4.4.4`t/ô/´.ôc4-ô`ô-t`´`tcÈ4`´/´.ôc4.´/ˆ4-4.ôcÈ4/´,t/4-t/t,4`4cô-4/´/‰ËˆÛYNˆ	ô$ô.ô,4,´/t,4cÉËÙX\˜Úˆ	ô'ô/´.4`t.‰Ë]\ÚXÎˆ	ô'4`ô-ôbô.´,	ËšY[Îˆ	ô$´.4-4-t/‰ËÚÜÎˆ	ÔÚÜÉËØØ[RNˆ	ô&ô/´.´,4.ôc4/tbô.HRIËÛÛ›™Xİ]š]Nˆ	ô(t,´cô-ôc	ËYÙ[ˆ	ô'ô/´/4/´bt/t.4.ˆÙ^\İÛ™IË\ÚĞYÙ[ˆ	ô(t/ô`4/´`t.4`´cÙ^\İÛ™x )‰ËY\ÜØYÙ\Îˆ	ô(t/´/´,tbt-t/t.4cÉËÜXÙ\Îˆ	ô'ô`4/´`t`´`4,4/t`t`´,´,	Ë˜][ˆ	ô)t`4,4/t.4.ô.4bt-IËØ[[™\ˆ	ô&´,4.ô-t/t-4,4`4c	ËÛÛXİÎˆ	ô&´/´/t`´,4.´`´bÉËX\Îˆ	ô&´,4`4`´bÉËš[\Îˆ	ô)4,4.t.ôbÉËØİ[Y[Îˆ	ô%4/´.´`ô/4-t/t`´bÉËYYXNˆ	ô'4-t-4.4,	ËİÜÎˆ	ô)4/´`´/´,ô`4,4a4.4.	ËØ[Îˆ	ô%ô,´/´/t.´.	ËÛÜšØ›Ø\™ˆ	ô(4,4,t/´aô,4cÈ4-4/´`t.´,	ËÙX“Xœ˜\Nˆ	ô$´-t,Kt,t.4,t.ô.4/´`´-t.´,	ËÙX“Xœ˜\Q\ØÜš\[Ûˆ	ô(t/´at`4,4/tdt/t/tbô-H4`t`´`4,4/t.4a´bÈ4.4/4,4`´-t`4.4,4.ôbÈ0ªô'ô`4/´aô.4`´,4`´c4/ô/´-ô-´-p®È4-4/´`t`´`ô/ô/tbÈ4/´a4.ô,4.t/Kˆ4$´`t`´`4/´-t/t/tbô.H4/ô`4/´`t/4/´`´`4/t-H4/´,t`4,4bt,4-t`´`tcÈ4.ˆ4,´/t-tb4/t.4/4`t,4.t`´,4/‰ËÛÛX›Ü˜][Ûˆ	ô(t/´,´/4-t`t`´/t,4cÈ4`4,4,t/´`´,	ËÛÛ[Z]Nˆ	ô(t,´cô-ôc4/4-t-´-4`È4`ô`t`´`4/´.t`t`´,´,4/4.	ËYÚ[œÎˆ	ô'ô.ô,4,ô.4/tbÉËÙ][™ÜÎˆ	ô't,4`t`´`4/´.t.´.	ËØØ[U[˜]˜Z[X›Nˆ	ô%ô,´/´/t.´.4/ô/´.´,4/t-H4/t,4`t`´`4/´-t/tbÈ4/t,4ct`´/´/4`ô`t`´`4/´.t`t`´,´-K‰ËØ[›İ[™\Nˆ	ô%4.ôcÈ4-ô,´/´/t.´/´,ˆ4/t`ô-´/t/ˆ4/ô/´-4.´.ôc´aô.4`´c4`4,4-ô`4-tb4dt/t/tbô.H4`t/ô/´`t/´,H4`t,´cô-ô.ˆ4%ô,4/ô.4`tc4/t-H4,´bô/ô/´.ô/tcô-t`´`tcÈ4,4,´`´/´/4,4`´.4aô-t`t.´.‰ËØ[YYXT™XYNˆ	ô'4-t-4.4,4,ô/´`´/´,´/‰ËØ[YYXU[˜]˜Z[X›Nˆ	ô'4-t-4.4,4/t-t-4/´`t`´`ô/ô/t/‰Ë›ĞXİ]™PØ[ˆ	ô$4.´`´.4,´/t/´,ô/ˆ4-ô,´/´/t.´,4/t-t`‹‰ËØ[\İÜNˆ	ô&4`t`´/´`4.4cÈ4-ô,´/´/t.´/´,‰ËXØÙ\Ø[ˆ	ô'ô`4.4/tcô`´c	Ë™Z™XİØ[ˆ	ô'´`´.´.ô/´/t.4`´c	Ë]]Nˆ	ô$´bô.´.ôc´aô.4`´c4/4.4.´`4/´a4/´/IË[›]]Nˆ	ô$´.´.ôc´aô.4`´c4/4.4.´`4/´a4/´/IËØ[Y\˜SÛˆ	ô$´.´.ôc´aô.4`´c4.´,4/4-t`4`ÉËØ[Y\˜SÙ™ˆ	ô$´bô.´.ôc´aô.4`´c4.´,4/4-t`4`ÉËØÜ™Y[“Ûˆ	ô'ô/´.´,4-ô,4`´c4ct.´`4,4/IËØÜ™Y[“Ù™ˆ	ô'´`t`´,4/t/´,´.4`´c4/ô/´.´,4-È4ct.´`4,4/t,	Ë[™Ø[ˆ	ô%ô,4,´-t`4b4.4`´c4-ô,´/´/t/´.‰Ëˆ˜XÚÎˆ	ô't,4-ô,4-	Ë›ÜØ\™ˆ	ô$´/ô-t`4dt-	ËÛ[šX›Şˆ	ô'ô/´.4`t.ˆ4/´,tb´-t.´`´/´,‹4.´/´/4,4/t-4`t`tbô.ô/´.ˆ4.4.ô.4,´/´/ô`4/´`HÙ^\İÛ™x )‰ËÛÛ[X[™ˆ	ô'ô,4.ô.4`´`4,4.´/´/4,4/t-	Ë™]Îˆ	ô't/´,´/´-IËÛÜšÜÜXÙNˆ	ô(4,4,t/´aô-t-H4/ô`4/´`t`´`4,4/t`t`´,´/‰ËÛÛ^ˆ	ô&´/´/t`´-t.´`t`‰ËYÙ[ØÛÜNˆ	ô$´bô,t`4,4/t/tbô.H4/´,tb´-t.´`‰Ë\ÚÎˆ	ô(t/ô`4/´`t.4`´cÙ^\İÛ™IËÛÜÙNˆ	ô%ô,4.´`4bô`´c	Ë\XØ]Nˆ	ô%4`ô,t.ô.4`4/´,´,4`´c	Ë[ˆ	ô%ô,4.´`4-t/ô.4`´c4,´.´.ô,4-4.´`ÉË[œ[ˆ	ô'´`´.´`4-t/ô.4`´c4,´.´.ô,4-4.´`ÉËÜ]Üš^›Û[ˆ	ô(4,4-ô-4-t.ô.4`´c4,ô/´`4.4-ô/´/t`´,4.ôc4/t/‰ËÜ]™\XØ[ˆ	ô(4,4-ô-4-t.ô.4`´c4,´-t`4`´.4.´,4.ôc4/t/‰Ë™\İÜ™Nˆ	ô'´`´.´`4bô`´c4-ô,4.´`4bô`´`ôcˆ4,´.´.ô,4-4.´`ÉËİ\İÛZ^™Nˆ	ô't,4`t`´`4/´.4`´c4/ô,4/t-t.ôc4-4-t.t`t`´,´.4.IËYNˆ	ô(t.´`4bô`´c	ËÚİÎˆ	ô'ô/´.´,4-ô,4`´c	Ë[İ™U\ˆ	ô$´,´-t`4aIË[İ™QİÛˆ	ô$´/t.4-ÉË[\Nˆ	ô'´`´.´`4/´.t`´-H4/´,tb´-t.´`‹4aô`´/´,tbÈ4/t,4aô,4`´c	ËÜ[ˆ	ô'´`´.´`4bô`´c	ËÜ[’[•Xˆ	ô'´`´.´`4bô`´c4,ˆ4/t/´,´/´.H4,´.´.ô,4-4.´-IËØØ[ˆ	ô(t/t,4aô,4.ô,4.ô/´.´,4.ôc4/t/‰Ëš]˜XŞNˆ	ô'ô`4.4,´,4`´/tbô.H4.´/´/t`´-t.´`t`ˆ4/´`t`´,4dt`´`tcÈ4/t,4`ô`t`´`4/´.t`t`´,´-IËXÙZÛ\ˆ	ô'ô/´.´,4/t-t-4/´`t`´`ô/ô/t/‰ËXÙZÛ\›ÙNˆ	ô+t`´,4,´/´-ô/4/´-´/t/´`t`´c4/ô/´cô,´.4`´`tcÈ4/ô/´`t.ô-H4/ô/´-4.´.ôc´aô-t/t.4cÈ4.ô/´.´,4.ôc4/t/´,ô/ˆ4.4`t`´/´aô/t.4.´,‰Ë™Y™\™[˜Ù\Îˆ	ô(t,´cô-ô,4/t/tbô-H4/´,tb´-t.´`´bÉË›Üˆ	ô'ô-t`4-t`´,4bt.4`´-H4`t`tbô.ô.´`È4`tc´-4,	Ë™[]Yˆ	ô(t,´cô-ô,4/t/tbô-H4/´,tb´-t.´`´bÉË›Ü\Y\Îˆ	ô(t,´/´.t`t`´,´,	Ë[šÜÎˆ	ô(t,´cô-ô.	ËXİ]š]Nˆ	ô$4.´`´.4,´/t/´`t`´c	ËÙX\˜Ú[ˆ	ô'ô/´.4`t.ˆ4.ô/´.´,4.ôc4/tbô.H4.4/ô`4/´,´-t`4cô-t`ˆ4`4,4-ô`4-tb4-t/t.4cË‰ËYÙ[[ˆ	ô&4`t/ô/´.ôc4-ô`ô-t`´`tcÈ4`´/´.ôc4.´/ˆ4,´bô,t`4,4/t/tbô.H4/´,tb´-t.´`‹ˆÙ^\İÛ™H4/t-H4/´`´/ô`4,4,´.ôcô-t`ˆ4,´`tdH4`4,4,t/´aô-t-H4/ô`4/´`t`´`4,4/t`t`´,´/ˆ4,4,´`´/´/4,4`´.4aô-t`t.´.‰ËÙ[™ˆ	ô$´bô/ô/´.ô/t.4`´c4.ô/´.´,4.ôc4/t/‰Ë›ÓØš™Xİˆ	ô'´,tb´-t.´`ˆ4/t-H4,´bô,t`4,4/IËœ›İÜÙ\”š]˜XŞNˆ	ô(t`´`4,4/t.4a´bÈ4,t`4,4`ô-ô-t`4,4/t-H4/ô/´.ô`ôaô,4c´`ˆ4/ô`4.4,´,4`´/tbô.H4.´/´/t`´-t.´`t`ˆÙ^\İÛ™H4,4,´`´/´/4,4`´.4aô-t`t.´.‰Ëİ\œ™[ÛÜšÜÜXÙNˆ	ô(´-t.´`ôbt-t-H4/ô`4/´`t`´`4,4/t`t`´,´/‰Ë™]ÕÛÜšÜÜXÙNˆ	ô't/´,´/´-H4/ô`4/´`t`´`4,4/t`t`´,´/‰Ë™[˜[YNˆ	ô'ô-t`4-t.4/4-t/t/´,´,4`´c	Ë[]Nˆ	ô(ô-4,4.ô.4`´c	ËİÚ]Ú\ˆ	ô(t/4-t/t.4`´c4`4,4,t/´aô-t-H4/ô`4/´`t`´`4,4/t`t`´,´/‰ËÛ™Nˆ	ô$ô/´`´/´,´/‰Ë™\Ù]ˆ	ô(t,t`4/´`t.4`´c	ËYˆ	ô%4/´,t,4,´.4`´c	ËØš™XİYˆ	ÒQ4/´,tb´-t.´`´,	ËÛÛ[X[™[ˆ	ô$´,´-t-4.4`´-H4-4.ôcÈ4a4.4.ôc4`´`4,4a´.4.4.´/´/4,4/t-8 )‰Ë›ĞÛÛ[X[™Îˆ	ô&´/´/4,4/t-4bÈ4/t-H4/t,4.t-4-t/tbÉËX“\İˆ	ô(t/ô.4`t/´.ˆ4,´.´.ô,4-4/´.‰ËXœÎˆ	ô,´.´.ô,4-4/´.‰Ë˜]šYØ]Nˆ	ô't,4,´.4,ô,4a´.4cÉË[ˆ	ô$´bô/ô/´.ô/t.4`´c	ËÛİ\˜ÙNˆ	ô.4`t`´/´aô/t.4.‰ËÛİ\˜Ù\Îˆ	ô.4`t`´/´aô/t.4.´.	Ëœ›İÜÙ\ˆ	ô$t`4,4`ô-ô-t`	Ë™]š\Ú[Û“X™[ˆ	ô,´-t`4`t.4cÉË™\İ[YNˆ	ô'ô`4/´-4/´.ô-´.4`´c	ËÜ[’[“™]ÕÚ[™İÎˆ	ô'´`´.´`4bô`´c4,ˆ4/t/´,´/´/4/´.´/t-IË[İ™UX•Îˆ	ô'ô-t`4-t/4-t`t`´.4`´c4,´.´.ô,4-4.´`È4,‰ËY\™ÙUÚ[™İÒ[Îˆ	ô'´,tb´-t-4.4/t.4`´c4/´.´/t/ˆ4,‰ËÛÜÙSİ\•XœÎˆ	ô%ô,4.´`4bô`´c4/´`t`´,4.ôc4/tbô-H4,´.´.ô,4-4.´.	Ë]ZXÚĞXİ[ÛœÎˆ	ô$tbô`t`´`4bô-H4-4-t.t`t`´,´.4cÉËY\ÜØYÙNˆ	ô(t/´/´,tbt-t/t.4-IËÜ›İ\ˆ	ô$ô`4`ô/ô/ô,	ËÜXÙNˆ	ô'ô`4/´`t`´`4,4/t`t`´,´/‰Ë›İNˆ	ô%ô,4/4-t`´.´,	ËØ[˜\Îˆ	ô)t/´.ô`t`‰Ë]™[ˆ	ô(t/´,tbô`´.4-H4.´,4.ô-t/t-4,4`4cÉË\ÚÎˆ	ô%ô,4-4,4aô,	Ëš[Nˆ	ô)4,4.t.ÉËÛÛ[][š]Nˆ	ô(t/´/´,tbt-t`t`´,´/‰ËØ]™Yˆ	ô(t/´at`4,4/t-t/t/ˆ4.ô/´.´,4.ôc4/t/‰Ë[ÙNˆ	ô(t,t,4.ô,4/t`t.4`4/´,´,4/t/tbô.IËİ]\Îˆ	ô$ô/´`´/´,‰ËØÚÙYˆ	ô(´`4-t,t`ô-t`´`tcÈ4`4,4-ô`4-tb4-t/t.4-IËÜ[›Øˆ	ô'´`´.´`4bô`´c4/ô`4/´a4.4.ôc4$t/´,t,	ËÜ[Ú]ˆ	ô'´`´.´`4bô`´c4aô,4`‰ËÜ[‘š[Nˆ	ô'´`´.´`4bô`´c4a4,4.t.È4/ô/´-t-ô-4.´.	ËÜ[”ÜXÙNˆ	ô'´`´.´`4bô`´c4/ô`4/´`t`´`4,4/t`t`´,´/ˆ4/ô/´-t-ô-4.´.	Ë\ÚĞX›İ]ˆ	ô(t/ô`4/´`t.4`´c4/´,H4ct`´/´/4/´,tb´-t.´`´-IËÛÛ™šYİ\™Nˆ	ô't,4`t`´`4/´.4`´c	Ë[™İXYÙNˆ	ô+ô-ôbô.‰Ë[™Û\Úˆ	Ñ[™Û\Ú	Ë\ÜÚX[ˆ	ô(4`ô`t`t.´.4.IË^[œÚ[Û”Ûİˆ	ô(4,4`tb4.4`4-t/t.4cÈ4`4,4,t/´`´,4c´`ˆ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4,´,4b4-t,ô/ˆ4`4,4-ô`4-tb4-t/t.4cË‰Ë™YYÕ\Ù\ˆ	ô't`ô-´-t/H4/´`´,´-t`ˆ4,´.ô,4-4-t.ôc4a´,	Ë›Ø\™ˆ	ô%4/´`t.´,	Ë\İˆ	ô(t/ô.4`t/´.‰Ë]\ÙNˆ	ô'ô,4`ô-ô,	ËØ[˜Ù[ˆ	ô'´`´/4-t/t.4`´c	Ë™]Nˆ	ô'ô/´,´`´/´`4.4`´c	Ë\ÜÚYÛˆ	ô't,4-ô/t,4aô.4`´c	Ëš[Üš]Nˆ	ô'ô`4.4/´`4.4`´-t`‰ËX›XØ][Ûˆ	ô'ô`ô,t.ô.4.´,4a´.4cÉËX›XØ][ÛY\\ˆ	ô'ô`ô,t.ô.4.´,4a´.4cÈ4`t`´,4/t-t`ˆ4-4/´`t`´`ô/ô/t,4/ô/´`t.ô-H4/ô/´-4.´.ôc´aô-t/t.4cÈ4,ˆ4/t,4`t`´`4/´.t.´,4aK‰ËX›XØ][Û‘\ØÛÜİ\™Nˆ	ô)ô-t`4/t/´,´.4.´.4/´`t`´,4c´`´`tcÈ4.ô/´.´,4.ôc4/tbô/4.4/ô/´.´,4,´.ô,4-4-t.ô-taˆ4cô,´/t/ˆ4/t-H4/´/ô`ô,t.ô.4.´`ô-t`ˆ4.4aKˆ4'ô`ô,t.ô.4aô/tbô-H4-4,4/t/tbô-H4/4/´,ô`ô`ˆ4.´ctb4.4`4/´,´,4`´c4`tcÎÈ0ªô/ô/ˆ4`t`tbô.ô.´-p®È8 %4/t-H4`t-t.´`4-t`‹‰Ëš\ÚXš[]Nˆ	ô$´.4-4.4/4/´`t`´c	ËX›XÎˆ	ô'ô`ô,t.ô.4aô/t/‰Ë[›\İYˆ	ô'ô/ˆ4`t`tbô.ô.´-IËØÛÜYˆ	ô'´,ô`4,4/t.4aô-t/t/t,4cÉË˜Yˆ	ô)ô-t`4/t/´,´.4.‰Ë™]š\Ú[Ûˆ	ô$´-t`4`t.4cÉË™]šY]Îˆ	ô'ô`4-t-4/ô`4/´`t/4/´`´`	ËX›\Úˆ	ô'´/ô`ô,t.ô.4.´/´,´,4`´c	Ë[œX›\Úˆ	ô(t/tcô`´c4`H4/ô`ô,t.ô.4.´,4a´.4.	ËX›\ÚÛÛ™š\›Nˆ	ô'´/ô`ô,t.ô.4.´/´,´,4`´c4`t/´-4-t`4-´.4/4/´-H4`H4,´bô,t`4,4/t/t/´.H4,´.4-4.4/4/´`t`´c4cÉËÚ\™S[šÎˆ	ô(t`tbô.ô.´,Ù^\İÛ™IË›Ô™]šY]Îˆ	ô'ô`4-t-4/ô`4/´`t/4/´`´`4/t-t-4/´`t`´`ô/ô-t/K‰ËÛÛ[Z]U]Nˆ	ô(t,´cô-ôc4`ô`t`´`4/´.t`t`´,‰ËÙ[™Ñ]šXÙNˆ	ô'´`´/ô`4,4,´.4`´c4/t,4`ô`t`´`4/´.t`t`´,´/‰ËÛÛ[YSÛ‘]šXÙNˆ	ô'ô`4/´-4/´.ô-´.4`´c4/t,4`ô`t`´`4/´.t`t`´,´-IË]šXÙR[˜›Şˆ	ô$´at/´-4côbt.4-H4`ô`t`´`4/´.t`t`´,´,	Ë]šXÙ\Îˆ	ô(ô`t`´`4/´.t`t`´,´,	Ë›ĞÛÛ[Z]T[[YNˆ	ô(t,´cô-ôc4/4-t-´-4`È4`ô`t`´`4/´.t`t`´,´,4/4.4/ô/´.´,4/t-H4/ô/´-4.´.ôc´aô-t/t,‰Ë›Ñ]šXÙ\Îˆ	ô't-t`ˆ4-4/´`t`´`ô/ô/tbôaH4-4/´,´-t`4-t/t/tbôaH4`ô`t`´`4/´.t`t`´,‹‰Ë›Ò[˜›Şˆ	ô$´at/´-4côbt.4aH4/ô-t`4-t-4,4aÈ4/t-t`‹‰ËÚÛÜÙQ]šXÙNˆ	ô$´bô,t-t`4.4`´-H4-4/´,´-t`4-t/t/t/´-H4`ô`t`´`4/´.t`t`´,´/‰ËÙ[™ÛÜšÜÜXÙNˆ	ô'´`´/ô`4,4,´.4`´c4`´-t.´`ôbt-t-H4/ô`4/´`t`´`4,4/t`t`´,´/‰ËÛÛ[YUÛÜšÜÜXÙNˆ	ô'ô`4/´-4/´.ô-´.4`´c4`´-t.´`ôbt-t-H4/ô`4/´`t`´`4,4/t`t`´,´/‰Ë™Yœ™\Úˆ	ô'´,t/t/´,´.4`´c	Ë›\Úˆ	ô'ô/´/ô`4/´,t/´,´,4`´c4-4/´`t`´,4,´.4`´c	Ë[]™\™Yˆ	ô%4/´`t`´,4,´.ô-t/t/ˆ4/t,4`ô`t`´`4/´.t`t`´,´/‰ËÜ[™Yˆ	ô'´`´.´`4bô`´/‰ËXØÙ\Yˆ	ô'ô`4.4/tcô`´/‰Ë]Y]YYˆ	ô$ˆ4/´aô-t`4-t-4.	ËÙ[™[™Îˆ	ô'´`´/ô`4,4,´.ôcô-t`´`tcÉË˜Z[Yˆ	ô'´b4.4,t.´,	Ë^\™Yˆ	ô&4`t`´dt.ˆ4`t`4/´.‰ËØ[˜Ù[Yˆ	ô'´`´/4-t/t-t/t/‰ËÙ™›[™Nˆ	ô'´a4.ô,4.t/H4.4.ô.4/t-t`ˆ4/4,4`4b4`4`ô`´,	Ë]˜Z[X›Nˆ	ô%4/´`t`´`ô/ô/t/‰Ë™XÙ[P]˜Z[X›Nˆ	ô't-t-4,4,´/t/ˆ4-4/´`t`´`ô/ô/t/‰Ë›İ]˜Z[X›Nˆ	ô't-t-4/´`t`´`ô/ô/t/‰Ë]]ÛX]XĞÛ\›Ø\™ˆ	ô$4,´`´/´/4,4`´.4aô-t`t.´,4cÈ4`t,´cô-ôc4,t`ôa4-t`4,4/´,t/4-t/t,	Ë]]ÛX]XĞÛ\›Ø\™Ø\›š[™Îˆ	ô$´bô.´.ôc´aô-t/t/ˆ4/ô/ˆ4`ô/4/´.ôaô,4/t.4c‹ˆ4$´.´.ôc´aô-t/t.4-H4`´`4-t,t`ô-t`ˆ4cô,´/t/´,ô/ˆ4/ô/´-4`´,´-t`4-´-4-t/t.4cÈ4,´.ô,4-4-t.ôc4a´,4.4/t-H4,´`t`´,4,´.ôcô-t`ˆ4`´-t.´`t`ˆ4,4,´`´/´/4,4`´.4aô-t`t.´.‰ËÛ\›Ø\™^XÚ]ˆ	ô$t`ôa4-t`4/´,t/4-t/t,4`4,4,t/´`´,4-t`ˆ4`´/´.ôc4.´/ˆ4cô,´/t/ˆ4,4,´`´/´-ô,4/ô/´.ô/t-t/t.4-H4.4.4`t`´/´`4.4cÈ4,t`ôa4-t`4,4/t-H4.4`t/ô/´.ôc4-ô`ôc´`´`tcË‰Ë[™Ù™›İ[™\Nˆ	ô'ô/´-4.´.ôc´aô.4`´-H4-4/´,´-t`4-t/t/t/´-H4`ô`t`´`4/´.t`t`´,´/ˆ4,ˆ4/t,4`t`´`4/´.t.´,4aKˆ4'ô-t`4-t-4,4aô,4b4.4a4`4`ô-t`´`tcÈ4.4-ô,4/ô`ô`t.´,4-t`´`tcÈ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4,´,4b4-t,ô/ˆ4-4-t.t`t`´,´.4cË‰ËˆKŸH\ÈÛÛœİÂ‚\HÛÜHHÈÒÈ[ˆÙ^[Ùˆ\[ÙˆÛÜK™[—Nˆİš[™ÈNÂ‚™[˜İ[Ûˆ\ÙTÚ[
+
+NˆÑ\ÚİÜÚ[ÛÛ›Û\‹
+
+HOˆ›ÚYHÂˆÛÛœİÛÛ›Û\ˆH™XXİ\ÙT™Y\ÚİÜÚ[ÛÛ›Û\Š
+NÂˆÛÛœİÚ[™İĞÛÛ^H™XXİ\ÙT™YŠÙ]\ÚİÜÚ[™İĞÛÛ^
+
+JK˜İ\œ™[ÂˆÛÛ›Û\‹˜İ\œ™[ÏÏH™]È\ÚİÜÚ[ÛÛ›Û\ŠÈØ[“Ü[ˆ™YˆOˆ™Y‹š\ÚXš[]HOOH	Üš]˜]IÈ™Y‹šYOOH	Ü™]›ÚÙY	ËÚ[™İÒYˆÚ[™İĞÛÛ^Ú[™İÒY]XÚYX’YˆÚ[™İĞÛÛ^™]XÚYX’Yİ\\[ÙNˆÚ[™İĞÛÛ^š\Ôš[X\H	‰ˆZ\Ñ\ÚİÜÙ\ÜÚ[Û”™\İÜ™Q[˜X›Y
+
+HÈ	ØÛX[‰Èˆ	Ü™\İÜ™IÈJNÂˆÛÛœİË™Y˜]×HH™XXİ\ÙT™YXÙ\Š˜[YHOˆ˜[YH
+ÈK
+NÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÛÛ›Û\‹˜İ\œ™[ËœİXœØÜšX™J™Y˜]ÊK×JNÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÚ[HÛÛ›Û\‹˜İ\œ™[ÂˆYˆ
+\Ú[
+H™]\›ˆ[™Yš[™YÂˆÚ[œÙ]Ú[™İĞœšYÙJ\ÚİÜÚ[™İĞœšYÙJ
+JNÂˆ]Ø[˜Ù[YH˜[ÙNÂˆÛÛœİÙXÛÛ™\T™Yœ™\Ú[Y\œÈHÚ[™İĞÛÛ^š\Ôš[X\HÈ×HˆÌNÍŒÌŒK›X\
+[^HOˆÚ[™İËœÙ][Y[İ]
+
+
+HOˆÂˆYˆ
+XØ[˜Ù[Y
+HÚ[œ™Yœ™\Úœ›ÛTİÜ˜YÙJ
+NÂˆK[^JJNÂˆ]İÜÙ[ÛY]Nˆ
+
+HOˆ›ÚYH
+
+HOˆ[™Yš[™YÂˆ›ÚYØœÙ\™Q\ÚİÜÚ[™İÑÙ[ÛY]JÚ[™İĞÛÛ^Ú[™İÒYÙ[ÛY]HOˆÚ[œÙ]Ú[™İÑÙ[ÛY]JÙ[ÛY]JK
+
+HOˆÚ[š[™S˜]]™UÚ[™İĞÛÜÙJ
+JK[ŠİÜOˆÂˆYˆ
+Ø[˜Ù[Y
+HİÜ
+
+NÂˆ[ÙHİÜÙ[ÛY]HHİÜÂˆJNÂˆÛÛœİÛ”İÜ˜YÙHH
+]™[ˆİÜ˜YÙQ]™[
+HOˆÂˆÚ[œ™Yœ™\Úœ›ÛTİÜ˜YÙJ
+NÂˆYˆ
+]™[šÙ^HOOHTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÔÕÔQÑWÒÑVHY]™[›™]Õ˜[YJH™]\›ÂˆÛÛœİ˜[œÙ™\ˆH\œÙQ\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[
+]™[›™]Õ˜[YJNÂˆYˆ
+˜[œÙ™\ŠHÚ[™İË™\Ü]Ú]™[
+™]Èİ\İÛQ]™[\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[ŠTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÑÓWÑU‘S•È]Z[ˆ˜[œÙ™\ˆJJNÂˆNÂˆÛÛœİÛ™Y›Ü™U[›ØYH
+
+HOˆÚ[™›\Ú
+
+NÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜİÜ˜YÙIËÛ”İÜ˜YÙJNÂˆÚ[™İË˜Y]™[\İ[™\Š	Ø™Y›Ü™][›ØY	ËÛ™Y›Ü™U[›ØY
+NÂˆ]İÜ˜[œÙ™\œÎˆ
+
+HOˆ›ÚYH
+
+HOˆ[™Yš[™YÂˆ›ÚY\İ[‘\ÚİÜÚ[™İÕ˜[œÙ™\œÊ]™[OˆÂˆÚ[™İË™\Ü]Ú]™[
+™]Èİ\İÛQ]™[\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[ŠTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÑÓWÑU‘S•È]Z[ˆ]™[JJNÂˆYˆ
+
+]™[\HOOH	ØÛÛ[Z]Y	È	‰ˆ]™[\™Ù]Ú[™İÒYOOHÚ[Ú[™İÒY
+H
+]™[\HOOH	ØXØÙ\Y	È	‰ˆ
+]™[œÛİ\˜ÙUÚ[™İÒYOOHÚ[Ú[™İÒY]™[\™Ù]Ú[™İÒYOOHÚ[Ú[™İÒY
+JJHÚ[œ™Yœ™\Úœ›ÛTİÜ˜YÙJ
+NÂˆJK[ŠİÜOˆÂˆYˆ
+Ø[˜Ù[Y
+HİÜ
+
+NÂˆ[ÙHİÜ˜[œÙ™\œÈHİÜÂˆJNÂˆ™]\›ˆ
+
+HOˆÈØ[˜Ù[YHYNÈÙXÛÛ™\T™Yœ™\Ú[Y\œË™›Ü‘XXÚ
+[Y\ˆOˆÚ[™İË˜ÛX\•[Y[İ]
+[Y\ŠJNÈİÜÙ[ÛY]J
+NÈİÜ˜[œÙ™\œÊ
+NÈÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜİÜ˜YÙIËÛ”İÜ˜YÙJNÈÚ[™İËœ™[[İ™Q]™[\İ[™\Š	Ø™Y›Ü™][›ØY	ËÛ™Y›Ü™U[›ØY
+NÈÚ[™›\Ú
+
+NÈNÂˆKİÚ[™İĞÛÛ^š\Ôš[X\KÚ[™İĞÛÛ^Ú[™İÒYJNÂˆ™]\›ˆØÛÛ›Û\‹˜İ\œ™[™Y˜]×NÂŸB‚™^Ü[\™˜XÙH\ÚİÜÚ[›ÜÈÂˆ[š]X[ØØ[OÎˆØØ[NÂˆÛ“ØØ[PÚ[™ÙOÎˆ
+ØØ[NˆØØ[JHOˆ›ÚYÂŸB‚™^ÜY˜][[˜İ[Ûˆ\ÚİÜÚ[
+È[š]X[ØØ[HH	ÜIËÛ“ØØ[PÚ[™ÙHNˆ\ÚİÜÚ[›ÜÊHÂˆÛÛœİÜÚ[HH\ÙTÚ[
+
+NÂˆÛÛœİÛØØ[KÙ]ØØ[Tİ]WHH™XXİ\ÙTİ]OØØ[OŠ
+
+HOˆ
+ØØ[İÜ˜YÙK™Ù]][J	ÚÙ^\İÛ™K›ØØ[IÊH\ÈØØ[JH[š]X[ØØ[JNÂˆÛÛœİÙ][™ÜÔİÜ™T™YˆH™XXİ\ÙT™Y\ÚİÜÙ][™ÜÔİÜ™OŠ
+NÂˆÙ][™ÜÔİÜ™T™Y‹˜İ\œ™[ÏÏH™]È\ÚİÜÙ][™ÜÔİÜ™J
+NÂˆÛÛœİÙ][™ÜÔİÜ™HHÙ][™ÜÔİÜ™T™Y‹˜İ\œ™[ÂˆÛÛœİÜÙ][™ÜÔ™]š\Ú[Û‹™Y˜]ÔÙ][™Ü×HH™XXİ\ÙT™YXÙ\Š˜[YHOˆ˜[YH
+ÈK
+NÂˆÛÛœİˆÛÜHHÂˆ‹‹˜ÛÜVÛØØ[WKˆØØ[ˆØØ[HOOH	ÜIÈÈ	ô't,4`ô`t`´`4/´.t`t`´,´-IÈˆ	ÓÛˆ\È]šXÙIËˆXÙZÛ\ˆØØ[HOOH	ÜIÈÈ	ô't-t-4/´`t`´`ô/ô/t/ˆ4/ô/´.´,	Èˆ	Õ[˜]˜Z[X›H›Üˆ›İÉËˆXÙZÛ\›ÙNˆØØ[HOOH	ÜIÈÈ	ô+t`´,4,´/´-ô/4/´-´/t/´`t`´c4/ô/´cô,´.4`´`tcÈ4/ô/´`t.ô-H4/ô/´-4.´.ôc´aô-t/t.4cÈ4`t/´/´`´,´-t`´`t`´,´`ôc´bt-t,ô/ˆ4.ô/´.´,4.ôc4/t/´,ô/ˆ4`t-t`4,´.4`t,‰Èˆ	Õ\È™X]\™HÚ[\X\ˆÚ[ˆ]ÈØØ[Ù\šXÙH\ÈÛÛ›™XİY‰Ëˆ™Y™\™[˜Ù\ÎˆØØ[HOOH	ÜIÈÈ	ô(t,´cô-ô,4/t/tbô-H4/´,tb´-t.´`´bÉÈˆ	Ó[šÙYØš™XİÉËˆØ\\™S›Ô[[YNˆØØ[HOOH	ÜIÈÈ	ô(´-t.´`t`ˆ4/4/´-´/t/ˆ4`t/´at`4,4/tcô`´c4`ô-´-H4`t-t.taô,4`NÈ4-4.ôcÈ4,´bô,t/´`4,4a4,4.t.ô/´,ˆ4/ô/´-4.´.ôc´aô.4`´-H4`t.4`t`´-t/4/tbô.H4.4/4/ô/´`4`‹‰Èˆ	Õ^Ø\\™H\È™XYNÈÛÛ›™XİHŞ\İ[H[\Ü\ˆÈÚÛÜÙHš[\Ë‰ËˆØ\\™U[œØY™NˆØØ[HOOH	ÜIÈÈ	ô'ô`4.4/t.4/4,4c´`´`tcÈ4`´/´.ôc4.´/ˆ4,t-t-ô/´/ô,4`t/tbô-H
+ÊKt`t`tbô.ô.´.4.4`t`tbô.ô.´.Ù^\İÛ™K‰Èˆ	ÓÛ›HØY™H
+ÊH[™Ù^\İÛ™H[šÜÈ\™HXØÙ\Y‰Ëˆ™X\˜P›İ[™\NˆØØ[HOOH	ÜIÈÈ	ô'´,t/4-t/H4`4cô-4/´/4`4,4,t/´`´,4-t`ˆ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4cô,´/t/´,ô/ˆ4,´.´.ôc´aô-t/t.4cÈ4.4/ô/´-4`´,´-t`4-´-4-t/t.4cÈ4.´,4-´-4/´,ô/ˆ4-4-t.t`t`´,´.4cË‰Èˆ	Ó™X\˜HÚ\š[™Èİ\ÈÛ›HY\ˆ^XÚ][˜X›[Y[[™ÛÛ™š\›X][ÛˆÙˆXXÚXİ[Û‹‰Ëˆ™X\˜U[˜]˜Z[X›NˆØØ[HOOH	ÜIÈÈ	ô'´,t/4-t/H4`4cô-4/´/4/ô/´.´,4/t-H4/ô/´-4.´.ôc´aôdt/K‰Èˆ	Ó™X\˜HÚ\š[™È\È›İÛÛ›™XİYY]‰ËˆØØ[U[˜]˜Z[X›NˆØØ[HOOH	ÜIÈÈ	ô%ô,´/´/t.´.4/ô/´.´,4/t-H4/t,4`t`´`4/´-t/tbÈ4/t,4ct`´/´/4`ô`t`´`4/´.t`t`´,´-K‰Èˆ	ĞØ[È\™H›İÛÛ™šYİ\™YÛˆ\È]šXÙHY]‰ËˆØ[›İ[™\NˆØØ[HOOH	ÜIÈÈ	ô%4.ôcÈ4-ô,´/´/t.´/´,ˆ4/t`ô-´/t/ˆ4/ô/´-4.´.ôc´aô.4`´c4`4,4-ô`4-tb4dt/t/tbô.H4`t/ô/´`t/´,H4`t,´cô-ô.ˆ4%ô,4/ô.4`tc4/t-H4,´bô/ô/´.ô/tcô-t`´`tcÈ4,4,´`´/´/4,4`´.4aô-t`t.´.‰Èˆ	ĞØ[È™YY[ˆ\›İ™YÛÛ›™Xİ[ÛˆY]Ùˆ™XÛÜ™[™È™]™\ˆİ\È]]ÛX]XØ[K‰ËˆØ[YYXT™XYNˆØØ[HOOH	ÜIÈÈ	ô'4-t-4.4,4,ô/´`´/´,´/‰Èˆ	ÓYYXH™XYIËˆØ[YYXU[˜]˜Z[X›NˆØØ[HOOH	ÜIÈÈ	ô'4-t-4.4,4/t-t-4/´`t`´`ô/ô/t/‰Èˆ	ÓYYXH[˜]˜Z[X›IËˆX›XØ][ÛY\\ˆØØ[HOOH	ÜIÈÈ	ô'ô`ô,t.ô.4.´,4a´.4cÈ4`t`´,4/t-t`ˆ4-4/´`t`´`ô/ô/t,4/ô/´`t.ô-H4/ô/´-4.´.ôc´aô-t/t.4cÈ4-tdH4,ˆ4/t,4`t`´`4/´.t.´,4aK‰Èˆ	ÔX›\Ú[™È™XÛÛY\È]˜Z[X›HY\ˆ]\ÈÛÛ›™XİY[ˆÙ][™ÜË‰Ëˆ›ĞÛÛ[Z]T[[YNˆØØ[HOOH	ÜIÈÈ	ô(t,´cô-ôc4/4-t-´-4`È4`ô`t`´`4/´.t`t`´,´,4/4.4/ô/´.´,4/t-H4/ô/´-4.´.ôc´aô-t/t,‰Èˆ	Ñ]šXÙK]ËY]šXÙHÛÛ[Z]H\È›İÛÛ›™XİYY]‰Ëˆ[™Ù™›İ[™\NˆØØ[HOOH	ÜIÈÈ	ô'ô/´-4.´.ôc´aô.4`´-H4-4/´,´-t`4-t/t/t/´-H4`ô`t`´`4/´.t`t`´,´/ˆ4,ˆ4/t,4`t`´`4/´.t.´,4aKˆ4'ô-t`4-t-4,4aô,4b4.4a4`4`ô-t`´`tcÈ4.4-ô,4/ô`ô`t.´,4-t`´`tcÈ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4,´,4b4-t,ô/ˆ4-4-t.t`t`´,´.4cË‰Èˆ	ĞÛÛ›™XİH\İY]šXÙH[ˆÙ][™ÜËˆ˜[œÙ™\œÈ\™H[˜Ü\Y[™İ\Û›HY\ˆ[İ\ˆXİ[Û‹‰Ëˆ^[œÚ[Û”ÛİˆØØ[HOOH	ÜIÈÈ	ô(4,4`tb4.4`4-t/t.4cÈ4`4,4,t/´`´,4c´`ˆ4`´/´.ôc4.´/ˆ4/ô/´`t.ô-H4,´,4b4-t,ô/ˆ4`4,4-ô`4-tb4-t/t.4cË‰Èˆ	Ñ^[œÚ[ÛœÈ[ˆÛ›HY\ˆ[İ\ˆ\›Z\ÜÚ[Û‹‰ËˆØ\\™R[ˆØØ[HOOH	ÜIÈÈ	ô(t/´at`4,4/tcô.t`´-H4`´-t.´`t`‹4`t`tbô.ô.´.4.4a4,4.t.ôbÈ4,ˆ4.ô.4aô/t`ôcˆ4/ô,4/ô.´`È4-ô,4at,´,4`´,‰Èˆ	ÔØ]™H^[šÜË[™š[\ÈÈ[İ\ˆš]˜]HØ\\™H˜^K‰Ëˆ™X\˜U]NˆØØ[HOOH	ÜIÈÈ	ô'´,t/4-t/H4`4cô-4/´/	Èˆ	Ó™X\˜HÚ\š[™ÉËˆ™X\˜T™XÙZ]™NˆØØ[HOOH	ÜIÈÈ	ô'ô`4.4/t.4/4,4`´c4`4cô-4/´/	Èˆ	Ô™XÙZ]™H™X\˜IËˆ™X\˜TİÜˆØØ[HOOH	ÜIÈÈ	ô'´`t`´,4/t/´,´.4`´c4/ô`4.4dt/	Èˆ	ÔİÜ™XÙZ]š[™ÉËˆ™X\˜T™Yœ™\ÚˆØØ[HOOH	ÜIÈÈ	ô'´,t/t/´,´.4`´c	Èˆ	Ô™Yœ™\Ú	Ëˆ™X\˜S›Ñ[™Ú[ÎˆØØ[HOOH	ÜIÈÈ	ô(ô`t`´`4/´.t`t`´,´,4`4cô-4/´/4/t-H4/t,4.t-4-t/tbË‰Èˆ	Ó›È™X\˜H]šXÙ\È›İ[™‰Ëˆ™X\˜SÙ™™\œÎˆØØ[HOOH	ÜIÈÈ	ô$´at/´-4côbt.4-H4/ô`4-t-4.ô/´-´-t/t.4cÉÈˆ	Ò[˜ÛÛZ[™ÈÙ™™\œÉËˆ™X\˜S›ÓÙ™™\œÎˆØØ[HOOH	ÜIÈÈ	ô't-t`ˆ4/ô`4-t-4.ô/´-´-t/t.4.K4/´-´.4-4,4c´bt.4aH4`t/´,ô.ô,4`t.4cË‰Èˆ	Ó›ÈÙ™™\œÈ]ØZ][™ÈÛÛœÙ[‰Ëˆ™X\˜Q\ØÛÜİ\™NˆØØ[HOOH	ÜIÈÈ	ô&ô.4aô/t/´`t`´c4/´`t`´,4dt`´`tcÈ4`t.´`4bô`´/´.K4/ô/´.´,4,´bÈ4`t,4/4.4/t-H4,´bô,t-t`4-t`´-K4aô`´/ˆ4/ô/´.´,4-ô,4`´c‰Èˆ	Ö[İ\ˆY[]Hİ^\Èš]˜]H[[[İHÚÛÜÙHÚ]ÈÚ\™K‰Ëˆ™X\˜P[›Û[Z]NˆØØ[HOOH	ÜIÈÈ	ô$ô-t/´/ô/´-ô.4a´.4cÈ4.4.4`t`´/´`4.4cÈ4,´`t`´`4-taÈ4/t-H4`t/´at`4,4/tcôc´`´`tcÈ4,4,´`´/´/4,4`´.4aô-t`t.´.‰Èˆ	ÓØØ][Ûˆ[™[˜Ûİ[\ˆ\İÜH\™H™]™\ˆİÜ™Y]]ÛX]XØ[K‰ËˆÛÛ[Z]U]NˆØØ[HOOH	ÜIÈÈ	ô(t,´cô-ôc4`ô`t`´`4/´.t`t`´,‰Èˆ	Ñ]šXÙHÛÛ[Z]IËˆÙX“Xœ˜\Q\ØÜš\[ÛˆØØ[HOOH	ÜIÈÈ	ô(t/´at`4,4/tdt/t/tbô-H4`t`´`4,4/t.4a´bÈ4.4/4,4`´-t`4.4,4.ôbÈ4-4.ôcÈ4aô`´-t/t.4cÈ4,t-t-È4`t-t`´.‰Èˆ	ÔØ]™YYÙ\È[™™XY[™ÈX]\šX[]˜Z[X›HÙ™›[™K‰ËˆNÂˆÛÛœİÛÛ[šX›ŞÙ]Û[šX›ŞHH™XXİ\ÙTİ]J	ÉÊNÂˆÛÛœİÛÛ[šX›ŞÜ[‹Ù]Û[šX›ŞÜ[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİÜ[]SÜ[‹Ù][]SÜ[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİÜ]ZXÚĞXİ[ÛœÓÜ[‹Ù]]ZXÚĞXİ[ÛœÓÜ[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİÜ]ZXÚĞØ\\™SÜ[‹Ù]]ZXÚĞØ\\™SÜ[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİİÛÜšÜÜXÙSÜ[‹Ù]ÛÜšÜÜXÙSÜ[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİØXİ]š]QY]Ü“Ü[‹Ù]Xİ]š]QY]Ü“Ü[—HH™XXİ\ÙTİ]J˜[ÙJNÂˆÛÛœİÙ˜YÙÙY™Y‹Ù]˜YÙÙY™Y—HH™XXİ\ÙTİ]OÙ^\İÛ™SØš™Xİ™Y™\™[˜ÙOŠ
+NÂˆÛÛœİØYÙ[™Yš[Ù]YÙ[™Yš[HH™XXİ\ÙTİ]J	ÉÊNÂˆÛÛœİÛ[šX›Ş™YˆH™XXİ\ÙT™YS[œ][[Y[Š[
+NÂˆÛÛœİÛÛ[X[™ÈH™XXİ\ÙSY[[Ê
+
+HOˆÂˆÛÛœİY\™ÙYHË‹‹™Y˜][Ú[ÛÛ[X[™ÊØØ[JK‹‹˜Ü™X]Q\ÚİÜXİ[ÛÛÛ[X[™ÊØØ[JWNÂˆ™]\›ˆY\™ÙY™š[\Š
+ÛÛ[X[™[™^
+HOˆY\™ÙY™š[™[™^
+Ø[™Y]HOˆØ[™Y]KšYOOHÛÛ[X[™šY
+HOOH[™^
+NÂˆKÛØØ[WJNÂˆÛÛœİÛÛ^™YÚ\İHH™XXİ\ÙSY[[Ê
+
+HOˆÜ™X]QY˜][ÛÛ^™YÚ\İJØØ[JKÛØØ[WJNÂˆÛÛœİÛ˜\ÚİHÚ[™Ù]Û˜\Úİ
+
+NÂˆÛÛœİİ\œ™[XˆHÚ[˜İ\œ™[XÂˆÛÛœİØØ[›Ùš[HHÙ]ØØ[\ÚİÜ›Ùš[J
+NÂˆÛÛœİÙ][™ÜĞÛÛ^HÈ]šXÙRYˆØØ[›Ùš[OË™]šXÙRYÛÜšÜÜXÙRYˆÛ˜\ÚİÛÜšÜÜXÙKšYÚ[™İÒYˆÚ[Ú[™İÒYH\ÈÛÛœİÂˆÛÛœİÙ][™ÜÈH™XXİ\ÙSY[[Ê
+
+HOˆÙ][™ÜÔİÜ™K™Y™™Xİ]™JÙ][™ÜĞÛÛ^
+KÜÙ][™ÜÔİÜ™KÙ][™ÜĞÛÛ^™]šXÙRYÙ][™ÜĞÛÛ^ÛÜšÜÜXÙRYÙ][™ÜĞÛÛ^Ú[™İÒYÙ][™ÜÔ™]š\Ú[Û—JNÂˆÛÛœİİ\\Ù\ÜÚ[Û”ÛXŞP\YYH™XXİ\ÙT™YŠ˜[ÙJNÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆYˆ
+\Ú[š\Ôš[X\UÚ[™İÈİ\\Ù\ÜÚ[Û”ÛXŞP\YY˜İ\œ™[
+H™]\›ˆ[™Yš[™YÂˆİ\\Ù\ÜÚ[Û”ÛXŞP\YY˜İ\œ™[HYNÂˆÛÛœİ™\İÜ™UXœÈHÙ][™ÜË˜[Y\ÖÉİXœËœ™\İÜ™UXœÉ×HOOHYNÂˆÛÛœİ™\İÜ™UÚ[™İÜÈHÙ][™ÜË˜[Y\ÖÉØ™Z]š[Ü‹œ™\İÜ™UÚ[™İÜÉ×HOOHYNÂˆÛÛœİÙ\ÜÚ[Û”™\İÜ™Q[˜X›YH\Ñ\ÚİÜÙ\ÜÚ[Û”™\İÜ™Q[˜X›Y
+
+NÂˆYˆ
+\Ù\ÜÚ[Û”™\İÜ™Q[˜X›Y\™\İÜ™UXœÊHÂˆÚ[œ™\Ù]Ú[™İĞ[™X“^[İ]
+È™\Ù\™UXœÎˆ˜[ÙHJNÂˆYˆ
+\Ù\ÜÚ[Û”™\İÜ™Q[˜X›Y
+HÙ][™ÜÔİÜ™K™\ØX›P]]ÛX]XÔÙ\ÜÚ[Û”™\İÜ™J
+NÂˆÚ[œÙ]›İXÙJØØ[HOOH	ÜIÈÈ	ô'´`´.´`4bô`´,4`´/´.ôc4.´/ˆ4/t/´,´,4cÈ4,ô.ô,4,´/t,4cÈ4,´.´.ô,4-4.´,‰Èˆ	ÓÛ›HHœ™\ÚÛYHXˆØ\ÈÜ[™Y‰ÊNÂˆ™]\›ˆ[™Yš[™YÂˆBˆYˆ
+\™\İÜ™UÚ[™İÜÊHÂˆÚ[˜ÛÛœÛÛY]UÚ[™İÜÊ
+NÂˆ™]\›ˆ[™Yš[™YÂˆBˆ]Ø[˜Ù[YH˜[ÙNÂˆ›ÚY›ÛZ\ÙKœ™\ÛÛ™J
+K[Š\Ş[˜È
+
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+H™]\›Âˆ]ØZ]™\İÜ™Q]XÚYÚ[™İÜÊÚ[›\İÚ[™İÜÊ
+KÈ\Ôš[X\NˆÚ[š\Ôš[X\UÚ[™İÈJNÂˆJNÂˆ™]\›ˆ
+
+HOˆÈØ[˜Ù[YHYNÈNÂˆKÛØØ[KÙ][™ÜË˜[Y\ÖÉØ™Z]š[Ü‹œ™\İÜ™UÚ[™İÜÉ×KÙ][™ÜË˜[Y\ÖÉİXœËœ™\İÜ™UXœÉ×KÚ[JNÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÛÛ™šYİ\™YØØ[HHÙ][™ÜË˜[Y\ÖÉÙÙ[™\˜[›ØØ[I×NÂˆYˆ
+ÛÛ™šYİ\™YØØ[HOOHØØ[JHÙ]ØØ[Tİ]JÛÛ™šYİ\™YØØ[JNÂˆKÛØØ[KÙ][™ÜË˜[Y\ÖÉÙÙ[™\˜[›ØØ[I×WJNÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÜ[”]ZXÚĞØ\\™HH
+
+HOˆÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÙ]]ZXÚĞØ\\™SÜ[ŠYJNÈNÂˆÚ[™İË˜Y]™[\İ[™\ŠTÒÕÔÔURPÒ×ĞĞTT‘WÑU‘S•Ü[”]ZXÚĞØ\\™JNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\ŠTÒÕÔÔURPÒ×ĞĞTT‘WÑU‘S•Ü[”]ZXÚĞØ\\™JNÂˆK×JNÂˆÛÛœİ]˜]\“X™[HØØ[İÜ˜YÙK™Ù]][J	ÚÙ^\İÛ™K›ØØ[˜]˜]\‹ŒIÊOËš[J
+KœÛXÙJŠKÕ\\Ø\ÙJ
+BˆØØ[›Ùš[OË™\Ü^S˜[YKš[J
+KœÜ]
+×ÊËÊK›X\
+\Oˆ\ÌJKš›Ú[Š	ÉÊKœÛXÙJŠKÕ\\Ø\ÙJ
+Bˆ	ÒÉÎÂ‚ˆÛÛœİÙ]ØØ[HH
+™^ˆØØ[JHOˆÈÙ]ØØ[Tİ]J™^
+NÈØØ[İÜ˜YÙKœÙ]][J	ÚÙ^\İÛ™K›ØØ[IË™^
+NÈÙ][™ÜÔİÜ™KœÙ]
+	ÙÙ[™\˜[›ØØ[IË™^	ÙÛØ˜[	ËÙ][™ÜĞÛÛ^
+NÈÛ“ØØ[PÚ[™ÙOËŠ™^
+NÈNÂˆÛÛœİ\]TÙ][™ÈH™XXİ\ÙPØ[˜XÚÊ
+Yˆ\ÚİÜÙ][™ÒY˜[YNˆ[šÛ›İÛ‹ØÛÜOÎˆ\ÚİÜÙ][™ÔØÛÜJHOˆÂˆÛÛœİ™\İ[HÙ][™ÜÔİÜ™KœÙ]
+Y˜[YKØÛÜKÙ][™ÜĞÛÛ^
+NÂˆYˆ
+\™\İ[›ÚÊHÚ[œÙ]›İXÙJ™\İ[™\œ›ÜˆÏÈ	ĞÛİ[›İØ]™H\ÈÙ][™Ë‰ÊNÂˆKÜÙ][™ÜÔİÜ™KÙ][™ÜĞÛÛ^Ú[JNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÙ][™ÜÔİÜ™KœİXœØÜšX™J™Y˜]ÔÙ][™ÜÊKÜÙ][™ÜÔİÜ™WJNÂˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÛ”İÜ˜YÙHH
+
+HOˆÙ][™ÜÔİÜ™Kœ™[ØY
+
+NÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜİÜ˜YÙIËÛ”İÜ˜YÙJNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜİÜ˜YÙIËÛ”İÜ˜YÙJNÂˆKÜÙ][™ÜÔİÜ™WJNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİYYXHHÚ[™İË›X]ÚYYXOËŠ	Ê™Y™\œËXÛÛÜ‹\ØÚ[YNˆ\šÊIÊNÂˆÛÛœİ\HH
+
+HOˆ\Q\ÚİÜÙ][™ÜÊÙ][™ÜË›ÛÛX[ŠYYXOË›X]Ú\ÊJNÂˆ\J
+NÂˆYˆ
+[YYXJH™]\›ˆ[™Yš[™YÂˆYYXK˜Y]™[\İ[™\ËŠ	ØÚ[™ÙIË\JNÂˆ™]\›ˆ
+
+HOˆYYXKœ™[[İ™Q]™[\İ[™\ËŠ	ØÚ[™ÙIË\JNÂˆKÜÙ][™Ü×JNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÛ’Ù^QİÛˆH
+]™[ˆÙ^X›Ø\™]™[
+HOˆÂˆÛÛœİš[X\HH\Ôš[X\S[ÙYšY\Š]™[
+NÂˆYˆ
+\Ñ\ÚİÜ[
+]™[
+JHÈ]™[œ™]™[Y˜][
+
+NÈ›ÚY™\]Y\İ\ÚİÜ]Z]
+
+NÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ë˜ÛÛ[X[™[]I×JH
+\Ôš[X\S[ÙYšY\Š]™[
+H	‰ˆ]™[šÙ^KÓİÙ\Ø\ÙJ
+HOOH	Ü	ÊJHÈ]™[œ™]™[Y˜][
+
+NÈÙ][]SÜ[ŠYJNÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ëœ]Z]	×JH
+š[X\H	‰ˆ]™[šÙ^KÓİÙ\Ø\ÙJ
+HOOH	ÜIÊJHÈ]™[œ™]™[Y˜][
+
+NÈ›ÚY™\]Y\İ\ÚİÜ]Z]
+
+NÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ë™›Øİ\ÓÛ[šX›Ş	×JJHÈ]™[œ™]™[Y˜][
+
+NÈÛ[šX›Ş™Y‹˜İ\œ™[Ë™›Øİ\Ê
+NÈÛ[šX›Ş™Y‹˜İ\œ™[ËœÙ[Xİ
+
+NÈÙ]Û[šX›ŞÜ[ŠYJNÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ëœ™[Ü[•X‰×JJHÈ]™[œ™]™[Y˜][
+
+NÈÚ[œ™[Ü[ÛÜÙYXŠ
+NÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ë›™]ÕX‰×JJHÈ]™[œ™]™[Y˜][
+
+NÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÚÛYIËYˆ	Û™]Ë]X‰ËX™[ˆšÛYHKÈ[İÑ\XØ]NˆYHJNÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ë˜ÛÜÙUX‰×JJHÈ]™[œ™]™[Y˜][
+
+NÈÚ[˜ÛÜÙPXİ]™UXŠ
+NÈ™]\›ÈBˆYˆ
+š[X\H	‰ˆ]™[šÙ^HOOH	×	ÊHÈ]™[œ™]™[Y˜][
+
+NÈÚ[œÜ][™J	İ™\XØ[	ÊNÈ™]\›ÈBˆYˆ
+š[X\H	‰ˆ]™[šÙ^HOOH	ÕX‰ÊHÈ]™[œ™]™[Y˜][
+
+NÈÚ[›™^XŠ]™[œÚYÙ^HÈLHˆJNÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ëœ]ZXÚĞØ\\™I×JJHÈ]™[œ™]™[Y˜][
+
+NÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÙ]]ZXÚĞØ\\™SÜ[ŠYJNÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]ËÙÙÛTÚYX˜\‰×JJHÈ]™[œ™]™[Y˜][
+
+NÈÚ[ÙÙÛPÛÛ^ÚYX˜\Š
+NÈ™]\›ÈBˆYˆ
+X]Ú\ÔÚÜİ]
+]™[Ù][™ÜË˜[Y\ÖÉÜÚÜİ]Ë˜İ\İÛZ^™I×JJHÈ]™[œ™]™[Y˜][
+
+NÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	Øİ\İÛZ^™IËX™[ˆØØ[HOOH	ÜIÈÈ	ô't,4`t`´`4/´.4`´cÙ^\İÛ™IÈˆ	Ğİ\İÛZ^™HÙ^\İÛ™IÈJNÈ™]\›ÈBˆYˆ
+š[X\H	‰ˆ]™[˜ÛÙHOOH	ÔÜXÙIÊHÈ]™[œ™]™[Y˜][
+
+NÈÚ[ÙÙÛPYÙ[[™[
+YJNÈ™]\›ÈBˆYˆ
+]™[šÙ^HOOH	Ñ\ØØ\IÊHÈÙ][]SÜ[Š˜[ÙJNÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÙ]]ZXÚĞØ\\™SÜ[Š˜[ÙJNÈÙ]ÛÜšÜÜXÙSÜ[Š˜[ÙJNÈÙ]Xİ]š]QY]Ü“Ü[Š˜[ÙJNÈÙ]Û[šX›ŞÜ[Š˜[ÙJNÈBˆNÂˆÚ[™İË˜Y]™[\İ[™\Š	ÚÙ^YİÛ‰ËÛ’Ù^QİÛŠNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÚÙ^YİÛ‰ËÛ’Ù^QİÛŠNÂˆKÜÚ[Ù][™ÜËØØ[K˜Ø\\™KšÛYWJNÂ‚ˆÛÛœİ[ÛÛ[X[™H
+ÛÛ[X[™ˆÚ[ÛÛ[X[™
+HOˆÈÙ][]SÜ[Š˜[ÙJNÈÛÛ[X[™œ[ŠÚ[
+NÈNÂˆÛÛœİİX›Z]Û[šX›ŞH
+]™[ˆ™XXİ‘›Ü›Q]™[
+HOˆÂˆ]™[œ™]™[Y˜][
+
+NÂˆÛÛœİ[œ]HÛ[šX›Şš[J
+NÂˆYˆ
+Z[œ]
+H™]\›ÂˆYˆ
+×šÙ^\İÛ™N—×ØØ\\™WËÚK\İ
+[œ]
+JHÂˆÛÛœİØ\\™T[[YHHÙ]\ÚİÜØ\\™T[[YJ
+NÂˆYˆ
+Ø\\™T[[YJH›ÚYØ\\™T[[YK˜Ø\\™QY\[šÊ[œ]
+K[Š
+
+HOˆÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ØØ\\™IËYˆ	ØØ\\™IËX™[ˆ˜Ø\\™HJNÈJK˜Ø]Ú
+\œ›ÜˆOˆÚ[œÙ]›İXÙJ\œ›Üˆ[œİ[˜Ù[Ùˆ\œ›ÜˆÈ\œ›Ü‹›Y\ÜØYÙHˆ˜Ø\\™U[œØY™JJNÂˆ[ÙHÚ[œÙ]›İXÙJ˜Ø\\™S›Ô[[YJNÂˆÙ]Û[šX›Ş
+	ÉÊNÈÙ]Û[šX›ŞÜ[Š˜[ÙJNÈ™]\›ÂˆBˆÛÛœİXZ[[œ]H\œÙQ\ÚİÜXZ[[œ]
+[œ]
+NÂˆYˆ
+XZ[[œ]
+HÂˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÛXZ[	ËYˆXZ[[œ]\HOOH	ĞÓÓTÔÑIÈÈ	ØÛÛ\ÜÙIÈˆ	ÛXZ[	ËX™[ˆšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô$´/t-tb4/tcôcÈ4/ô/´aô`´,	Èˆ	Ñ^\›˜[[XZ[	ÈKÈ[İÑ\XØ]NˆXZ[[œ]\HOOH	ĞÓÓTÔÑIÈJNÂˆÛÛœİXZ[[[YHHÙ]\ÚİÜXZ[[[YJ
+NÂˆYˆ
+XZ[[œ]\HOOH	ÔÑPTÒ	È	‰ˆXZ[[[YOËœÙX\˜Ú
+H›ÚY›ÛZ\ÙKœ™\ÛÛ™JXZ[[[YKœÙX\˜Ú
+XZ[[œ]œ]Y\KÈ[Z]ˆÌJJK[Š˜[YHOˆÚ[œÙ]›İXÙJ
+šÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô'ô/´aô`´,ˆ	Èˆ	ÓXZ[ˆ	ÊH
+È˜[YK›[™İ
+JK˜Ø]Ú
+
+
+HOˆÚ[œÙ]›İXÙJšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô'ô/´aô`´,4/t-t-4/´`t`´`ô/ô/t,	Èˆ	ÓXZ[[˜]˜Z[X›IÊJNÂˆ[ÙHYˆ
+XZ[[œ]\HOOH	Ô‘Q”‘TÒ	È	‰ˆXZ[[[YOËœ™Yœ™\Ú
+H›ÚY›ÛZ\ÙKœ™\ÛÛ™JXZ[[[YK˜XØÛİ[Ê
+JK[Š˜[YHOˆ˜[YVÌOËšYÈXZ[[[YKœ™Yœ™\ÚËŠ˜[YVÌKšY
+Hˆ[™Yš[™Y
+K[Š
+
+HOˆÚ[œÙ]›İXÙJšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô'ô/´aô`´,4/´,t/t/´,´.ô-t/t,	Èˆ	ÓXZ[™Yœ™\ÚY	ÊJK˜Ø]Ú
+
+
+HOˆÚ[œÙ]›İXÙJšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô'ô/´aô`´,4/t-t-4/´`t`´`ô/ô/t,	Èˆ	ÓXZ[[˜]˜Z[X›IÊJNÂˆÙ]Û[šX›Ş
+	ÉÊNÈÙ]Û[šX›ŞÜ[Š˜[ÙJNÈ™]\›ÂˆBˆÛÛœİX\Ò[œ]H\œÙQ\ÚİÜX\Ò[œ]
+[œ]
+NÂˆYˆ
+X\Ò[œ]
+HÂˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÛX\	ËYˆ	ÛX\	ËX™[ˆ›X\ÈJNÂˆÛÛœİX\Ô[[YHHÙ]\ÚİÜX\Ô[[YJ
+NÂˆYˆ
+X\Ò[œ]\HOOH	ÔÑPTÒÔPÑIÈ	‰ˆX\Ô[[YJH›ÚYX\Ô[[YKœÙX\˜Ú
+È]Y\NˆX\Ò[œ]œ]Y\K[Z]ˆLJK[Š˜[YHOˆÚ[œÙ]›İXÙJ	İ›X\ßNˆ	İ˜[YK›[™İX
+JK˜Ø]Ú
+
+
+HOˆÚ[œÙ]›İXÙJ›X\ÊJNÂˆ[ÙHYˆ
+X\Ò[œ]\HOOH	ÔÒÕ×ÓVWÓĞĞUSÓ‰È	‰ˆX\Ô[[YOËœÚİÓ^SØØ][ÛŠH›ÚYX\Ô[[YKœÚİÓ^SØØ][ÛŠ
+K[Š˜[YHOˆÚ[œÙ]›İXÙJ	İ›X\ßNˆ	İ˜[YKœ™XÚ\Ú[ÛŸX
+JK˜Ø]Ú
+
+
+HOˆÚ[œÙ]›İXÙJ›X\ÊJNÂˆ[ÙHÚ[œÙ]›İXÙJ›X\ÊNÂˆÙ]Û[šX›Ş
+	ÉÊNÈÙ]Û[šX›ŞÜ[Š˜[ÙJNÈ™]\›ÂˆBˆÛÛœİ™\İ[H™\ÛÛ™SÛ[šX›Ş[œ]
+[œ]Ú[œ›İ]\ŠNÂˆYˆ
+™\İ[\HOOH	ÛØš™Xİ	È	‰ˆ™\İ[œ™YŠHÚ[›Ü[”™Y™\™[˜ÙJ™\İ[œ™YŠNÂˆ[ÙHYˆ
+™\İ[\HOOH	İÙX‰È	‰ˆ™\İ[\›
+HÚ[›Ü[œ›İÜÙ\Š™\İ[\›
+NÂˆ[ÙHYˆ
+™\İ[\HOOH	ØÛÛ[X[™	È	‰ˆ™\İ[˜ÛÛ[X[™
+HÂˆÛÛœİÛÛ[X[™Hš[™ÛÛ[X[™
+ÛÛ[X[™Ë™\İ[˜ÛÛ[X[™
+NÂˆYˆ
+ÛÛ[X[™
+H[ÛÛ[X[™
+ÛÛ[X[™
+NÈ[ÙHÚ[œÙ]›İXÙJ	İ˜ÛÛ[X[™Nˆ	Ü™\İ[˜ÛÛ[X[™X
+NÂˆH[ÙHYˆ
+™\İ[\HOOH	ØYÙ[\]Y\IÈ™\İ[\HOOH	ÜÙX\˜Ú	ÊHÂˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	ÜÙX\˜Ú	ËX™[ˆœÙX\˜Ú]Y\Nˆ™\İ[˜ÛÛ[X[™ÏÈ[œ]KÈ[İÑ\XØ]Nˆ›ÛÛX[Š™\İ[˜ÛÛ[X[™
+HJNÂˆBˆÙ]Û[šX›Ş
+	ÉÊNÈÙ]Û[šX›ŞÜ[Š˜[ÙJNÂˆNÂ‚ˆÛÛœİXİ]™T™YˆHİ\œ™[XË›Øš™XİÂˆÛÛœİœ›İÜÙ\”YÙHHİ\œ™[XËšÚ[™OOH	Øœ›İÜÙ\‰ÈÈÚ[˜œ›İÜÙ\”YÙJİ\œ™[X‹šY
+Hˆ[™Yš[™YÂˆÛÛœİÛÛ^HÛÛ^™YÚ\İKœ™\ÛÛ™JXİ]™T™Y‹œ›İÜÙ\”YÙJNÂˆÛÛœİÚ›ÛYHHÚ[˜Ú›ÛYTİ]NÂˆÛÛœİš\ÚX›PXİ]š]HHÚ›ÛYK˜Xİ]š]P˜\‹™š[\Š][HOˆ][Kš\ÚX›JNÂˆÛÛœİXİ]™PXİ]š]RYHİ\œ™[XËšÚ[™OOH	ÜÙ][™ÜÉÈ	‰ˆİ\œ™[X‹›Øš™XİËšYOOH	ÜÙX\˜Ú	ÈÈ	ÜÙX\˜Ú	Âˆˆİ\œ™[XËšÚ[™OOH	ÜÙ][™ÜÉÈ	‰ˆİ\œ™[X‹›Øš™XİËšYOOH	Ù]šXÙIÈÈ	Ù]šXÙIÂˆˆİ\œ™[XËšÚ[™OOH	ÜÙ][™ÜÉÈÈ	ÜÙ][™ÜÉÂˆˆİ\œ™[XËšÚ[™OOH	ÙØİ[Y[	ÈÈ	ÙØİ[Y[	Âˆˆİ\œ™[XËšÚ[™OOH	ØØ\\™IÈÈ	ØØ\\™IÂˆˆİ\œ™[XËšÚ[™OOH	İ\ÚÜÉÈÈ	İ\ÚÜÉÂˆˆİ\œ™[XËšÚ[™OOH	ÚÛYIÈÈ	ÚÛYIÂˆˆİ\œ™[XËšÚ[™ÂˆÛÛœİÜ[Xİ]š]HH
+][NˆXİ]š]P˜\’][KÜ[ÛœÎˆÈ™XYÛ›H™]ÕXÎˆ›ÛÛX[ˆHHßJHOˆÂˆÛÛœİ[İÑ\XØ]HHÜ[ÛœË›™]ÕXˆOOHYNÂˆYˆ
+][KšÚ[™OOH	ÜÙX\˜Ú	ÊHÂˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	ÜÙX\˜Ú	ËX™[ˆœÙX\˜ÚKÈ[İÑ\XØ]HJNÂˆ™]\›ÂˆBˆYˆ
+][KšÚ[™OOH	ÜYÚ[œÉÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	ÜYÚ[œÉËX™[ˆœYÚ[œÈKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆYˆ
+][KšYOOH	Ú[˜›Ş	ÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	Ú[˜›Ş	ËYˆ	Ú[˜›Ş	ËX™[ˆš[˜›ŞKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆYˆ
+][KšYOOH	ØÛÛ[Z]IÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	ØÛÛ[Z]IËX™[ˆ˜ÛÛ[Z]HKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆYˆ
+][KšYOOH	Û™X\˜IÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	Û™X\˜IËX™[ˆ›™X\˜HKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆYˆ
+][KšYOOH	İÙX‹[Xœ˜\IÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	İÙX‹[Xœ˜\IËYˆ	İÙX‹[Xœ˜\IËX™[ˆÙX“Xœ˜\HKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆYˆ
+][KšYOOH	ØØ\\™IÊHÂˆYˆ
+[İÑ\XØ]JHÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ØØ\\™IËYˆ	ØØ\\™IËX™[ˆ˜Ø\\™HKÈ[İÑ\XØ]NˆYHJNÂˆ[ÙHÙ]]ZXÚĞØ\\™SÜ[ŠYJNÂˆ™]\›ÂˆBˆYˆ
+][KšYOOH	Ù]šXÙIÊHÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	Ù]šXÙIËX™[ˆœÙ][™ÜÈKÈ[İÑ\XØ]HJNÈ™]\›ÈBˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ][KšÚ[™Yˆ][KšYOOH	ØØ[ÉÈÈ	ØØ[ÉÈˆ][KšÚ[™X™[ˆXİ]š]SX™[
+][K
+HKÈ[İÑ\XØ]HJNÂˆNÂ‚ˆ™]\›ˆ]ˆÛ\ÜÓ˜[YOH™\ÚİÜ\Ú[ˆ]K[ØØ[O^ÛØØ[_H]KZÙ^\İÛ™K\Ú[HYH‚ˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]˜Xİ]š]P˜\•š\ÚX›I×H	‰ˆXİ]š]P˜\ˆ][\Ï^İš\ÚX›PXİ]š]_HXİ]™RY^ØXİ]™PXİ]š]RYH^İHÛ“Ü[^ÛÜ[Xİ]š]_HÛİ\İÛZ^™O^Ê
+HOˆÙ]Xİ]š]QY]Ü“Ü[Š˜[YHOˆ]˜[YJ_HÏŸBˆ]ˆÛ\ÜÓ˜[YOH™\ÚİÜY[š\›Û›Y[‚ˆXY\ˆÛ\ÜÓ˜[YOH™\ÚİÜZXY\ˆˆ]KZÙ^\İÛ™K\™YÚ[ÛHÛÛ˜\ˆ‚ˆ]ˆÛ\ÜÓ˜[YOH™\ÚİÜXœ˜[™[YÈÛ\ÜÓ˜[YOH˜œ˜[™[ØÚİ\ˆÜ˜Ï^ÛÙÛÓØÚİ\\›H[H’Ù^\İÛ™HˆÏÜ[ˆÛ\ÜÓ˜[YOH˜œ˜[™XÚ[›™[‹ÈTÒÕÔÜÜ[Ù]‚ˆ]ˆÛ\ÜÓ˜[YOHš\İÜKXÛÛ›ÛÈXÛÛ]ÛˆÛ\ÜÓ˜[YOHšXÛÛ‹XÛÛ›ÛˆXÛÛH˜Ú]œ›Û‹[YˆX™[^İ˜˜XÚßHÛÛXÚÏ^Ê
+HOˆÚ[™ÛĞ˜XÚÊ
+_HÏXÛÛ]ÛˆÛ\ÜÓ˜[YOHšXÛÛ‹XÛÛ›ÛˆXÛÛH˜Ú]œ›Û‹\šYÚˆX™[^İ™›ÜØ\™HÛÛXÚÏ^Ê
+HOˆÚ[™ÛÑ›ÜØ\™
+
+_HÏÙ]‚ˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]›Û[šX›Şš\ÚX›I×H	‰ˆ›Ü›HÛ\ÜÓ˜[YOH›Û[šX›ŞˆÛ”İX›Z]^ÜİX›Z]Û[šX›ŞH]KZÙ^\İÛ™KXÛÛ\Û™[H›Û[šX›Ş‚ˆÜ[ˆÛ\ÜÓ˜[YOH›Û[šX›Ş\Ş[X›Ûˆ\šXKZY[XÛÛˆ˜[YOHœÙX\˜ÚˆÚ^™O^ÌM_HÏÜÜ[[œ]™Y^ÛÛ[šX›Ş™YŸH˜[YO^ÛÛ[šX›ŞHÛ‘›Øİ\Ï^Ê
+HOˆÙ]Û[šX›ŞÜ[ŠYJ_HÛÚ[™ÙO^Ù]™[OˆÙ]Û[šX›Ş
+]™[\™Ù]˜[YJ_HXÙZÛ\^İ›Û[šX›ŞH\šXK[X™[^İ›Û[šX›ŞKÏØ™Ú\ÓXXÊ
+HÈ	ø£&	Èˆ	Ğİ›	ßHÚØ™‚ˆÛÛ[šX›ŞÜ[ˆ	‰ˆÛ[šX›ŞY[H˜[YO^ÛÛ[šX›ŞH^İHÛÚÛÜÙO^İ˜[YHOˆÈÙ]Û[šX›Ş
+˜[YJNÈÛ[šX›Ş™Y‹˜İ\œ™[Ë™›Øİ\Ê
+NÈ_HÏŸBˆÙ›Ü›OŸBˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]ÛÜšÜÜXÙTÙ[XİÜ•š\ÚX›I×H	‰ˆ]ˆÛ\ÜÓ˜[YOHšXY\‹]ÛÜšÜÜXÙH]ÛˆÛ\ÜÓ˜[YOHÛÜšÜÜXÙK\İÚ]Ú\ˆˆÛÛXÚÏ^Ê
+HOˆÙ]ÛÜšÜÜXÙSÜ[Š˜[YHOˆ]˜[YJ_H\šXKY^[™Y^İÛÜšÜÜXÙSÜ[ŸOÜ[ˆÛ\ÜÓ˜[YOHÛÜšÜÜXÙKYİ‹ÏÜ[ÜÛ˜\ÚİÛÜšÜÜXÙK›˜[Y_OÜÜ[XÛÛˆ˜[YOH˜Ú]œ›Û‹YİÛˆˆÚ^™O^ÌLßHÛ\ÜÓ˜[YOH˜Ú]œ›ÛˆˆÏØ]ÛİÛÜšÜÜXÙSÜ[ˆ	‰ˆÛÜšÜÜXÙSY[HÚ[^ÜÚ[H^İHÛÛÜÙO^Ê
+HOˆÙ]ÛÜšÜÜXÙSÜ[Š˜[ÙJ_HÏŸOÙ]ŸBˆ]ˆÛ\ÜÓ˜[YOHšXY\‹XXİ[ÛœÈ‚ˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]˜ÛÛ[X[™[]P]Û•š\ÚX›I×H	‰ˆ]ÛˆÛ\ÜÓ˜[YOHœ]ZY]X]ÛˆˆÛÛXÚÏ^Ê
+HOˆÙ][]SÜ[ŠYJ_H]O^İ˜ÛÛ[X[™OXÛÛˆ˜[YOH˜ÛÛ[X[™ˆÚ^™O^ÌM_HÏÜ[İ˜ÛÛ[X[™OÜÜ[Ø]ÛŸBˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]›™]Ğ]Û•š\ÚX›I×H	‰ˆ]ÛˆÛ\ÜÓ˜[YOHœš[X\KX]ÛˆˆÛÛXÚÏ^Ê
+HOˆÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[YHOˆ]˜[YJ_H\šXKY^[™Y^Ü]ZXÚĞXİ[ÛœÓÜ[ŸOXÛÛˆ˜[YOHœ\ÈˆÚ^™O^ÌM_HÏİ›™]ßOØ]ÛŸBˆÙ[XİÛ\ÜÓ˜[YOH›ØØ[K\Ù[Xİˆ˜[YO^ÛØØ[_HÛÚ[™ÙO^Ù]™[OˆÙ]ØØ[J]™[\™Ù]˜[YH\ÈØØ[J_H\šXK[X™[^İ›[™İXYÙ_OÜ[Ûˆ˜[YOH™[ˆİ™[™Û\ÚOÛÜ[ÛÜ[Ûˆ˜[YOHœHİœ\ÜÚX[ŸOÛÜ[ÛÜÙ[Xİ‚ˆ]ÛˆÛ\ÜÓ˜[YOH˜]˜]\‹X]ÛˆˆÛÛXÚÏ^Ê
+HOˆÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÜÙ][™ÜÉËYˆ	ÜÙ][™ÜÉËX™[ˆœÙ][™ÜÈJ_H\šXK[X™[^İœÙ][™ÜßOØ]˜]\“X™[OØ]Û‚ˆÙ]‚ˆÜ]ZXÚĞXİ[ÛœÓÜ[ˆ	‰ˆ]ZXÚĞXİ[ÛœÈ^İHÛÚÛÜÙO^ØXİ[ÛˆOˆÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÚ[›Ü[”™Y™\™[˜ÙJXİ[Û‹È[İÑ\XØ]NˆYHJNÈ_HÛØ\\™O^Ê
+HOˆÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÙ]]ZXÚĞØ\\™SÜ[ŠYJNÈ_HÛ“™]ÕX^Ê
+HOˆÈÙ]]ZXÚĞXİ[ÛœÓÜ[Š˜[ÙJNÈÚ[›Ü[”™Y™\™[˜ÙJÈÚ[™ˆ	ÚÛYIËYˆ	Û™]Ë]X‰ËX™[ˆšÛYHKÈ[İÑ\XØ]NˆYHJNÈ_HÏŸBˆÚXY\‚ˆX”İš\Ú[^ÜÚ[HXœÏ^ÜÚ[˜İ\œ™[XœÊ
+_Hİ\œ™[X^Øİ\œ™[XŸH^İHÙ][™ÜÏ^ÜÙ][™ÜßHÏ‚ˆ]ˆÛ\ÜÓ˜[YOH™\ÚİÜX›ÙHˆ]KZÙ^\İÛ™K\™YÚ[ÛH˜ÛÛ[ˆİ[O^ŞÈ	ËKXÛÛ^]ÚY	Îˆ	ÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]œÚYX˜\•ÚY	×_\	ËKXYÙ[]ÚY	Îˆ	ÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]š[œÜXİÜ•ÚY	×_\H\È™XXİÔÔÔ›Ü\Y\ßH]KXÛÛ^[Ü[^ØÚ›ÛYK˜ÛÛ^ÚYX˜\“Ü[ˆ	‰ˆÙ][™ÜË˜[Y\ÖÉÛ^[İ]œÚYX˜\•š\ÚX›I×HÈ	İYIÈˆ	Ù˜[ÙIßH]KXYÙ[[Ü[^ØÚ›ÛYK˜YÙ[[™[Ü[ˆ	‰ˆÙ][™ÜË˜[Y\ÖÉÛ^[İ]š[œÜXİÜ•š\ÚX›I×HÈ	İYIÈˆ	Ù˜[ÙIßO‚ˆXZ[ˆÛ\ÜÓ˜[YOHœ[™KZÜİˆ\šXK[X™[^İÛÜšÜÜXÙ_HÛ‘˜YÓİ™\^Ù]™[Oˆ]™[œ™]™[Y˜][
+
+_HÛ‘›Ü^Ù]™[Oˆ[™Q›Ü
+]™[Ú[˜YÙÙY™Y‹Ú[˜İ\œ™[[™RY
+_O‚ˆ[™U™YH›ÙO^ÜÛ˜\ÚİÛÜšÜÜXÙKœ[™U™Y_HÚ[^ÜÚ[H^İHÛÛ^™YÚ\İO^ØÛÛ^™YÚ\İ_HÛ‘˜YÔ™Y^ÜÙ]˜YÙÙY™YŸHÙ][™ÜÏ^ÜÙ][™ÜßHÙ][™ÜÔİÜ™O^ÜÙ][™ÜÔİÜ™_HÙ][™ÜĞÛÛ^^ÜÙ][™ÜĞÛÛ^HÛ”Ù][™ĞÚ[™ÙO^İ\]TÙ][™ßHÏ‚ˆÛXZ[‚ˆØÚ›ÛYK˜ÛÛ^ÚYX˜\“Ü[ˆ	‰ˆÙ][™ÜË˜[Y\ÖÉÛ^[İ]œÚYX˜\•š\ÚX›I×H	‰ˆÛÛ^ÚYX˜\ˆ]O^ØÛÛ^H^İHÏŸBˆØÚ›ÛYK˜YÙ[[™[Ü[ˆ	‰ˆÙ][™ÜË˜[Y\ÖÉÛ^[İ]š[œÜXİÜ•š\ÚX›I×H	‰ˆYÙ[›İ[™[Ú[^ÜÚ[H^İHXİ]™UX^Øİ\œ™[XŸH™Yš[^ØYÙ[™Yš[HÛÛÜÙO^Ê
+HOˆÚ[ÙÙÛPYÙ[[™[
+˜[ÙJ_HÏŸBˆÙ]‚ˆÜÙ][™ÜË˜[Y\ÖÉÛ^[İ]œİ]\Ğ˜\•š\ÚX›I×H	‰ˆ›Ûİ\ˆÛ\ÜÓ˜[YOHœİ]\ËX˜\ˆˆ]KZÙ^\İÛ™K\™YÚ[ÛHœİ]\ËX˜\ˆÜ[HÛ\ÜÓ˜[YOHœİ]\Ë[YÚ‹Ïˆİœİ]\ßOÜÜ[Ü[ˆÛ\ÜÓ˜[YOHœİ]\Ë\ÜXÙ\ˆ‹ÏÜ[İœØ]™YOÜÜ[Ù›Ûİ\ŸBˆØXİ]š]QY]Ü“Ü[ˆ	‰ˆXİ]š]QY]ÜˆÚ[^ÜÚ[H^İHÛÛÜÙO^Ê
+HOˆÙ]Xİ]š]QY]Ü“Ü[Š˜[ÙJ_HÏŸBˆÙ]‚ˆÜ[]SÜ[ˆ	‰ˆÛÛ[X[™[]HÛÛ[X[™Ï^ØÛÛ[X[™ßH^İHÛ”[^Ü[ÛÛ[X[™HÛÛÜÙO^Ê
+HOˆÙ][]SÜ[Š˜[ÙJ_HÏŸBˆÜ]ZXÚĞØ\\™SÜ[ˆ	‰ˆ]ZXÚĞØ\\™Sİ™\›^HÚ[^ÜÚ[H^İHÛÛÜÙO^Ê
+HOˆÙ]]ZXÚĞØ\\™SÜ[Š˜[ÙJ_HÏŸBˆ›İXÙUØ\İ›İXÙO^ÜÚ[˜İ\œ™[›İXÙ_H^İHÛÛÜÙO^Ê
+HOˆÚ[˜ÛX\“›İXÙJ
+_HÏ‚ˆÙ]ÂŸB‚™[˜İ[Ûˆ\ÓXXÊ
+Nˆ›ÛÛX[ˆÈ™]\›ˆ\[Ùˆ˜]šYØ]ÜˆOOH	İ[™Yš[™Y	È	‰ˆÓXXßTÛ™_TYÚK\İ
+˜]šYØ]Ü‹œ]›Ü›JNÈB‚™[˜İ[ÛˆX]Ú\ÔÚÜİ]
+]™[ˆÙ^X›Ø\™]™[˜[YNˆİš[™ÊNˆ›ÛÛX[ˆÂˆÛÛœİ\ÈH˜[YKœÜ]
+	ÊÉÊK›X\
+\Oˆ\š[J
+KÓİÙ\Ø\ÙJ
+JK™š[\Š›ÛÛX[ŠNÂˆÛÛœİÙ^HH\ËœÜ
+
+NÂˆYˆ
+ZÙ^JH™]\›ˆ˜[ÙNÂˆÛÛœİ[ÙYšY\œÈH™]ÈÙ]
+\ÊNÂˆÛÛœİš[X\T™\]Z\™YH[ÙYšY\œËš\Ê	Øİ›	ÊH[ÙYšY\œËš\Ê	ØÛY	ÊH[ÙYšY\œËš\Ê	ÛY]IÊNÂˆYˆ
+š[X\T™\]Z\™Y
+HÂˆÛÛœİ™\ÜÙYH[ÙYšY\œËš\Ê	ØÛY	ÊH[ÙYšY\œËš\Ê	ÛY]IÊH
+\ÓXXÊ
+H	‰ˆ[[ÙYšY\œËš\Ê	Øİ›	ÊJHÈ]™[›Y]RÙ^Hˆ]™[˜İ›Ù^NÂˆYˆ
+\™\ÜÙY
+H™]\›ˆ˜[ÙNÂˆBˆYˆ
+[ÙYšY\œËš\Ê	Ø[	ÊH	‰ˆY]™[˜[Ù^JH™]\›ˆ˜[ÙNÂˆYˆ
+[ÙYšY\œËš\Ê	ÜÚY	ÊH	‰ˆY]™[œÚYÙ^JH™]\›ˆ˜[ÙNÂˆYˆ
+\š[X\T™\]Z\™Y	‰ˆ
+]™[˜İ›Ù^H]™[›Y]RÙ^JJH™]\›ˆ˜[ÙNÂˆÛÛœİ^XİYHÙ^HOOH	ÜÜXÙIÈÈ	È	ÈˆÙ^HOOH	Ù\ØØ\IÈÈ	Ù\ØØ\IÈˆÙ^NÂˆ™]\›ˆ]™[šÙ^KÓİÙ\Ø\ÙJ
+HOOH^XİY]™[˜ÛÙKÓİÙ\Ø\ÙJ
+HOOHÙ^H
+Ù^HOOH	ÜÜXÙIÈ	‰ˆ]™[˜ÛÙHOOH	ÔÜXÙIÊNÂŸB‚™[˜İ[ÛˆÛÛ^X[œ™XYÜ[XŠXˆ\ÚİÜXˆ[™Yš[™YˆÛÜJNˆ™XXİ”™XXİ›ÙHÂˆYˆ
+]XˆX‹šÚ[™OOH	ÚÛYIÈX‹šÚ[™OOH	Û]\ÚXÉÈX‹šÚ[™OOH	İšY[ÉÈX‹šÚ[™OOH	ÜÚÜÉÈX‹šÚ[™OOH	ØZIÈX‹šÚ[™OOH	Û™]ÛÜšÉÈX‹šÚ[™OOH	ÜÙ][™ÜÉÈX‹šÚ[™OOH	İ\ÚÜÉÊH™]\›ˆ[ÂˆYˆ
+X‹šÚ[™OOH	ÙÜ˜\	ÈX‹šÚ[™OOH	ØØ[˜\ÉÈX‹šÚ[™OOH	İ˜][	ÊH™]\›ˆÜ[İ˜][OÜÜ[¸ .Øİ›Û™ÏİX‹]_OÜİ›Û™ÏÏÂˆYˆ
+X‹šÚ[™OOH	ÙØİ[Y[	ÈX‹šÚ[™OOH	Ùš[IÊH™]\›ˆÜ[İ™š[\ßOÜÜ[¸ .Øİ›Û™ÏİX‹]_OÜİ›Û™ÏÏÂˆ™]\›ˆX‹›Øš™XİËšY	‰ˆX‹›Øš™XİšYOOHX‹šÚ[™ÈÜ[ÛØš™Xİ]JÈÚ[™ˆX‹šÚ[™YˆX‹šÚ[™J_OÜÜ[¸ .Øİ›Û™ÏİX‹]_OÜİ›Û™ÏÏˆˆ[ÂŸB‚™[˜İ[Ûˆš[™ÛÛ[X[™
+ÛÛ[X[™ÎˆÚ[ÛÛ[X[™×K[œ]ˆİš[™ÊNˆÚ[ÛÛ[X[™[™Yš[™YÂˆÛÛœİ›Ü›X[^™YH[œ]š[J
+KÓİÙ\Ø\ÙJ
+NÂˆ™]\›ˆÛÛ[X[™Ë™š[™
+ÛÛ[X[™OˆÛÛ[X[™˜]˜Z[X›HOOH˜[ÙH	‰ˆ
+ÛÛ[X[™šYOOH›Ü›X[^™YÛÛ[X[™›X™[ÓİÙ\Ø\ÙJ
+HOOH›Ü›X[^™YÛÛ[X[™šÙ^]ÛÜ™ÏËœÛÛYJÙ^]ÛÜ™OˆÙ^]ÛÜ™OOH›Ü›X[^™Y
+JJNÂŸB‚\H\ÚİÜXZ[[œ]HÈ™XYÛ›H\Nˆ	ÓÔS‰È	ĞÓÓTÔÑIÈ	Ô‘Q”‘TÒ	ÈHÈ™XYÛ›H\Nˆ	ÔÑPTÒ	ÎÈ™XYÛ›H]Y\Nˆİš[™ÈNÂ™[˜İ[Ûˆ\œÙQ\ÚİÜXZ[[œ]
+˜[YNˆİš[™ÊNˆ\ÚİÜXZ[[œ][™Yš[™YÂˆYˆ
+×ŠÎ›Ü[Ÿ4/´`´.´`4bô`´c
+WÊÊÎ™^\›˜[ÊÊOÊÎ›XZ[[XZ[4/ô/´aô`´`ß4/ô.4`tc4/4,
+IÚK\İ
+˜[YJJH™]\›ˆÈ\Nˆ	ÓÔS‰ÈNÂˆYˆ
+×ŠÎ˜ÛÛ\ÜÙ_Üš]_4/t,4/ô.4`t,4`´c
+WÊÊÎ™^\›˜[ÊÊOÊÎ›XZ[[XZ[4/ô.4`tc4/4/ŠIÚK\İ
+˜[YJJH™]\›ˆÈ\Nˆ	ĞÓÓTÔÑIÈNÂˆYˆ
+×ŠÎœ™Yœ™\ÚŞ[˜ß4/´,t/t/´,´.4`´c4`t.4/tat`4/´/t.4-ô.4`4/´,´,4`´c
+WÊÊÎ™^\›˜[ÊÊOÊÎ›XZ[[XZ[4/ô/´aô`´`ÊIÚK\İ
+˜[YJJH™]\›ˆÈ\Nˆ	Ô‘Q”‘TÒ	ÈNÂˆÛÛœİÙX\˜ÚH˜[YK›X]Ú
+×ŠÎ›XZ[[XZ[4/ô/´aô`´,4/ô.4`tc4/4,
+WÊÊÎœÙX\˜Úš[™4/t,4.t`´.
+O×ÊŠŠÊIÚJNÂˆ™]\›ˆÙX\˜ÚË–ÌWOËš[J
+HÈÈ\Nˆ	ÔÑPTÒ	Ë]Y\NˆÙX\˜ÚÌWKš[J
+HHˆ[™Yš[™YÂŸB‚\H\ÚİÜX\Ò[œ]HÈ™XYÛ›H\Nˆ	ÓÔS—ÓPT	È	ÔÒÕ×ÓVWÓĞĞUSÓ‰È	ÔS—Ô“ÕUIÎÈ™XYÛ›H]Y\OÎˆİš[™ÈHÈ™XYÛ›H\Nˆ	ÔÑPTÒÔPÑIÎÈ™XYÛ›H]Y\Nˆİš[™ÈNÂ™[˜İ[Ûˆ\œÙQ\ÚİÜX\Ò[œ]
+˜[YNˆİš[™ÊNˆ\ÚİÜX\Ò[œ][™Yš[™YÂˆYˆ
+×ŠÎ›Ü[Ÿ4/´`´.´`4bô`´c
+WÊÊÎWÊÊOÊÎ›X\X\ß4.´,4`4`´`ß4.´,4`4`´bÊIÚK\İ
+˜[YJJH™]\›ˆÈ\Nˆ	ÓÔS—ÓPT	ÈNÂˆYˆ
+×ŠÎœÚİß4/ô/´.´,4-ô,4`´c
+WÊÊÎ›^WÊÊOÊÎ›ØØ][ÛŸÜÚ][ÛŸ4,ô-t/´/ô/´-ô.4a´.4cŸ4/4/´cˆ4,ô-t/´/ô/´-ô.4a´.4cŠIÚK\İ
+˜[YJJH™]\›ˆÈ\Nˆ	ÔÒÕ×ÓVWÓĞĞUSÓ‰ÈNÂˆÛÛœİÙX\˜ÚH˜[YK›X]Ú
+×ŠÎ™š[™ÙX\˜Ú4/t,4.t`´.4/ô/´.4`t.ŠÎ—Êô/4-t`t`ŠOÊWÊÊŠÊIÚJNÂˆYˆ
+ÙX\˜ÚË–ÌWJH™]\›ˆÈ\Nˆ	ÔÑPTÒÔPÑIË]Y\NˆÙX\˜ÚÌWKš[J
+HNÂˆÛÛœİ›İ]HH˜[YK›X]Ú
+×ŠÎœ›İ]_\™Xİ[Ûœß4/4,4`4b4`4`ô`Ÿ4/ô/´`t`´`4/´.4`´c4/4,4`4b4`4`ô`ŠÎ—Êô-4/ŠOÊWÊÊŠÊIÚJNÂˆYˆ
+›İ]OË–ÌWJH™]\›ˆÈ\Nˆ	ÔS—Ô“ÕUIË]Y\Nˆ›İ]VÌWKš[J
+HNÂˆ™]\›ˆ[™Yš[™YÂŸB‚™[˜İ[ÛˆXİ]š]P˜\ŠÈ][\ËXİ]™RYÛ“Ü[‹Ûİ\İÛZ^™HNˆÈ][\ÎˆXİ]š]P˜\’][V×NÈXİ]™RYÎˆİš[™ÎÈˆÛÜNÈÛ“Ü[ˆ
+][NˆXİ]š]P˜\’][KÜ[ÛœÏÎˆÈ™XYÛ›H™]ÕXÎˆ›ÛÛX[ˆJHOˆ›ÚYÈÛİ\İÛZ^™Nˆ
+
+HOˆ›ÚYJHÂˆÛÛœİÜ[ˆH
+][NˆXİ]š]P˜\’][K]™[ˆ™XXİ“[İ\ÙQ]™[S]Û‘[[Y[ŠHOˆÛ“Ü[Š][KÈ™]ÕXˆ]™[›Y]RÙ^H]™[˜İ›Ù^HJNÂˆ™]\›ˆ\ÚYHÛ\ÜÓ˜[YOH˜Xİ]š]KX˜\ˆˆ]KZÙ^\İÛ™K\™YÚ[ÛH˜Xİ]š]KX˜\ˆˆ\šXK[X™[^İÛÜšÜÜXÙ_O]ˆÛ\ÜÓ˜[YOH˜Xİ]š]K[ÙÛÈˆ\šXKZY[[YÈÜ˜Ï^ÛÙÛÕ\›H[HˆˆÏÙ]˜]Ú][\Ë›X\
+][HOˆ]Ûˆ\OH˜]ÛˆˆÙ^O^Ú][KšYHÛ\ÜÓ˜[YO^ØXİ]š]KZ][IØXİ]™RYOOH][KšYÈ	ÈXİ]™IÈˆ	ÉßXHÛÛXÚÏ^Ù]™[OˆÜ[Š][K]™[
+_HÛ]^ÛXÚÏ^Ù]™[OˆÈYˆ
+]™[˜]ÛˆOOHJHÈ]™[œ™]™[Y˜][
+
+NÈÛ“Ü[Š][KÈ™]ÕXˆYHJNÈH_H]O^Ú][K™^[œÚ[Û”ÛİÈ™^[œÚ[Û”ÛİˆXİ]š]SX™[
+][K
+_H\šXKXİ\œ™[^ØXİ]™RYOOH][KšYÈ	ÜYÙIÈˆ[™Yš[™YOÜ[ˆÛ\ÜÓ˜[YOH˜Xİ]š]KZXÛÛˆˆ\šXKZY[XÛÛˆ˜[YO^Ê][KšXÛÛˆ\ÈXÛÛ“˜[YJH	ØÚ\˜ÛIßHÚ^™O^ÌNHÏÜÜ[Ü[ØXİ]š]SX™[
+][K
+_OÜÜ[Ø]ÛŠ_OÛ˜]]ˆÛ\ÜÓ˜[YOH˜Xİ]š]KX›İÛH]Ûˆ\OH˜]ÛˆˆÛ\ÜÓ˜[YOH˜Xİ]š]KZ][HİXHˆÛÛXÚÏ^ÛÛİ\İÛZ^™_H]O^İ˜İ\İÛZ^™_H\šXK[X™[^İ˜İ\İÛZ^™_OÜ[ˆÛ\ÜÓ˜[YOH˜Xİ]š]KZXÛÛˆˆ\šXKZY[XÛÛˆ˜[YOHœÛY\œÈˆÚ^™O^ÌNHÏÜÜ[Ü[İ˜ÛÛ™šYİ\™_OÜÜ[Ø]ÛÙ]Ø\ÚYOÂŸB‚™[˜İ[ÛˆXİ]š]SX™[
+][NˆXİ]š]P˜\’][KˆÛÜJNˆİš[™ÈÂˆÛÛœİX™[Îˆ™XÛÜ™İš[™Ëİš[™ÏˆHÈÛYNˆšÛYKÙX\˜ÚˆœÙX\˜Ú]\ÚXÎˆ›]\ÚXËšY[ÎˆšY[ËÚÜÎˆœÚÜËZNˆ›ØØ[RK™]ÛÜšÎˆ˜ÛÛ›™Xİ]š]KØ\\™Nˆ˜Ø\\™K\ÚÜÎˆ\ÚËØİ[Y[ˆ™Øİ[Y[Ë]šXÙNˆ™]šXÙ\ËÙ][™ÜÎˆœÙ][™ÜË[˜›Şˆš[˜›ŞYÙ[ˆ˜YÙ[Ú]ˆ›Y\ÜØYÙ\ËÜXÙNˆœÜXÙ\Ë˜][ˆ˜][Ø[[™\ˆ˜Ø[[™\‹ÛÛXİÎˆ˜ÛÛXİËX\ˆ›X\ËXZ[ˆ›XZ[š[Nˆ™š[\ËYYXNˆœİÜËØ[Îˆ˜Ø[ËİXœØÜš\[ÛœÎˆœİXœØÜš\[ÛœË	İÙX‹[Xœ˜\IÎˆÙX“Xœ˜\KÛÛ[Z]Nˆ˜ÛÛ[Z]K™X\˜Nˆ›™X\˜KYÚ[œÎˆœYÚ[œÈNÂˆ™]\›ˆX™[ÖÚ][KšYHÏÈ][K›X™[ÂŸB‚™[˜İ[ÛˆX”İš\
+ÈÚ[XœËİ\œ™[X‹Ù][™ÜÈNˆÈÚ[ˆ\ÚİÜÚ[ÛÛ›Û\ÈXœÎˆ\ÚİÜX–×NÈİ\œ™[XÎˆ\ÚİÜXÈˆÛÜNÈÙ][™ÜÎˆ\ÚİÜÙ][™ÜÔÛ˜\ÚİJHÂˆ\HØØ[˜YÈHÈX’Yˆİš[™ÎÈÚ[\’Yˆ[X™\Èİ\ˆ[X™\Èİ\Nˆ[X™\Èˆ[X™\ÈNˆ[X™\È\™Ù][™^ˆ[X™\È]XÚ™]šY]Îˆ›ÛÛX[È[İ™Yˆ›ÛÛX[È˜]]™Q˜YÏÎˆ›ÛÛX[È˜[œÙ™\•˜[œØXİ[Û’YÎˆİš[™ÈNÂˆ\H[˜ÛÛZ[™Õ˜[œÙ™\ˆHÈİ\ˆ\ÚİÜÚ[™İÕ˜[œÙ™\”İ\È\™Ù][™^ˆ[X™\ÈÚ[\’[œÚYNˆ›ÛÛX[È˜]]™Q˜YÏÎˆ›ÛÛX[ˆNÂˆÛÛœİÛY[KÙ]Y[WHH™XXİ\ÙTİ]OÈX’Yˆİš[™ÎÈˆ[X™\ÈNˆ[X™\ˆOŠ
+NÂˆÛÛœİÛİ™\™›İÓY[KÙ]İ™\™›İÓY[WHH™XXİ\ÙTİ]OÈˆ[X™\ÈNˆ[X™\ˆOŠ
+NÂˆÛÛœİÙ˜YËÙ]˜Y×HH™XXİ\ÙTİ]OØØ[˜YÏŠ
+NÂˆÛÛœİÚ[˜ÛÛZ[™ËÙ][˜ÛÛZ[™×HH™XXİ\ÙTİ]O[˜ÛÛZ[™Õ˜[œÙ™\Š
+NÂˆÛÛœİİš\™YˆH™XXİ\ÙT™YS]‘[[Y[Š[
+NÂˆÛÛœİİ™\™›İĞ]Û”™YˆH™XXİ\ÙT™YS]Û‘[[Y[Š[
+NÂˆÛÛœİX”™YœÈH™XXİ\ÙT™YŠ™]ÈX\İš[™ËS]‘[[Y[Š
+JNÂˆÛÛœİXœÔ™YˆH™XXİ\ÙT™YŠXœÊNÂˆÛÛœİ˜YÔ™YˆH™XXİ\ÙT™YŠ˜YÊNÂˆÛÛœİ[˜ÛÛZ[™Ô™YˆH™XXİ\ÙT™YŠ[˜ÛÛZ[™ÊNÂˆÛÛœİ˜]]™Q›Ü™YˆH™XXİ\ÙT™Yİš[™ÏŠ
+NÂˆXœÔ™Y‹˜İ\œ™[HXœÎÂˆ˜YÔ™Y‹˜İ\œ™[H˜YÎÂˆ[˜ÛÛZ[™Ô™Y‹˜İ\œ™[H[˜ÛÛZ[™ÎÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆYˆ
+[Y[JH™]\›ˆ[™Yš[™YÂˆÛÛœİÛÜÙHH
+
+HOˆÙ]Y[J[™Yš[™Y
+NÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\™İÛ‰ËÛÜÙJNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\™İÛ‰ËÛÜÙJNÂˆKÛY[WJNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆYˆ
+[İ™\™›İÓY[JH™]\›ˆ[™Yš[™YÂˆÛÛœİÛÜÙHH
+
+HOˆÙ]İ™\™›İÓY[J[™Yš[™Y
+NÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\™İÛ‰ËÛÜÙJNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\™İÛ‰ËÛÜÙJNÂˆKÛİ™\™›İÓY[WJNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİXİ]™S›ÙHHİ\œ™[XˆÈX”™YœË˜İ\œ™[™Ù]
+İ\œ™[X‹šY
+Hˆ[™Yš[™YÂˆXİ]™S›ÙOËœØÜ›Û[ÕšY]ÊÈ›ØÚÎˆ	Û™X\™\İ	Ë[›[™Nˆ	Û™X\™\İ	Ë™Z]š[ÜˆÙ][™ÜË˜[Y\ÖÉÛ[İ[Û‹›[ÙI×HOOH	ÛÙ™‰ÈÈ	Ø]]ÉÈˆ	ÜÛ[Ûİ	ÈJNÂˆKØİ\œ™[XËšYÙ][™ÜË˜[Y\ÖÉÛ[İ[Û‹›[ÙI×WJNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİÛ•˜[œÙ™\ˆH
+]™[ˆ]™[
+HOˆÂˆÛÛœİ˜[YHH
+]™[\Èİ\İÛQ]™[\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[ŠK™]Z[ÂˆYˆ
+]˜[YH˜[YKÛÜšÜÜXÙRYOOHÚ[™Ù]Û˜\Úİ
+
+KÛÜšÜÜXÙKšY
+H™]\›ÂˆYˆ
+˜[YK\HOOH	Üİ\	ÊHÂˆYˆ
+˜[YKœÛİ\˜ÙUÚ[™İÒYOOHÚ[Ú[™İÒY	‰ˆ]XœÔ™Y‹˜İ\œ™[œÛÛYJXˆOˆX‹šYOOH˜[YKX’Y
+JHÙ][˜ÛÛZ[™ÊÈİ\ˆ˜[YK\™Ù][™^ˆXœÔ™Y‹˜İ\œ™[›[™İÚ[\’[œÚYNˆ˜[ÙHJNÂˆH[ÙHYˆ
+˜[YK\HOOH	ØØ[˜Ù[	ÊHÂˆÙ][˜ÛÛZ[™Êİ\œ™[Oˆİ\œ™[Ëœİ\˜[œØXİ[Û’YOOH˜[YK˜[œØXİ[Û’YÈ[™Yš[™Yˆİ\œ™[
+NÂˆYˆ
+˜YÔ™Y‹˜İ\œ™[Ë˜[œÙ™\•˜[œØXİ[Û’YOOH˜[YK˜[œØXİ[Û’Y
+HÂˆÛX\”Ú[\“\İ[™\œÊ
+NÂˆ˜YÔ™Y‹˜İ\œ™[H[™Yš[™YÂˆÙ]˜YÊ[™Yš[™Y
+NÂˆBˆH[ÙHYˆ
+˜[YK\HOOH	ØXØÙ\Y	È˜[YK\HOOH	ØÛÛ[Z]Y	ÊHÂˆYˆ
+˜[YKœÛİ\˜ÙUÚ[™İÒYOOHÚ[Ú[™İÒY	‰ˆ˜YÔ™Y‹˜İ\œ™[Ë˜[œÙ™\•˜[œØXİ[Û’YOOH˜[YK˜[œØXİ[Û’Y
+HÂˆÛX\”Ú[\“\İ[™\œÊ
+NÂˆ˜YÔ™Y‹˜İ\œ™[H[™Yš[™YÂˆÙ]˜YÊ[™Yš[™Y
+NÂˆBˆÙ][˜ÛÛZ[™Êİ\œ™[Oˆİ\œ™[Ëœİ\˜[œØXİ[Û’YOOH˜[YK˜[œØXİ[Û’YÈ[™Yš[™Yˆİ\œ™[
+NÂˆBˆNÂˆÚ[™İË˜Y]™[\İ[™\ŠTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÑÓWÑU‘S•Û•˜[œÙ™\ŠNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\ŠTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÑÓWÑU‘S•Û•˜[œÙ™\ŠNÂˆKÜÚ[JNÂ‚ˆÛÛœİÛÜS[šÈH\Ş[˜È
+Xˆ\ÚİÜXŠHOˆÂˆYˆ
+]X‹›Øš™Xİ
+HÈÚ[œÙ]›İXÙJ››ÓØš™Xİ
+NÈ™]\›ÈBˆÛÛœİ[šÈHÙ^\İÛ™S[šÑ›Ü”™Y™\™[˜ÙJX‹›Øš™Xİ
+NÂˆHÈ]ØZ]˜]šYØ]Ü‹˜Û\›Ø\™ËÜš]U^
+[šÊNÈÚ[œÙ]›İXÙJšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô(t`tbô.ô.´,4`t.´/´/ô.4`4/´,´,4/t,	Èˆ	Ó[šÈÛÜYY	ÊNÈBˆØ]ÚÈÚ[œÙ]›İXÙJšÛYHOOH	ô$ô.ô,4,´/t,4cÉÈÈ	ô't-H4`ô-4,4.ô/´`tc4`t.´/´/ô.4`4/´,´,4`´c4`t`tbô.ô.´`ÉÈˆ	ĞÛİ[›İÛÜH[šÉÊNÈBˆNÂ‚ˆÛÛœİ[œÙ\[Û’[™^]H
+ÛY[ˆ[X™\‹YÛ›Ü™UX’YÎˆİš[™ÊNˆ[X™\ˆOˆÂˆ]\™Ù][™^HÂˆ›Üˆ
+ÛÛœİXˆÙˆXœÔ™Y‹˜İ\œ™[
+HÂˆYˆ
+X‹šYOOHYÛ›Ü™UX’Y
+HÛÛ[YNÂˆÛÛœİ™XİHX”™YœË˜İ\œ™[™Ù]
+X‹šY
+OË™Ù]›İ[™[™ĞÛY[™Xİ
+
+NÂˆYˆ
+™Xİ	‰ˆÛY[ˆ™Xİ›Y
+È™XİÚYÈŠH\™Ù][™^
+ÏHNÂˆBˆ™]\›ˆX]›X^
+X]›Z[ŠXœÔ™Y‹˜İ\œ™[›[™İ\™Ù][™^
+JNÂˆNÂ‚ˆÛÛœİ\Ò[œÚYTİš\H
+ÛY[ˆ[X™\‹ÛY[Nˆ[X™\ŠNˆ›ÛÛX[ˆOˆÂˆÛÛœİ›İ[™ÈHİš\™Y‹˜İ\œ™[Ë™Ù]›İ[™[™ĞÛY[™Xİ
+
+NÂˆ™]\›ˆ›ÛÛX[Š›İ[™È	‰ˆÛY[H›İ[™Ë›Y	‰ˆÛY[H›İ[™ËœšYÚ	‰ˆÛY[HH›İ[™ËÜ	‰ˆÛY[HH›İ[™Ë˜›İÛJNÂˆNÂ‚ˆÛÛœİ™XYÚ\™Y˜[œÙ™\”İ\H
+˜[œØXİ[Û’YÎˆİš[™ÊNˆ\ÚİÜÚ[™İÕ˜[œÙ™\”İ\[™Yš[™YOˆÂˆÛÛœİ˜[YHH™XYÚ\™Y˜[œÙ™\‘]™[
+˜[œØXİ[Û’Y
+NÂˆ™]\›ˆ˜[YOË\HOOH	Üİ\	ÈÈ˜[YHˆ[™Yš[™YÂˆNÂ‚ˆÛÛœİ™XYÚ\™Y˜[œÙ™\‘]™[H
+˜[œØXİ[Û’YÎˆİš[™ÊNˆ\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[[™Yš[™YOˆÂˆHÂˆÛÛœİ˜]ÈHÚ[™İË›ØØ[İÜ˜YÙK™Ù]][JTÒÕÔÕÒS‘Õ×ÕS”Ñ‘T—ÔÕÔQÑWÒÑVJNÂˆÛÛœİ˜[YHH˜]ÈÈ\œÙQ\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[
+˜]ÊHˆ[™Yš[™YÂˆYˆ
+]˜[YH
+˜[œØXİ[Û’Y	‰ˆ˜[YK˜[œØXİ[Û’YOOH˜[œØXİ[Û’Y
+JH™]\›ˆ[™Yš[™YÂˆ™]\›ˆ˜[YNÂˆHØ]ÚÂˆ™]\›ˆ[™Yš[™YÂˆBˆNÂ‚ˆÛÛœİ˜]]™U˜[œÙ™\”İ\H
+]™[ˆ™XXİ‘˜YÑ]™[S]‘[[Y[ŠNˆ\ÚİÜÚ[™İÕ˜[œÙ™\”İ\[™Yš[™YOˆÂˆHÂˆÛÛœİİ\İÛHH]™[™]U˜[œÙ™\‹™Ù]]JTÒÕÔÕP—ÕS”Ñ‘T—ÑUJNÂˆÛÛœİ[X™YYHİ\İÛHÈ\œÙQ\ÚİÜÚ[™İÕ˜[œÙ™\‘]™[
+İ\İÛJHˆ[™Yš[™YÂˆYˆ
+[X™YYË\HOOH	Üİ\	ÊH™]\›ˆ[X™YYÂˆÛÛœİ˜[œØXİ[Û’YHİ\İÛH]™[™]U˜[œÙ™\‹™Ù]]J	İ^ÜZ[‰ÊH[™Yš[™YÂˆ™]\›ˆ™XYÚ\™Y˜[œÙ™\”İ\
+˜[œØXİ[Û’Y
+NÂˆHØ]ÚÂˆ™]\›ˆ[™Yš[™YÂˆBˆNÂ‚ˆÛÛœİ˜[Y[˜ÛÛZ[™Õ˜[œÙ™\ˆH
+İ\ˆ\ÚİÜÚ[™İÕ˜[œÙ™\”İ\[™Yš[™Y
+Nˆİ\\È\ÚİÜÚ[™İÕ˜[œÙ™\”İ\Oˆ›ÛÛX[Šˆİ\ˆ	‰ˆİ\ÛÜšÜÜXÙRYOOHÚ[™Ù]Û˜\Úİ
+
+KÛÜšÜÜXÙKšYˆ	‰ˆİ\œÛİ\˜ÙUÚ[™İÒYOOHÚ[Ú[™İÒYˆ	‰ˆİ\X’YOOHİ\X‹šYˆ	‰ˆ]XœÔ™Y‹˜İ\œ™[œÛÛYJXˆOˆX‹šYOOHİ\X’Y
+Kˆ
+NÂ‚ˆ[˜İ[ÛˆÛX\”Ú[\“\İ[™\œÊ
+Nˆ›ÚYÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\›[İ™IË[İ™TÚ[\ŠNÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\\	Ë™[X\ÙTÚ[\ŠNÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\˜Ø[˜Ù[	ËØ[˜Ù[Ú[\ŠNÂˆB‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆYˆ
+Z[˜ÛÛZ[™ÊH™]\›ˆ[™Yš[™YÂˆÛÛœİ\]R[˜ÛÛZ[™ÈH
+]™[ˆÚ[\‘]™[
+HOˆÂˆÛÛœİİ\œ™[H[˜ÛÛZ[™Ô™Y‹˜İ\œ™[ÂˆYˆ
+Xİ\œ™[
+H™]\›ÂˆÛÛœİ[œÚYHH\Ò[œÚYTİš\
+]™[˜ÛY[]™[˜ÛY[JNÂˆÙ][˜ÛÛZ[™Ê™]š[İ\ÈOˆ™]š[İ\ÏËœİ\˜[œØXİ[Û’YOOHİ\œ™[œİ\˜[œØXİ[Û’YˆÈÈ‹‹œ™]š[İ\ËÚ[\’[œÚYNˆ[œÚYK‹‹Š[œÚYHÈÈ\™Ù][™^ˆ[œÙ\[Û’[™^]
+]™[˜ÛY[
+HHˆßJHBˆˆ™]š[İ\ÊNÂˆNÂˆÛÛœİš[š\Ú[˜ÛÛZ[™ÈH
+]™[ˆÚ[\‘]™[Ø[˜Ù[YH˜[ÙJHOˆÂˆÛÛœİİ\œ™[H[˜ÛÛZ[™Ô™Y‹˜İ\œ™[ÂˆYˆ
+Xİ\œ™[
+H™]\›ÂˆYˆ
+İ\œ™[›˜]]™Q˜YÊH™]\›ÂˆÛÛœİ[œÚYHHXØ[˜Ù[Y	‰ˆ\Ò[œÚYTİš\
+]™[˜ÛY[]™[˜ÛY[JNÂˆYˆ
+[œÚYJHÂˆÛÛœİ\™Ù][™^H[œÙ\[Û’[™^]
+]™[˜ÛY[
+NÂˆÛÛœİXØÙ\YHÚ[˜XØÙ\Ú[™İÕ˜[œÙ™\Šİ\œ™[œİ\\™Ù][™^
+NÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\NˆXØÙ\YÈ	ØXØÙ\Y	Èˆ	Ü™Z™XİY	Ë˜[œØXİ[Û’Yˆİ\œ™[œİ\˜[œØXİ[Û’YÛÜšÜÜXÙRYˆİ\œ™[œİ\ÛÜšÜÜXÙRYÛİ\˜ÙUÚ[™İÒYˆİ\œ™[œİ\œÛİ\˜ÙUÚ[™İÒY\™Ù]Ú[™İÒYˆÚ[Ú[™İÒYX’Yˆİ\œ™[œİ\X’Y\™Ù][™^ˆXØÙ\YÈ\™Ù][™^ˆ[™Yš[™Y‹‹ŠXØÙ\YÈßHˆÈ™X\ÛÛˆ	ÛİÛ™\œÚ\XÚXÚËY˜Z[Y	ÈJHJNÂˆH[ÙHÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\Nˆ	ØØ[˜Ù[	Ë˜[œØXİ[Û’Yˆİ\œ™[œİ\˜[œØXİ[Û’YÛÜšÜÜXÙRYˆİ\œ™[œİ\ÛÜšÜÜXÙRYÛİ\˜ÙUÚ[™İÒYˆİ\œ™[œİ\œÛİ\˜ÙUÚ[™İÒYX’Yˆİ\œ™[œİ\X’YJNÂˆBˆÙ][˜ÛÛZ[™Ê[™Yš[™Y
+NÂˆNÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\›[İ™IË\]R[˜ÛÛZ[™ÊNÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\\	Ëš[š\Ú[˜ÛÛZ[™ÊNÂˆÛÛœİØ[˜Ù[[˜ÛÛZ[™ÈH
+]™[ˆÚ[\‘]™[
+HOˆÂˆÛÛœİİ\œ™[H[˜ÛÛZ[™Ô™Y‹˜İ\œ™[ÂˆËÈH˜]]™H˜YÈÜ›ÜÜÙ\ÈÙX•šY]ÜÈÚ[HHÛİ\˜ÙHÚ[\ˆİ™X[H\ÂˆËÈØ[˜Ù[YHÙX’Ú]ÕËˆ]HS›ÜÙ˜YÙ[™Y™XŞXÛHXÚYBˆËÈHİ]ÛÛYH[œİXYÙˆØ[˜Ù[[™ÈH˜[Y\™Ù]™]šY]ÈX\›K‚ˆYˆ
+İ\œ™[Ë›˜]]™Q˜YÈİ\œ™[ËœÚ[\’[œÚYJH™]\›Âˆš[š\Ú[˜ÛÛZ[™Ê]™[YJNÂˆNÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\˜Ø[˜Ù[	ËØ[˜Ù[[˜ÛÛZ[™ÊNÂˆ™]\›ˆ
+
+HOˆÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\›[İ™IË\]R[˜ÛÛZ[™ÊNÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\\	Ëš[š\Ú[˜ÛÛZ[™ÊNÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\˜Ø[˜Ù[	ËØ[˜Ù[[˜ÛÛZ[™ÊNÂˆNÂˆKÚ[˜ÛÛZ[™ÏËœİ\˜[œØXİ[Û’YÚ[JNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆËÈHÚ[\ˆÜ›ÜÜÚ[™È[È\È˜]]™HÙX•šY]ÈX^H\œš]™H™Y›Ü™HBˆËÈ\Ş[˜Ú›Û›İ\È]\šH\İ[™\ˆ\ÈØœÙ\™YHİ\]™[ˆ\ØÛİ™\ˆBˆËÈXİ]™H›İ[™Yİ\™XÛÜ™\™XİHÚ[HHÚ[\ˆ\Èİ™\ˆ\ÂˆËÈXˆİš\È\ÈÙY\È™YØÚÈ]\›Z[š\İXÈXÜ›ÜÜÈÙX’Ú]ÕÈÚ[™İÜË‚ˆÛÛœİ\ØÛİ™\’[˜ÛÛZ[™ÈH
+]™[ˆÚ[\‘]™[
+HOˆÂˆYˆ
+[˜ÛÛZ[™Ô™Y‹˜İ\œ™[Z\Ò[œÚYTİš\
+]™[˜ÛY[]™[˜ÛY[JJH™]\›ÂˆÛÛœİ˜[œÙ™\ˆH™XYÚ\™Y˜[œÙ™\”İ\
+
+NÂˆYˆ
+]˜[Y[˜ÛÛZ[™Õ˜[œÙ™\Š˜[œÙ™\ŠJH™]\›ÂˆÙ][˜ÛÛZ[™ÊÈİ\ˆ˜[œÙ™\‹\™Ù][™^ˆ[œÙ\[Û’[™^]
+]™[˜ÛY[
+KÚ[\’[œÚYNˆYHJNÂˆNÂˆÚ[™İË˜Y]™[\İ[™\Š	ÜÚ[\›[İ™IË\ØÛİ™\’[˜ÛÛZ[™ÊNÂˆ™]\›ˆ
+
+HOˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	ÜÚ[\›[İ™IË\ØÛİ™\’[˜ÛÛZ[™ÊNÂˆKÜÚ[JNÂ‚ˆÛÛœİ\]S˜]]™U˜[œÙ™\”™]šY]ÈH
+]™[ˆ™XXİ‘˜YÑ]™[S]‘[[Y[ŠHOˆÂˆÛÛœİ˜[œÙ™\ˆH˜]]™U˜[œÙ™\”İ\
+]™[
+NÂˆYˆ
+]˜[Y[˜ÛÛZ[™Õ˜[œÙ™\Š˜[œÙ™\ŠJH™]\›Âˆ]™[œ™]™[Y˜][
+
+NÂˆ]™[™]U˜[œÙ™\‹™›ÜY™™XİH	Û[İ™IÎÂˆÛÛœİ\™Ù][™^H[œÙ\[Û’[™^]
+]™[˜ÛY[
+NÂˆÙ][˜ÛÛZ[™Ê™]š[İ\ÈOˆ™]š[İ\ÏËœİ\˜[œØXİ[Û’YOOH˜[œÙ™\‹˜[œØXİ[Û’YˆÈÈ‹‹œ™]š[İ\Ë\™Ù][™^Ú[\’[œÚYNˆYK˜]]™Q˜YÎˆYHBˆˆÈİ\ˆ˜[œÙ™\‹\™Ù][™^Ú[\’[œÚYNˆYK˜]]™Q˜YÎˆYHJNÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\Nˆ	Úİ™\‰Ë˜[œØXİ[Û’Yˆ˜[œÙ™\‹˜[œØXİ[Û’YÛÜšÜÜXÙRYˆ˜[œÙ™\‹ÛÜšÜÜXÙRYÛİ\˜ÙUÚ[™İÒYˆ˜[œÙ™\‹œÛİ\˜ÙUÚ[™İÒY\™Ù]Ú[™İÒYˆÚ[Ú[™İÒYX’Yˆ˜[œÙ™\‹X’Y\™Ù][™^JNÂˆNÂ‚ˆÛÛœİ›Ü˜]]™U˜[œÙ™\ˆH
+]™[ˆ™XXİ‘˜YÑ]™[S]‘[[Y[ŠHOˆÂˆÛÛœİİ\œ™[[˜ÛÛZ[™ÈH[˜ÛÛZ[™Ô™Y‹˜İ\œ™[ÂˆÛÛœİ˜[œÙ™\ˆHİ\œ™[[˜ÛÛZ[™È	‰ˆİ\œ™[[˜ÛÛZ[™Ë›˜]]™Q˜YÂˆÈİ\œ™[[˜ÛÛZ[™Ëœİ\ˆˆ˜]]™U˜[œÙ™\”İ\
+]™[
+NÂˆYˆ
+]˜[œÙ™\ŠH™]\›ÂˆÛÛœİØ[YUÚ[™İÈH˜[œÙ™\‹œÛİ\˜ÙUÚ[™İÒYOOHÚ[Ú[™İÒYÂˆYˆ
+\Ø[YUÚ[™İÈ	‰ˆ]˜[Y[˜ÛÛZ[™Õ˜[œÙ™\Š˜[œÙ™\ŠJH™]\›Âˆ]™[œ™]™[Y˜][
+
+NÂˆ]™[œİÜ›ÜYØ][ÛŠ
+NÂˆÛÛœİ\™Ù][™^H[œÙ\[Û’[™^]
+]™[˜ÛY[Ø[YUÚ[™İÈÈ˜[œÙ™\‹X’Yˆ[™Yš[™Y
+NÂˆ˜]]™Q›Ü™Y‹˜İ\œ™[H˜[œÙ™\‹˜[œØXİ[Û’YÂˆYˆ
+Ø[YUÚ[™İÊHÂˆÚ[œ™[Ü™\•XŠ˜[œÙ™\‹X’Y\™Ù][™^
+NÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\Nˆ	ØØ[˜Ù[	Ë˜[œØXİ[Û’Yˆ˜[œÙ™\‹˜[œØXİ[Û’YÛÜšÜÜXÙRYˆ˜[œÙ™\‹ÛÜšÜÜXÙRYÛİ\˜ÙUÚ[™İÒYˆ˜[œÙ™\‹œÛİ\˜ÙUÚ[™İÒYX’Yˆ˜[œÙ™\‹X’YJNÂˆH[ÙHÂˆÛÛœİXØÙ\YHÚ[˜XØÙ\Ú[™İÕ˜[œÙ™\Š˜[œÙ™\‹\™Ù][™^
+NÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\NˆXØÙ\YÈ	ØXØÙ\Y	Èˆ	Ü™Z™XİY	Ë˜[œØXİ[Û’Yˆ˜[œÙ™\‹˜[œØXİ[Û’YÛÜšÜÜXÙRYˆ˜[œÙ™\‹ÛÜšÜÜXÙRYÛİ\˜ÙUÚ[™İÒYˆ˜[œÙ™\‹œÛİ\˜ÙUÚ[™İÒY\™Ù]Ú[™İÒYˆÚ[Ú[™İÒYX’Yˆ˜[œÙ™\‹X’Y\™Ù][™^ˆXØÙ\YÈ\™Ù][™^ˆ[™Yš[™Y‹‹ŠXØÙ\YÈßHˆÈ™X\ÛÛˆ	ÛİÛ™\œÚ\XÚXÚËY˜Z[Y	ÈJHJNÂˆBˆÙ][˜ÛÛZ[™Ê[™Yš[™Y
+NÂˆNÂ‚ˆÛÛœİX]™S˜]]™U˜[œÙ™\”™]šY]ÈH
+]™[ˆ™XXİ‘˜YÑ]™[S]‘[[Y[ŠHOˆÂˆÛÛœİ™[]YH]™[œ™[]Y\™Ù]ÂˆYˆ
+™[]Y[œİ[˜Ù[Ùˆ›ÙH	‰ˆ]™[˜İ\œ™[\™Ù]˜ÛÛZ[œÊ™[]Y
+JH™]\›ÂˆÙ][˜ÛÛZ[™Ê™]š[İ\ÈOˆ™]š[İ\ÏË›˜]]™Q˜YÈÈÈ‹‹œ™]š[İ\ËÚ[\’[œÚYNˆ˜[ÙHHˆ™]š[İ\ÊNÂˆNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆËÈÙX’Ú]ÕÈØ[ˆ™]\™Ù]H˜]]™H˜YÈÈHÙX•šY]ÉÜÈØİ[Y[[œİXYˆËÈÙˆH™XXİİš\›ÙHÚ[HÜ›ÜÜÚ[™È˜]]™HÚ[™İÈ›İ[™\šY\ËˆÙY\ˆËÈH›ÙH[™\œÈ›ÜˆÜ™[˜\Hœ›İÜÙ\ˆ‘][ÛÈØœÙ\™HØ\\™BˆËÈ\ÙH]™[ÈÛÈH™X[Ü›ÜÜË]Ú[™İÈ˜YÈ[Ø^\ÈÙ]ÈHš\ÚX›HX\šÙ\‚ˆËÈ[™[ˆ]ÛZXÈ›Ü\™Ù]‚ˆÛÛœİ\Ôİš\]™[H
+]™[ˆ˜YÑ]™[
+Nˆ›ÛÛX[ˆOˆÂˆÛÛœİ\™Ù]H]™[\™Ù]Âˆ™]\›ˆ\Ò[œÚYTİš\
+]™[˜ÛY[]™[˜ÛY[JH
+\™Ù][œİ[˜Ù[Ùˆ›ÙH	‰ˆ›ÛÛX[Šİš\™Y‹˜İ\œ™[Ë˜ÛÛZ[œÊ\™Ù]
+JJNÂˆNÂˆÛÛœİÛ‘˜YÓİ™\ˆH
+]™[ˆ˜YÑ]™[
+HOˆÂˆYˆ
+\Ôİš\]™[
+]™[
+JH\]S˜]]™U˜[œÙ™\”™]šY]Ê]™[\È[šÛ›İÛˆ\È™XXİ‘˜YÑ]™[S]‘[[Y[ŠNÂˆNÂˆÛÛœİÛ‘›ÜH
+]™[ˆ˜YÑ]™[
+HOˆÂˆYˆ
+\Ôİš\]™[
+]™[
+JH›Ü˜]]™U˜[œÙ™\Š]™[\È[šÛ›İÛˆ\È™XXİ‘˜YÑ]™[S]‘[[Y[ŠNÂˆNÂˆÚ[™İË˜Y]™[\İ[™\Š	Ù˜YÛİ™\‰ËÛ‘˜YÓİ™\‹YJNÂˆÚ[™İË˜Y]™[\İ[™\Š	Ù›Ü	ËÛ‘›ÜYJNÂˆ™]\›ˆ
+
+HOˆÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	Ù˜YÛİ™\‰ËÛ‘˜YÓİ™\‹YJNÂˆÚ[™İËœ™[[İ™Q]™[\İ[™\Š	Ù›Ü	ËÛ‘›ÜYJNÂˆNÂˆKÜÚ[JNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆÛÛœİ˜[œØXİ[Û’YH˜YÏË˜[œÙ™\•˜[œØXİ[Û’YÂˆYˆ
+]˜[œØXİ[Û’Y
+H™]\›ˆ[™Yš[™YÂˆËÈYˆHÚ[\ˆ\È™[X\ÙYİ™\ˆ[›İ\ˆ\XØ][Û‹™Z]\ˆÙ^\İÛ™BˆËÈÙX•šY]È™XÙZ]™\ÈÚ[\\ˆÙY\HÛİ\˜ÙH]]Üš]]]™H[™ÛX\‚ˆËÈHÚ\™Y™]šY]ÈY\ˆH›İ[™Y[Y[İ]˜]\ˆ[ˆÜÚ[™ÈHX‹‚ˆÛÛœİ[Y[İ]HÚ[™İËœÙ][Y[İ]
+
+
+HOˆÂˆYˆ
+˜YÔ™Y‹˜İ\œ™[Ë˜[œÙ™\•˜[œØXİ[Û’YOOH˜[œØXİ[Û’Y
+H™]\›ÂˆÛÛœİXİ]™HH˜YÔ™Y‹˜İ\œ™[ÂˆÛX\”Ú[\“\İ[™\œÊ
+NÂˆ˜YÔ™Y‹˜İ\œ™[H[™Yš[™YÂˆÙ]˜YÊ[™Yš[™Y
+NÂˆYˆ
+Xİ]™JH›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\Nˆ	ØØ[˜Ù[	Ë˜[œØXİ[Û’YÛÜšÜÜXÙRYˆÚ[™Ù]Û˜\Úİ
+
+KÛÜšÜÜXÙKšYÛİ\˜ÙUÚ[™İÒYˆÚ[Ú[™İÒYX’YˆXİ]™KX’YJNÂˆKÌ
+NÂˆ™]\›ˆ
+
+HOˆÚ[™İË˜ÛX\•[Y[İ]
+[Y[İ]
+NÂˆKÙ˜YÏË˜[œÙ™\•˜[œØXİ[Û’YÚ[JNÂ‚ˆ™XXİ\ÙQY™™Xİ
+
+
+HOˆÂˆYˆ
+Y˜YÏË˜[œÙ™\•˜[œØXİ[Û’Y
+H™]\›ˆ[™Yš[™YÂˆËÈİÜ˜YÙH]™[È\™H›Ü›X[H[›İYÚÈ™Yœ™\ÚHÛİ\˜ÙKˆÛÛ›BˆËÈ\š[™È[ˆXİ]™HÜ›ÜÜË]Ú[™İÈ˜YÈÛÈ[ˆXØÙ\Y˜[œÙ™\ˆ[ÛÈÛÜÙ\ÂˆËÈHÛİ\˜ÙHÙX•šY]ÈÚ[ˆHÛÛ\ÜÚ]Üˆ›ÜÈ[ˆ]™[\š[™ÈH›İ[™\BˆËÈÜ›ÜÜÚ[™Ë‚ˆÛÛœİ[\˜[HÚ[™İËœÙ][\˜[
+
+
+HOˆÚ[œ™Yœ™\Úœ›ÛTİÜ˜YÙJ
+KL
+NÂˆ™]\›ˆ
+
+HOˆÚ[™İË˜ÛX\’[\˜[
+[\˜[
+NÂˆKÙ˜YÏË˜[œÙ™\•˜[œØXİ[Û’YÚ[JNÂ‚ˆÛÛœİš[š\Ú˜YÈH™XXİ\ÙPØ[˜XÚÊ
+Ø[˜Ù[YH˜[ÙJHOˆÂˆÛÛœİXİ]™HH˜YÔ™Y‹˜İ\œ™[ÂˆYˆ
+XXİ]™JH™]\›ÂˆÛX\”Ú[\“\İ[™\œÊ
+NÂˆYˆ
+XØ[˜Ù[Y
+HÂˆÛÛœİ˜[œÙ™\ˆHXİ]™K˜[œÙ™\•˜[œØXİ[Û’YÂˆYˆ
+˜[œÙ™\ŠHÂˆYˆ
+\Ò[œÚYTİš\
+Xİ]™KXİ]™KJJHÚ[œ™[Ü™\•XŠXİ]™KX’YXİ]™K\™Ù][™^
+NÂˆ[ÙHYˆ
+Xİ]™K™]XÚ™]šY]È	‰ˆÙ][™ÜË˜[Y\ÖÉİXœËX\“Ù™‘[˜X›Y	×JH›ÚYÚ[›Ü[•X’[“™]ÕÚ[™İÊXİ]™KX’YÈˆXİ]™KHŒNˆXİ]™KHHŒÚYˆLLŒZYÚˆÌŒJNÂˆ›ÚY[Z]\ÚİÜÚ[™İÕ˜[œÙ™\ŠÈ\Nˆ	ØØ[˜Ù[	Ë˜[œØXİ[Û’Yˆ˜[œÙ™\‹ÛÜšÜÜXÙRYˆÚ[™Ù]Û˜\Úİ
+
+KÛÜšÜÜXÙKšYÛİ\˜ÙUÚ[™İÒYˆÚ[Ú[™İÒYX’YˆXİ]™KX’YJNÂˆH[ÙHYˆ
+Xİ]™K™]XÚ™]šY]È	‰ˆÙ][™ÜË˜[Y\ÖÉİXœËX\“Ù™‘[˜X›Y	×JHÂˆ›ÚYÚ[›Ü[•X’[“™]ÕÚ[™İÊXİ]™KX’YÈˆXİ]™KHŒNˆXİ]™KHHŒÚYˆLLŒZYÚˆÌŒJNÂˆH[ÙHÂˆÚ[œ™[Ü™\•XŠXİ]™KX’YXİ]™K\™Ù][™^
+NÂˆBˆBˆ˜YÔ™Y‹˜İ\œ™[H[™Yš[™YÂˆÙ]˜YÊ[™Yš[™Y
+NÂˆKÜÙ][™ÜË˜[Y\ËÚ[JNÂ‚ˆ[˜İ[Ûˆ[İ™TÚ[\Š]™[ˆÚ[\‘]™[
+HÂˆÛÛœİXİ]™HH˜YÔ™Y‹˜İ\œ™[ÂˆÛÛœİİš\Hİš\™Y‹˜İ\œ™[ÂˆYˆ
+XXİ]™H\İš\]™[œÚ[\’YOOHXİ]™KœÚ[\’Y
+H™]\›ÂˆÛÛœİ›İ[™ÈHİš\™Ù]›İ[™[™ĞÛY[™Xİ
+
+NÂˆÛÛœİİ\œ™[XœÈHXœÔ™Y‹˜İ\œ™[ÂˆÛÛœİ\™Ù][™^H[œÙ\[Û’[™^]
+]™[˜ÛY[Xİ]™KX’Y
+NÂˆÛÛœİ[İ™YHX]š\İ
+]™[˜ÛY[H5Ó¾·êÚ$z{-®éÜj×string[]>([]);
   const [notice, setNotice] = React.useState('');
   const vaultId = tab.object?.vaultId ?? 'vault';
   const canvasId = tab.object?.id ?? '';
   const ru = t.vault.startsWith('Ğ¥');
-  const labels = ru ? { title: 'Canvas', empty: 'Canvas host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'Ğ£ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ¸Ñ‚Ğµ CanvasService Ñ‡ĞµÑ€ĞµĞ· typed storage/permission adapter. Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚ Ğ¾ÑÑ‚Ğ°Ñ‘Ñ‚ÑÑ structured JSON.', create: 'ĞĞ¾Ğ²Ñ‹Ğ¹ Canvas', nodes: 'ĞºĞ°Ñ€Ñ‚Ğ¾Ñ‡ĞµĞº', addText: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ñ‚ĞµĞºÑÑ‚', move: 'Ğ¡Ğ´Ğ²Ğ¸Ğ½ÑƒÑ‚ÑŒ', connect: 'Ğ¡Ğ¾ĞµĞ´Ğ¸Ğ½Ğ¸Ñ‚ÑŒ', undo: 'ĞÑ‚Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ', redo: 'ĞŸĞ¾Ğ²Ñ‚Ğ¾Ñ€Ğ¸Ñ‚ÑŒ', select: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ ĞºĞ°Ñ€Ñ‚Ğ¾Ñ‡ĞºĞ¸', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº', permission: 'Ğ¡ÑÑ‹Ğ»ĞºĞ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ° Ğ¿Ğ¾ Ñ‚ĞµĞºÑƒÑ‰Ğ¸Ğ¼ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸ÑĞ¼', saved: 'Canvas ÑĞ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½' } : { title: 'Canvas', empty: 'Canvas host is not connected', boundary: 'Install CanvasService through the typed storage/permission adapter. The document remains structured JSON.', create: 'New Canvas', nodes: 'cards', addText: 'Add text', move: 'Move', connect: 'Connect', undo: 'Undo', redo: 'Redo', select: 'Select cards', open: 'Open source', permission: 'Reference is unavailable under current permissions', saved: 'Canvas saved' };
+  const labels = ru ? { title: 'Canvas', empty: 'Ğ¡Ñ€ĞµĞ´Ğ° Canvas ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡ĞµĞ½Ğ°', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ CanvasService Ñ‡ĞµÑ€ĞµĞ· Ñ‚Ğ¸Ğ¿Ğ¸Ğ·Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğ¹ Ğ°Ğ´Ğ°Ğ¿Ñ‚ĞµÑ€ Ñ…Ñ€Ğ°Ğ½Ğ¸Ğ»Ğ¸Ñ‰Ğ° Ğ¸ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸Ğ¹. Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚ Ğ¾ÑÑ‚Ğ°Ñ‘Ñ‚ÑÑ ÑÑ‚Ñ€ÑƒĞºÑ‚ÑƒÑ€Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ğ¼ JSON.', create: 'ĞĞ¾Ğ²Ñ‹Ğ¹ Canvas', nodes: 'ĞºĞ°Ñ€Ñ‚Ğ¾Ñ‡ĞµĞº', addText: 'Ğ”Ğ¾Ğ±Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ñ‚ĞµĞºÑÑ‚', move: 'Ğ¡Ğ´Ğ²Ğ¸Ğ½ÑƒÑ‚ÑŒ', connect: 'Ğ¡Ğ¾ĞµĞ´Ğ¸Ğ½Ğ¸Ñ‚ÑŒ', undo: 'ĞÑ‚Ğ¼ĞµĞ½Ğ¸Ñ‚ÑŒ', redo: 'ĞŸĞ¾Ğ²Ñ‚Ğ¾Ñ€Ğ¸Ñ‚ÑŒ', select: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ ĞºĞ°Ñ€Ñ‚Ğ¾Ñ‡ĞºĞ¸', open: 'ĞÑ‚ĞºÑ€Ñ‹Ñ‚ÑŒ Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº', permission: 'Ğ¡ÑÑ‹Ğ»ĞºĞ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ° Ğ¿Ğ¾ Ñ‚ĞµĞºÑƒÑ‰Ğ¸Ğ¼ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸ÑĞ¼', saved: 'Canvas ÑĞ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½' } : { title: 'Canvas', empty: 'Canvas host is not connected', boundary: 'Install CanvasService through the typed storage/permission adapter. The document remains structured JSON.', create: 'New Canvas', nodes: 'cards', addText: 'Add text', move: 'Move', connect: 'Connect', undo: 'Undo', redo: 'Redo', select: 'Select cards', open: 'Open source', permission: 'Reference is unavailable under current permissions', saved: 'Canvas saved' };
   React.useEffect(() => subscribeDesktopVaultRuntime(() => setRuntime(getDesktopVaultRuntime())), []);
   const refresh = React.useCallback(async () => { if (!runtime?.canvas) return; try { const next = await runtime.canvas.list(vaultId); setCanvases(next); const id = canvasId && next.some(value => value.id === canvasId) ? canvasId : next[0]?.id; if (id) setDocument(await runtime.canvas.open(vaultId, id)); } catch { setNotice(labels.empty); } }, [canvasId, labels.empty, runtime, vaultId]);
   React.useEffect(() => { void refresh(); }, [refresh]);
@@ -1041,9 +708,9 @@ function VaultCanvasSurface({ tab, shell, t }: { tab: DesktopTab; shell: Desktop
   const mutate = async (mutation: unknown) => { if (!runtime?.canvas?.mutate || !document) { setNotice(labels.empty); return; } try { setDocument(await runtime.canvas.mutate(vaultId, document.id, mutation)); setNotice(labels.saved); } catch { setNotice(labels.permission); } };
   const openSelected = () => { const node = document?.nodes.find(value => selected.includes(value.id)); const ref = node?.reference; if (!ref) { setNotice(labels.permission); return; } const objectId = typeof ref.objectId === 'string' ? ref.objectId : typeof ref.noteId === 'string' ? ref.noteId : typeof ref.attachmentId === 'string' ? ref.attachmentId : undefined; if (objectId) shell.openReference({ kind: ref.kind === 'vault_note' || ref.kind === 'note' ? 'vault' : ref.kind === 'vault_attachment' || ref.kind === 'file' ? 'file' : 'unknown', id: objectId, vaultId }); else setNotice(labels.permission); };
   return <div className="vault-canvas-surface" data-canvas-id={document?.id ?? canvasId}>
-    <div className="surface-kicker"><span className="surface-icon">â–¡</span><span>{labels.title}</span><span className="surface-badge">{t.local}</span></div>
+    <div className="surface-kicker"><span className="surface-icon"><Icon name="canvas" size={15} /></span><span>{labels.title}</span><span className="surface-badge">{t.local}</span></div>
     <div className="canvas-heading"><div><h1>{document?.metadata.title ?? labels.title}</h1><p className="surface-description">{document ? `${document.nodes.length} ${labels.nodes} Â· r${document.revision}` : labels.empty}</p></div><div className="canvas-actions"><button className="secondary-button" onClick={() => void create()}>{labels.create}</button><button className="secondary-button" onClick={() => { if (document && runtime?.canvas?.undo) void runtime.canvas.undo(vaultId, document.id).then(setDocument); }}>{labels.undo}</button><button className="secondary-button" onClick={() => { if (document && runtime?.canvas?.redo) void runtime.canvas.redo(vaultId, document.id).then(setDocument); }}>{labels.redo}</button></div></div>
-    {!runtime?.canvas && <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}
+    {!runtime?.canvas && <div className="adapter-note"><span><Icon name="info" size={16} /></span><div><strong>{labels.empty}</strong><small>{labels.boundary}</small></div></div>}
     <div className="canvas-layout"><aside className="canvas-list" aria-label={labels.title}>{canvases.map(value => <button key={value.id} className={document?.id === value.id ? 'active' : ''} onClick={() => void choose(value.id)}><strong>{value.metadata.title}</strong><small>r{value.revision}</small></button>)}</aside><main className="canvas-workspace" tabIndex={0} aria-label={labels.title}><div className="canvas-viewport" style={{ transform: document ? `translate(${document.viewport.x}px, ${document.viewport.y}px) scale(${document.viewport.zoom})` : undefined }}>{document?.nodes.slice(0, 300).map(node => <button key={node.id} className={`canvas-card canvas-card-${node.kind.toLowerCase()}${selected.includes(node.id) ? ' selected' : ''}`} style={{ left: node.x, top: node.y, width: node.width, height: node.height }} onClick={() => setSelected(current => current.includes(node.id) ? current.filter(id => id !== node.id) : [...current, node.id])} onDoubleClick={openSelected}><span>{node.kind}</span><strong>{node.title ?? node.text ?? (node.reference ? String(node.reference.kind) : node.id)}</strong><small>{node.reference ? 'â†— reference' : ''}</small></button>)}</div>{document && <div className="canvas-toolbar"><button className="secondary-button" onClick={() => void mutate({ type: 'create_node', node: { id: `text-${Date.now()}`, kind: 'TEXT_CARD', x: 40, y: 40, width: 220, height: 120, text: labels.addText } })}>{labels.addText}</button><button className="secondary-button" disabled={!selected.length} onClick={() => void mutate({ type: 'move', nodeIds: selected, dx: 24, dy: 24 })}>{labels.move}</button><button className="secondary-button" disabled={selected.length !== 2} onClick={() => void mutate({ type: 'connect', edge: { id: `edge-${Date.now()}`, sourceNodeId: selected[0], targetNodeId: selected[1], directed: false } })}>{labels.connect}</button><button className="secondary-button" disabled={!selected.length} onClick={openSelected}>{labels.open}</button></div>}</main></div>
     {notice && <small className="vault-notice">{notice}</small>}
   </div>;
@@ -1066,9 +733,9 @@ function MapsSurface({ tab, t }: { tab: DesktopTab; shell: DesktopShellControlle
   const [notice, setNotice] = React.useState('');
   const ru = t.maps === 'ĞšĞ°Ñ€Ñ‚Ñ‹';
   const labels = ru ? {
-    subtitle: 'ĞœĞµÑÑ‚Ğ° Ğ¸ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚Ñ‹ local-first. Ğ“ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ½Ğµ Ğ·Ğ°Ğ¿Ñ€Ğ°ÑˆĞ¸Ğ²Ğ°ĞµÑ‚ÑÑ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', unavailable: 'Maps host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ MapsService Ñ‡ĞµÑ€ĞµĞ· typed host adapter. Shell Ğ½Ğµ Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ĞµÑ‚ ĞºĞ¾Ğ¾Ñ€Ğ´Ğ¸Ğ½Ğ°Ñ‚Ñ‹ ÑĞ°Ğ¼.', search: 'ĞĞ°Ğ¹Ñ‚Ğ¸ Ğ¼ĞµÑÑ‚Ğ¾', searchPlaceholder: 'ĞĞ°Ğ·Ğ²Ğ°Ğ½Ğ¸Ğµ, Ğ°Ğ´Ñ€ĞµÑ Ğ¸Ğ»Ğ¸ ĞºĞ°Ñ‚ĞµĞ³Ğ¾Ñ€Ğ¸Ñ', showLocation: 'ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ Ğ¼Ğ¾Ñ Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ', locationDone: 'Ğ“ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ¿Ğ¾ĞºĞ°Ğ·Ğ°Ğ½Ğ° Ğ¾Ğ´Ğ½Ğ¾ĞºÑ€Ğ°Ñ‚Ğ½Ğ¾', locationUnavailable: 'ĞĞ´Ğ½Ğ¾Ñ€Ğ°Ğ·Ğ¾Ğ²Ğ°Ñ Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ°', results: 'Ğ ĞµĞ·ÑƒĞ»ÑŒÑ‚Ğ°Ñ‚Ñ‹', saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ğµ Ğ¼ĞµÑÑ‚Ğ°', providers: 'ĞŸÑ€Ğ¾Ğ²Ğ°Ğ¹Ğ´ĞµÑ€Ñ‹', offline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-Ğ¿Ğ°ĞºĞµÑ‚Ñ‹', route: 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚', from: 'ĞÑ‚ĞºÑƒĞ´Ğ°', to: 'ĞšÑƒĞ´Ğ°', mode: 'Ğ ĞµĞ¶Ğ¸Ğ¼', walking: 'ĞŸĞµÑˆĞºĞ¾Ğ¼', driving: 'ĞĞ²Ñ‚Ğ¾', cycling: 'Ğ’ĞµĞ»Ğ¾ÑĞ¸Ğ¿ĞµĞ´', plan: 'ĞŸĞ¾ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑŒ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚', noResults: 'ĞĞ¸Ñ‡ĞµĞ³Ğ¾ Ğ½Ğµ Ğ½Ğ°Ğ¹Ğ´ĞµĞ½Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾.', noSaved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ñ… Ğ¼ĞµÑÑ‚ Ğ½ĞµÑ‚.', noOffline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-Ğ¿Ğ°ĞºĞµÑ‚Ğ¾Ğ² Ğ½ĞµÑ‚.', providerBoundary: 'Ğ’Ğ½ĞµÑˆĞ½Ğ¸Ğ¹ Ğ¿Ñ€Ğ¾Ğ²Ğ°Ğ¹Ğ´ĞµÑ€ Ğ²ĞºĞ»ÑÑ‡Ğ°ĞµÑ‚ÑÑ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ ÑĞ²Ğ½Ğ¾Ğ¹ privacy policy.', oneShot: 'Ğ¢Ğ¾Ğ»ÑŒĞºĞ¾ Ğ¾Ğ´Ğ¸Ğ½ Ğ·Ğ°Ğ¿Ñ€Ğ¾Ñ Â· Ğ±ĞµĞ· Ğ¸ÑÑ‚Ğ¾Ñ€Ğ¸Ğ¸ Ğ¿ĞµÑ€ĞµĞ¼ĞµÑ‰ĞµĞ½Ğ¸Ğ¹', estimated: 'ĞÑ†ĞµĞ½Ğ¾Ñ‡Ğ½Ñ‹Ğ¹ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚', steps: 'Ğ¨Ğ°Ğ³Ğ¸', km: 'ĞºĞ¼', min: 'Ğ¼Ğ¸Ğ½', noRoute: 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚ Ñ‡ĞµÑ€ĞµĞ· host adapter Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½.'
+    subtitle: 'ĞœĞµÑÑ‚Ğ° Ğ¸ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚Ñ‹ ÑĞ½Ğ°Ñ‡Ğ°Ğ»Ğ° Ñ€Ğ°Ğ±Ğ¾Ñ‚Ğ°ÑÑ‚ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾. Ğ“ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ½Ğµ Ğ·Ğ°Ğ¿Ñ€Ğ°ÑˆĞ¸Ğ²Ğ°ĞµÑ‚ÑÑ Ğ°Ğ²Ñ‚Ğ¾Ğ¼Ğ°Ñ‚Ğ¸Ñ‡ĞµÑĞºĞ¸.', unavailable: 'ĞšĞ°Ñ€Ñ‚Ñ‹ Ğ¿Ğ¾ĞºĞ° Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡ĞµĞ½Ñ‹', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ ĞºĞ°Ñ€Ñ‚Ñ‹ Ğ² Ğ½Ğ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ°Ñ…. Keystone Ğ½Ğµ Ğ¿Ğ¾Ğ»ÑƒÑ‡Ğ°ĞµÑ‚ ĞºĞ¾Ğ¾Ñ€Ğ´Ğ¸Ğ½Ğ°Ñ‚Ñ‹ Ğ±ĞµĞ· Ğ²Ğ°ÑˆĞµĞ³Ğ¾ Ğ´ĞµĞ¹ÑÑ‚Ğ²Ğ¸Ñ.', search: 'ĞĞ°Ğ¹Ñ‚Ğ¸ Ğ¼ĞµÑÑ‚Ğ¾', searchPlaceholder: 'ĞĞ°Ğ·Ğ²Ğ°Ğ½Ğ¸Ğµ, Ğ°Ğ´Ñ€ĞµÑ Ğ¸Ğ»Ğ¸ ĞºĞ°Ñ‚ĞµĞ³Ğ¾Ñ€Ğ¸Ñ', showLocation: 'ĞŸĞ¾ĞºĞ°Ğ·Ğ°Ñ‚ÑŒ Ğ¼Ğ¾Ñ Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ', locationDone: 'Ğ“ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ¿Ğ¾ĞºĞ°Ğ·Ğ°Ğ½Ğ° Ğ¾Ğ´Ğ½Ğ¾ĞºÑ€Ğ°Ñ‚Ğ½Ğ¾', locationUnavailable: 'ĞĞ´Ğ½Ğ¾Ñ€Ğ°Ğ·Ğ¾Ğ²Ğ°Ñ Ğ³ĞµĞ¾Ğ¿Ğ¾Ğ·Ğ¸Ñ†Ğ¸Ñ Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ°', results: 'Ğ ĞµĞ·ÑƒĞ»ÑŒÑ‚Ğ°Ñ‚Ñ‹', saved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ğµ Ğ¼ĞµÑÑ‚Ğ°', providers: 'Ğ˜ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ¸', offline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-Ğ¿Ğ°ĞºĞµÑ‚Ñ‹', route: 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚', from: 'ĞÑ‚ĞºÑƒĞ´Ğ°', to: 'ĞšÑƒĞ´Ğ°', mode: 'Ğ ĞµĞ¶Ğ¸Ğ¼', walking: 'ĞŸĞµÑˆĞºĞ¾Ğ¼', driving: 'ĞĞ²Ñ‚Ğ¾', cycling: 'Ğ’ĞµĞ»Ğ¾ÑĞ¸Ğ¿ĞµĞ´', plan: 'ĞŸĞ¾ÑÑ‚Ñ€Ğ¾Ğ¸Ñ‚ÑŒ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚', noResults: 'ĞĞ¸Ñ‡ĞµĞ³Ğ¾ Ğ½Ğµ Ğ½Ğ°Ğ¹Ğ´ĞµĞ½Ğ¾ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾.', noSaved: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ñ‘Ğ½Ğ½Ñ‹Ñ… Ğ¼ĞµÑÑ‚ Ğ½ĞµÑ‚.', noOffline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-Ğ¿Ğ°ĞºĞµÑ‚Ğ¾Ğ² Ğ½ĞµÑ‚.', providerBoundary: 'Ğ’Ğ½ĞµÑˆĞ½Ğ¸Ğµ Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ¸ Ğ²ĞºĞ»ÑÑ‡Ğ°ÑÑ‚ÑÑ Ñ‚Ğ¾Ğ»ÑŒĞºĞ¾ Ğ¿Ğ¾ÑĞ»Ğµ ÑĞ²Ğ½Ğ¾Ğ³Ğ¾ Ñ€Ğ°Ğ·Ñ€ĞµÑˆĞµĞ½Ğ¸Ñ.', oneShot: 'Ğ¢Ğ¾Ğ»ÑŒĞºĞ¾ Ğ¾Ğ´Ğ¸Ğ½ Ğ·Ğ°Ğ¿Ñ€Ğ¾Ñ Â· Ğ±ĞµĞ· Ğ¸ÑÑ‚Ğ¾Ñ€Ğ¸Ğ¸ Ğ¿ĞµÑ€ĞµĞ¼ĞµÑ‰ĞµĞ½Ğ¸Ğ¹', estimated: 'ĞÑ†ĞµĞ½Ğ¾Ñ‡Ğ½Ñ‹Ğ¹ Ğ¼Ğ°Ñ€ÑˆÑ€ÑƒÑ‚', steps: 'Ğ¨Ğ°Ğ³Ğ¸', km: 'ĞºĞ¼', min: 'Ğ¼Ğ¸Ğ½', noRoute: 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚ Ğ¿Ğ¾ĞºĞ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½.'
   } : {
-    subtitle: 'Local-first places and routes. Location is never requested automatically.', unavailable: 'Maps host is not connected', boundary: 'Install MapsService through a typed host adapter. The shell never reads coordinates itself.', search: 'Search places', searchPlaceholder: 'Name, address or category', showLocation: 'Show my location', locationDone: 'Location shown once', locationUnavailable: 'One-shot location is unavailable', results: 'Results', saved: 'Saved places', providers: 'Providers', offline: 'Offline packages', route: 'Route', from: 'From', to: 'To', mode: 'Mode', walking: 'Walking', driving: 'Driving', cycling: 'Cycling', plan: 'Plan route', noResults: 'No local results.', noSaved: 'No saved places.', noOffline: 'No offline packages.', providerBoundary: 'External providers are enabled only by explicit privacy policy.', oneShot: 'One request only Â· no movement history', estimated: 'Estimated route', steps: 'Steps', km: 'km', min: 'min', noRoute: 'Routing host adapter is unavailable.'
+    subtitle: 'Places and routes work locally first. Location is never requested automatically.', unavailable: 'Maps are not connected', boundary: 'Connect Maps in Settings. Keystone never receives coordinates without your action.', search: 'Search places', searchPlaceholder: 'Name, address or category', showLocation: 'Show my location', locationDone: 'Location shown once', locationUnavailable: 'One-shot location is unavailable', results: 'Results', saved: 'Saved places', providers: 'Sources', offline: 'Offline packages', route: 'Route', from: 'From', to: 'To', mode: 'Mode', walking: 'Walking', driving: 'Driving', cycling: 'Cycling', plan: 'Plan route', noResults: 'No local results.', noSaved: 'No saved places.', noOffline: 'No offline packages.', providerBoundary: 'External sources are enabled only after explicit permission.', oneShot: 'One request only Â· no movement history', estimated: 'Estimated route', steps: 'Steps', km: 'km', min: 'min', noRoute: 'Routing is not available yet.'
   };
 
   React.useEffect(() => subscribeDesktopMapsRuntime(() => setRuntime(getDesktopMapsRuntime())), []);
@@ -1103,19 +770,24 @@ function MapsSurface({ tab, t }: { tab: DesktopTab; shell: DesktopShellControlle
     try { setRoute(await runtime.planRoute({ origin: from.trim(), destination: to.trim(), mode })); setNotice(''); } catch { setNotice(labels.noRoute); }
   };
   const center = locationViewport?.center ?? state?.viewport.center;
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âŒ–</span><span>{t.maps}</span><span className="surface-badge">HOST ADAPTER</span></div><h1>{t.maps}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{t.maps}</strong><small>{labels.boundary}</small></div></div></div>;
+  const mapLayerLabel = (value: string | undefined) => {
+    if (!ru) return value ?? 'SCHEMATIC';
+    return value === 'SCHEMATIC' ? 'Ğ¡Ñ…ĞµĞ¼Ğ°' : value ?? 'Ğ¡Ñ…ĞµĞ¼Ğ°';
+  };
+  const mapPrecisionLabel = locationPrecision === 'PRECISE' ? (ru ? 'Ğ¢Ğ¾Ñ‡Ğ½Ğ°Ñ' : 'PRECISE') : locationPrecision === 'APPROXIMATE' ? (ru ? 'ĞŸÑ€Ğ¸Ğ±Ğ»Ğ¸Ğ·Ğ¸Ñ‚ĞµĞ»ÑŒĞ½Ğ°Ñ' : 'APPROXIMATE') : '';
+  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon"><Icon name="map" size={15} /></span><span>{t.maps}</span><span className="surface-badge">{ru ? 'Ğ›ĞĞšĞĞ›Ğ¬ĞĞ«Ğ™ ĞĞ”ĞĞŸĞ¢Ğ•Ğ ' : 'HOST ADAPTER'}</span></div><h1>{t.maps}</h1><p className="surface-description">{labels.unavailable}</p><div className="adapter-note"><span><Icon name="info" size={16} /></span><div><strong>{t.maps}</strong><small>{labels.boundary}</small></div></div></div>;
 
   return <div className="maps-surface" data-map-tab={tab.object?.id ?? tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">âŒ–</span><span>{t.maps}</span><span className="surface-badge">{state?.location ?? 'HOST'}</span></div>
+    <div className="surface-kicker"><span className="surface-icon"><Icon name="map" size={15} /></span><span>{t.maps}</span><span className="surface-badge">{state?.location ?? (ru ? 'Ğ£Ğ¡Ğ¢Ğ ĞĞ™Ğ¡Ğ¢Ğ’Ğ' : 'HOST')}</span></div>
     <div className="maps-heading"><div><h1>{tab.title}</h1><p className="surface-description">{labels.subtitle}</p></div><button className="secondary-button" onClick={() => void showLocation()}>âŒ– {labels.showLocation}</button></div>
-    <div className="maps-toolbar"><form className="maps-search" onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.searchPlaceholder} aria-label={labels.searchPlaceholder}/><button className="primary-button" disabled={!query.trim()}>{labels.search}</button></form>{locationPrecision && <span className="maps-location-state">{locationPrecision} Â· {labels.oneShot}</span>}</div>
+    <div className="maps-toolbar"><form className="maps-search" onSubmit={search}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.searchPlaceholder} aria-label={labels.searchPlaceholder}/><button className="primary-button" disabled={!query.trim()}>{labels.search}</button></form>{locationPrecision && <span className="maps-location-state">{mapPrecisionLabel} Â· {labels.oneShot}</span>}</div>
     <div className="maps-layout">
       <main className="maps-main">
         <section className="maps-canvas" aria-label={t.maps}>
           <div className="maps-grid" aria-hidden="true"/><div className="maps-road maps-road-one" aria-hidden="true"/><div className="maps-road maps-road-two" aria-hidden="true"/>
           <span className="maps-canvas-center">{center ? `${center.latitude.toFixed(3)}, ${center.longitude.toFixed(3)}` : 'â€”'}</span>
           {render?.features.slice(0, 40).map((feature, index) => <span className="maps-feature" key={feature.id} style={{ left: `${12 + (index * 17) % 76}%`, top: `${18 + (index * 29) % 62}%` }} title={feature.label ?? feature.kind}>â€¢</span>)}
-          <div className="maps-canvas-footer"><span>{render?.layer ?? 'SCHEMATIC'} Â· {render?.offline ? 'OFFLINE' : (render?.providerId ?? 'LOCAL')}</span><span>{render?.attribution ?? ''}</span></div>
+          <div className="maps-canvas-footer"><span>{mapLayerLabel(render?.layer)} Â· {render?.offline ? (ru ? 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½' : 'OFFLINE') : (render?.providerId ?? (ru ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾' : 'LOCAL'))}</span><span>{render?.attribution ?? ''}</span></div>
         </section>
         <section className="maps-panel"><div className="maps-panel-heading"><span className="section-label">{labels.results}</span><small>{results.length}</small></div>{results.length ? results.map(placeValue => <button className="maps-place" key={placeValue.placeId} onClick={() => setTo(placeValue.displayName)}><span className="maps-place-glyph">âŒ–</span><span><strong>{placeValue.displayName}</strong><small>{placeValue.address ?? placeValue.approximateRegion ?? placeValue.category ?? placeValue.provenance} Â· {placeValue.uri}</small></span></button>) : <p className="maps-empty">{labels.noResults}</p>}</section>
       </main>
@@ -1147,7 +819,7 @@ function MailSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellCo
   const [results, setResults] = React.useState<readonly { readonly id: string; readonly kind: 'mail' | 'mail-thread'; readonly title: string; readonly snippet: string }[]>([]);
   const [notice, setNotice] = React.useState('');
   const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const labels = ru ? { title: 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°', subtitle: 'External Email Â· Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ ĞºÑÑˆ Ğ¸ Ğ²Ğ°Ñˆ Ğ½Ğ°ÑÑ‚Ñ€Ğ¾ĞµĞ½Ğ½Ñ‹Ğ¹ provider', inbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ', compose: 'ĞĞ°Ğ¿Ğ¸ÑĞ°Ñ‚ÑŒ', reply: 'ĞÑ‚Ğ²ĞµÑ‚Ğ¸Ñ‚ÑŒ', replyAll: 'ĞÑ‚Ğ²ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ²ÑĞµĞ¼', forward: 'ĞŸĞµÑ€ĞµÑĞ»Ğ°Ñ‚ÑŒ', send: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ²Ğ½ĞµÑˆĞ½Ğµ', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾Ñ‡Ñ‚Ñ‹', offline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-ĞºÑÑˆ', provider: 'Ğ’Ğ½ĞµÑˆĞ½Ğ¸Ğ¹ provider', noRuntime: 'Mail host adapter Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½.', noMessages: 'ĞšÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ñ… Ğ¿Ğ¸ÑĞµĞ¼ Ğ½ĞµÑ‚.', select: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ¿Ğ¸ÑÑŒĞ¼Ğ¾', noAccount: 'Ğ”Ğ¾Ğ±Ğ°Ğ²ÑŒÑ‚Ğµ Ğ²Ğ½ĞµÑˆĞ½Ğ¸Ğ¹ mail account Ğ² Settings.', images: 'Ğ’Ğ½ĞµÑˆĞ½Ğ¸Ğµ Ğ¸Ğ·Ğ¾Ğ±Ñ€Ğ°Ğ¶ĞµĞ½Ğ¸Ñ Ğ·Ğ°Ğ±Ğ»Ğ¾ĞºĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ñ‹ Ğ¿Ğ¾ ÑƒĞ¼Ğ¾Ğ»Ñ‡Ğ°Ğ½Ğ¸Ñ.', attachments: 'Ğ’Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ñ', download: 'Ğ¡ĞºĞ°Ñ‡Ğ°Ñ‚ÑŒ', saveAttachment: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ğ¾', markRead: 'ĞŸĞ¾Ğ¼ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğ¼', star: 'Ğ—Ğ²ĞµĞ·Ğ´Ğ°', move: 'ĞŸĞµÑ€ĞµĞ¼ĞµÑÑ‚Ğ¸Ñ‚ÑŒ', delete: 'Ğ£Ğ´Ğ°Ğ»Ğ¸Ñ‚ÑŒ', draft: 'Ğ§ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸Ğº', outbox: 'Ğ˜ÑÑ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ', sent: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ»ĞµĞ½Ğ¾', unread: 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğµ', bodyUnavailable: 'Ğ¢ĞµĞ»Ğ¾ Ğ¿Ğ¸ÑÑŒĞ¼Ğ° ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ·Ğ°ĞºÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ¾.', recipient: 'ĞŸĞ¾Ğ»ÑƒÑ‡Ğ°Ñ‚ĞµĞ»Ğ¸ Ñ‡ĞµÑ€ĞµĞ· Ğ·Ğ°Ğ¿ÑÑ‚ÑƒÑ', subject: 'Ğ¢ĞµĞ¼Ğ°', body: 'Ğ¢ĞµĞºÑÑ‚ Ğ¿Ğ¸ÑÑŒĞ¼Ğ°', save: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ñ‡ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸Ğº', sendNotice: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ° Ğ¿Ñ€Ğ¾Ñ…Ğ¾Ğ´Ğ¸Ñ‚ Ñ‡ĞµÑ€ĞµĞ· Ğ½Ğ°ÑÑ‚Ñ€Ğ¾ĞµĞ½Ğ½Ğ¾Ğ³Ğ¾ Ğ²Ğ½ĞµÑˆĞ½ĞµĞ³Ğ¾ provider.', external: 'External Email', host: 'HOST ADAPTER' } : { title: 'External Email', subtitle: 'External Email Â· local cache and your configured provider', inbox: 'Inbox', compose: 'Compose', reply: 'Reply', replyAll: 'Reply all', forward: 'Forward', send: 'Send externally', refresh: 'Refresh', search: 'Search mail', offline: 'Offline local cache', provider: 'External provider', noRuntime: 'Mail host adapter is not connected.', noMessages: 'No cached messages.', select: 'Select a message', noAccount: 'Add an external mail account in Settings.', images: 'External images are blocked by default.', attachments: 'Attachments', download: 'Download', saveAttachment: 'Save privately', markRead: 'Mark read', star: 'Star', move: 'Move', delete: 'Delete', draft: 'Draft', outbox: 'Outbox', sent: 'Sent', unread: 'Unread', bodyUnavailable: 'Body is not cached yet.', recipient: 'Recipients, comma separated', subject: 'Subject', body: 'Message body', save: 'Save draft', sendNotice: 'Sending leaves Keystone through your configured external provider.', external: 'External Email', host: 'HOST ADAPTER' };
+  const labels = ru ? { title: 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°', subtitle: 'ĞŸĞ¸ÑÑŒĞ¼Ğ° Ğ¸Ğ· Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½Ğ½Ñ‹Ñ… Ğ°ĞºĞºĞ°ÑƒĞ½Ñ‚Ğ¾Ğ² Â· Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ ĞºÑÑˆ', inbox: 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ', compose: 'ĞĞ°Ğ¿Ğ¸ÑĞ°Ñ‚ÑŒ', reply: 'ĞÑ‚Ğ²ĞµÑ‚Ğ¸Ñ‚ÑŒ', replyAll: 'ĞÑ‚Ğ²ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ²ÑĞµĞ¼', forward: 'ĞŸĞµÑ€ĞµÑĞ»Ğ°Ñ‚ÑŒ', send: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ¸Ñ‚ÑŒ Ğ²Ğ½ĞµÑˆĞ½Ğµ', refresh: 'ĞĞ±Ğ½Ğ¾Ğ²Ğ¸Ñ‚ÑŒ', search: 'ĞŸĞ¾Ğ¸ÑĞº Ğ¿Ğ¾Ñ‡Ñ‚Ñ‹', offline: 'ĞÑ„Ğ»Ğ°Ğ¹Ğ½-ĞºÑÑˆ', provider: 'ĞĞºĞºĞ°ÑƒĞ½Ñ‚', noRuntime: 'ĞŸĞ¾Ñ‡Ñ‚Ğ° Ğ¿Ğ¾ĞºĞ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ°.', noMessages: 'ĞšÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ñ… Ğ¿Ğ¸ÑĞµĞ¼ Ğ½ĞµÑ‚.', select: 'Ğ’Ñ‹Ğ±ĞµÑ€Ğ¸Ñ‚Ğµ Ğ¿Ğ¸ÑÑŒĞ¼Ğ¾', noAccount: 'Ğ”Ğ¾Ğ±Ğ°Ğ²ÑŒÑ‚Ğµ Ğ¿Ğ¾Ñ‡Ñ‚Ğ¾Ğ²Ñ‹Ğ¹ Ğ°ĞºĞºĞ°ÑƒĞ½Ñ‚ Ğ² Ğ½Ğ°ÑÑ‚Ñ€Ğ¾Ğ¹ĞºĞ°Ñ….', images: 'Ğ’Ğ½ĞµÑˆĞ½Ğ¸Ğµ Ğ¸Ğ·Ğ¾Ğ±Ñ€Ğ°Ğ¶ĞµĞ½Ğ¸Ñ Ğ·Ğ°Ğ±Ğ»Ğ¾ĞºĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ñ‹ Ğ¿Ğ¾ ÑƒĞ¼Ğ¾Ğ»Ñ‡Ğ°Ğ½Ğ¸Ñ.', attachments: 'Ğ’Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ñ', download: 'Ğ¡ĞºĞ°Ñ‡Ğ°Ñ‚ÑŒ', saveAttachment: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ğ¾', markRead: 'ĞŸĞ¾Ğ¼ĞµÑ‚Ğ¸Ñ‚ÑŒ Ğ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğ¼', star: 'Ğ—Ğ²ĞµĞ·Ğ´Ğ°', move: 'ĞŸĞµÑ€ĞµĞ¼ĞµÑÑ‚Ğ¸Ñ‚ÑŒ', delete: 'Ğ£Ğ´Ğ°Ğ»Ğ¸Ñ‚ÑŒ', draft: 'Ğ§ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸Ğº', outbox: 'Ğ˜ÑÑ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ', sent: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²Ğ»ĞµĞ½Ğ¾', unread: 'ĞĞµĞ¿Ñ€Ğ¾Ñ‡Ğ¸Ñ‚Ğ°Ğ½Ğ½Ñ‹Ğµ', bodyUnavailable: 'Ğ¢ĞµĞ»Ğ¾ Ğ¿Ğ¸ÑÑŒĞ¼Ğ° ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ·Ğ°ĞºÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ¾.', recipient: 'ĞŸĞ¾Ğ»ÑƒÑ‡Ğ°Ñ‚ĞµĞ»Ğ¸ Ñ‡ĞµÑ€ĞµĞ· Ğ·Ğ°Ğ¿ÑÑ‚ÑƒÑ', subject: 'Ğ¢ĞµĞ¼Ğ°', body: 'Ğ¢ĞµĞºÑÑ‚ Ğ¿Ğ¸ÑÑŒĞ¼Ğ°', save: 'Ğ¡Ğ¾Ñ…Ñ€Ğ°Ğ½Ğ¸Ñ‚ÑŒ Ñ‡ĞµÑ€Ğ½Ğ¾Ğ²Ğ¸Ğº', sendNotice: 'ĞÑ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ° Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑĞµÑ‚ÑÑ Ñ‡ĞµÑ€ĞµĞ· Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ½Ñ‹Ğ¹ Ğ¿Ğ¾Ñ‡Ñ‚Ğ¾Ğ²Ñ‹Ğ¹ Ğ°ĞºĞºĞ°ÑƒĞ½Ñ‚.', external: 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°', host: 'ĞĞ• ĞŸĞĞ”ĞšĞ›Ğ®Ğ§Ğ•ĞĞ' } : { title: 'External Email', subtitle: 'Messages from connected accounts Â· local cache', inbox: 'Inbox', compose: 'Compose', reply: 'Reply', replyAll: 'Reply all', forward: 'Forward', send: 'Send externally', refresh: 'Refresh', search: 'Search mail', offline: 'Offline local cache', provider: 'Account', noRuntime: 'Mail is not available yet.', noMessages: 'No cached messages.', select: 'Select a message', noAccount: 'Add a mail account in Settings.', images: 'External images are blocked by default.', attachments: 'Attachments', download: 'Download', saveAttachment: 'Save privately', markRead: 'Mark read', star: 'Star', move: 'Move', delete: 'Delete', draft: 'Draft', outbox: 'Outbox', sent: 'Sent', unread: 'Unread', bodyUnavailable: 'Body is not cached yet.', recipient: 'Recipients, comma separated', subject: 'Subject', body: 'Message body', save: 'Save draft', sendNotice: 'Sending uses the mail account you choose.', external: 'External Email', host: 'NOT CONNECTED' };
 
   React.useEffect(() => subscribeDesktopMailRuntime(() => setRuntime(getDesktopMailRuntime())), []);
   const refresh = React.useCallback(async () => {
@@ -1179,19 +851,19 @@ function MailSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellCo
   const addresses = (value: readonly DesktopMailAddress[]) => value.map(item => item.name ? item.name + ' <' + item.address + '>' : item.address).join(', ');
   const attachmentAction = async (messageId: string, attachmentId: string, save: boolean) => { if (!runtime) return; try { if (save && runtime.saveAttachment) setNotice((await runtime.saveAttachment(messageId, attachmentId)).fileId); else if (!save && runtime.downloadAttachment) setNotice((await runtime.downloadAttachment(messageId, attachmentId)).filename); } catch { setNotice(labels.noRuntime); } };
 
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon">âœ‰</span><span>{labels.external}</span><span className="surface-badge">{labels.host}</span></div><h1>{labels.title}</h1><p className="surface-description">{labels.noRuntime}</p><div className="adapter-note"><span>â—Œ</span><div><strong>{labels.provider}</strong><small>{labels.noAccount}</small></div></div></div>;
+  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon"><Icon name="mail" size={15} /></span><span>{labels.external}</span><span className="surface-badge">{labels.host}</span></div><h1>{labels.title}</h1><p className="surface-description">{labels.noRuntime}</p><div className="adapter-note"><span><Icon name="info" size={16} /></span><div><strong>{labels.provider}</strong><small>{labels.noAccount}</small></div></div></div>;
   const currentAccount = accounts.find(value => value.id === selectedAccount);
   const currentFolder = folders.find(value => value.id === selectedFolder);
   const messageBody = rendered ?? (selectedMessage ? { mode: 'TEXT' as const, value: selectedMessage.bodyText ?? selectedMessage.snippet, blockedExternalImages: selectedMessage.externalImageUrls, safeLinks: [] } : undefined);
   return <div className="mail-surface">
-    <div className="surface-kicker"><span className="surface-icon">âœ‰</span><span>{labels.external}</span><span className="surface-badge">{currentAccount?.providerKind ?? labels.provider}</span></div>
+    <div className="surface-kicker"><span className="surface-icon"><Icon name="mail" size={15} /></span><span>{labels.external}</span><span className="surface-badge">{currentAccount?.providerKind ?? labels.provider}</span></div>
     <div className="mail-heading"><div><h1>{labels.title}</h1><p className="surface-description">{labels.subtitle}</p></div><div className="mail-actions"><button className="secondary-button" onClick={() => void refresh()}>{labels.refresh}</button><button className="primary-button" onClick={() => void compose()}>{labels.compose}</button></div></div>
     {currentAccount && <div className="mail-account"><strong>{currentAccount.label}</strong><span>{currentAccount.address.address}</span><small>{currentAccount.enabled ? labels.offline : labels.noAccount}{currentAccount.attention ? ' Â· ' + currentAccount.attention : ''}</small></div>}
-    {!accounts.length && <div className="adapter-note"><span>â—Œ</span><div><strong>{labels.noAccount}</strong><small>{labels.noRuntime}</small></div></div>}
+    {!accounts.length && <div className="adapter-note"><span><Icon name="info" size={16} /></span><div><strong>{labels.noAccount}</strong><small>{labels.noRuntime}</small></div></div>}
     <div className="mail-layout">
       <aside className="mail-sidebar"><span className="section-label">{labels.provider}</span>{folders.map(folder => <button key={folder.id} className={folder.id === selectedFolder ? 'mail-folder active' : 'mail-folder'} onClick={() => { setSelectedFolder(folder.id); setSelectedMessage(undefined); }}>{folder.name}<small>{folder.unreadCount ?? ''}</small></button>)}<span className="section-label mail-section-label">{labels.outbox}</span>{outbox.slice(0, 12).map(entry => <div className="mail-outbox-row" key={entry.id}><span>{entry.state}</span><small>{entry.lastError ?? entry.stableMessageId.slice(0, 18)}</small></div>)}</aside>
       <main className="mail-main"><form className="mail-search" onSubmit={runSearch}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><button className="secondary-button">{labels.search}</button></form>{results.length > 0 && <div className="mail-search-results">{results.map(result => <button key={result.id} onClick={() => void openSearchResult(result.id)}><strong>{result.title}</strong><small>{result.kind} Â· {result.snippet}</small></button>)}</div>}{messages.length ? <div className="mail-message-list">{messages.map(message => <button key={message.id} className={'mail-message-row' + (selectedMessage?.id === message.id ? ' active' : '') + (!message.flags.includes('SEEN') ? ' unread' : '')} onClick={() => openMessage(message)}><span className="mail-message-dot">{message.flags.includes('STARRED') ? 'â˜…' : 'Â·'}</span><span className="mail-message-copy"><strong>{message.from.name ?? message.from.address}</strong><b>{message.subject || labels.noMessages}</b><small>{message.snippet}</small></span><time>{new Date(message.receivedAt).toLocaleDateString()}</time></button>)}</div> : <div className="mail-empty"><span>âœ‰</span><p>{selectedAccount ? labels.noMessages : labels.noAccount}</p></div>}</main>
-      <section className="mail-reader">{draft ? <div className="mail-compose"><div className="mail-reader-heading"><span className="section-label">{labels.draft}</span><button className="secondary-button" onClick={() => setDraft(undefined)}>Ã—</button></div><label>{labels.recipient}<input value={addresses(draft.to)} onChange={event => updateDraft({ to: parseDesktopMailAddresses(event.target.value) })}/></label><label>{labels.subject}<input value={draft.subject} onChange={event => updateDraft({ subject: event.target.value })}/></label><label>{labels.body}<textarea value={draft.bodyText} onChange={event => updateDraft({ bodyText: event.target.value })}/></label><div className="mail-compose-actions"><button className="secondary-button" onClick={() => void saveDraft()}>{labels.save}</button><button className="primary-button" onClick={() => void sendDraft()}>{labels.send}</button></div><small className="mail-disclosure">{labels.sendNotice}</small></div> : selectedMessage ? <><div className="mail-reader-heading"><div><span className="section-label">{currentFolder?.name ?? labels.external}</span><h2>{selectedMessage.subject || labels.noMessages}</h2><small>{addresses([selectedMessage.from])} Â· {new Date(selectedMessage.receivedAt).toLocaleString()}</small></div><div className="mail-reader-actions"><button className="secondary-button" onClick={() => void runtime.reply?.(selectedMessage.id).then(value => compose(value))}>{labels.reply}</button><button className="secondary-button" onClick={() => void runtime.reply?.(selectedMessage.id, true).then(value => compose(value))}>{labels.replyAll}</button><button className="secondary-button" onClick={() => void runtime.forward?.(selectedMessage.id).then(value => compose(value))}>{labels.forward}</button></div></div><div className="mail-policy-note">{labels.images}</div>{messageBody?.mode === 'SANITIZED_HTML' ? <div className="mail-body" onClick={event => { const target = event.target as HTMLElement; const anchor = target.closest('a'); if (anchor?.href) { event.preventDefault(); void runtime.openExternal?.(anchor.href); } }} dangerouslySetInnerHTML={{ __html: messageBody.value }} /> : <pre className="mail-body mail-body-text">{messageBody?.value ?? labels.bodyUnavailable}</pre>}{messageBody?.blockedExternalImages.length ? <small className="mail-blocked-images">{messageBody.blockedExternalImages.length} blocked remote image(s)</small> : null}{selectedMessage.attachments.length > 0 && <div className="mail-attachments"><span className="section-label">{labels.attachments}</span>{selectedMessage.attachments.map(attachment => <div className="mail-attachment" key={attachment.id}><span>â–¤</span><strong>{attachment.filename}</strong><small>{formatBytes(attachment.sizeBytes)} Â· {attachment.contentAvailable ? 'cached' : 'lazy/private'}</small><button className="secondary-button" onClick={() => void attachmentAction(selectedMessage.id, attachment.id, false)}>{labels.download}</button><button className="secondary-button" onClick={() => void attachmentAction(selectedMessage.id, attachment.id, true)}>{labels.saveAttachment}</button></div>)}</div>}<div className="mail-reader-footer"><button className="secondary-button" onClick={() => void runtime.markRead?.(selectedMessage.id, !selectedMessage.flags.includes('SEEN'))}>{labels.markRead}</button><button className="secondary-button" onClick={() => void runtime.setStarred?.(selectedMessage.id, !selectedMessage.flags.includes('STARRED'))}>â˜… {labels.star}</button><button className="secondary-button" onClick={() => void runtime.delete?.(selectedMessage.id)}>{labels.delete}</button></div></> : <div className="mail-empty"><span>âŒ</span><p>{labels.select}</p></div>}</section>
+      <section className="mail-reader">{draft ? <div className="mail-compose"><div className="mail-reader-heading"><span className="section-label">{labels.draft}</span><button className="secondary-button" onClick={() => setDraft(undefined)}>Ã—</button></div><label>{labels.recipient}<input value={addresses(draft.to)} onChange={event => updateDraft({ to: parseDesktopMailAddresses(event.target.value) })}/></label><label>{labels.subject}<input value={draft.subject} onChange={event => updateDraft({ subject: event.target.value })}/></label><label>{labels.body}<textarea value={draft.bodyText} onChange={event => updateDraft({ bodyText: event.target.value })}/></label><div className="mail-compose-actions"><button className="secondary-button" onClick={() => void saveDraft()}>{labels.save}</button><button className="primary-button" onClick={() => void sendDraft()}>{labels.send}</button></div><small className="mail-disclosure">{labels.sendNotice}</small></div> : selectedMessage ? <><div className="mail-reader-heading"><div><span className="section-label">{currentFolder?.name ?? labels.external}</span><h2>{selectedMessage.subject || labels.noMessages}</h2><small>{addresses([selectedMessage.from])} Â· {new Date(selectedMessage.receivedAt).toLocaleString()}</small></div><div className="mail-reader-actions"><button className="secondary-button" onClick={() => void runtime.reply?.(selectedMessage.id).then(value => compose(value))}>{labels.reply}</button><button className="secondary-button" onClick={() => void runtime.reply?.(selectedMessage.id, true).then(value => compose(value))}>{labels.replyAll}</button><button className="secondary-button" onClick={() => void runtime.forward?.(selectedMessage.id).then(value => compose(value))}>{labels.forward}</button></div></div><div className="mail-policy-note">{labels.images}</div>{messageBody?.mode === 'SANITIZED_HTML' ? <div className="mail-body" onClick={event => { const target = event.target as HTMLElement; const anchor = target.closest('a'); if (anchor?.href) { event.preventDefault(); void runtime.openExternal?.(anchor.href); } }} dangerouslySetInnerHTML={{ __html: messageBody.value }} /> : <pre className="mail-body mail-body-text">{messageBody?.value ?? labels.bodyUnavailable}</pre>}{messageBody?.blockedExternalImages.length ? <small className="mail-blocked-images">{messageBody.blockedExternalImages.length} {ru ? 'Ğ·Ğ°Ğ±Ğ»Ğ¾ĞºĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ½Ñ‹Ñ… ÑƒĞ´Ğ°Ğ»Ñ‘Ğ½Ğ½Ñ‹Ñ… Ğ¸Ğ·Ğ¾Ğ±Ñ€Ğ°Ğ¶ĞµĞ½Ğ¸Ğ¹' : 'blocked remote image(s)'}</small> : null}{selectedMessage.attachments.length > 0 && <div className="mail-attachments"><span className="section-label">{labels.attachments}</span>{selectedMessage.attachments.map(attachment => <div className="mail-attachment" key={attachment.id}><span>â–¤</span><strong>{attachment.filename}</strong><small>{formatBytes(attachment.sizeBytes)} Â· {attachment.contentAvailable ? (ru ? 'ĞºÑÑˆĞ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ¾' : 'cached') : (ru ? 'Ğ¾Ñ‚Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¾/Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ğ¾' : 'lazy/private')}</small><button className="secondary-button" onClick={() => void attachmentAction(selectedMessage.id, attachment.id, false)}>{labels.download}</button><button className="secondary-button" onClick={() => void attachmentAction(selectedMessage.id, attachment.id, true)}>{labels.saveAttachment}</button></div>)}</div>}<div className="mail-reader-footer"><button className="secondary-button" onClick={() => void runtime.markRead?.(selectedMessage.id, !selectedMessage.flags.includes('SEEN'))}>{labels.markRead}</button><button className="secondary-button" onClick={() => void runtime.setStarred?.(selectedMessage.id, !selectedMessage.flags.includes('STARRED'))}>â˜… {labels.star}</button><button className="secondary-button" onClick={() => void runtime.delete?.(selectedMessage.id)}>{labels.delete}</button></div></> : <div className="mail-empty"><span><Icon name="folder" size={16} /></span><p>{labels.select}</p></div>}</section>
     </div>
     {notice && <small className="mail-notice">{notice}</small>}
   </div>;
@@ -1209,13 +881,13 @@ function CalendarSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShe
   const [selectedCalendar, setSelectedCalendar] = React.useState<string>();
   const [notice, setNotice] = React.useState('');
   const ru = t.calendar.startsWith('Ğš');
-  const labels = ru ? { unavailable: 'Calendar host ĞµÑ‰Ñ‘ Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡Ñ‘Ğ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰Ğ¸Ğ¹ CalendarService Ñ‡ĞµÑ€ĞµĞ· host adapter; shell Ğ½Ğµ ÑĞ¾Ğ·Ğ´Ğ°Ñ‘Ñ‚ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ñ ÑĞ°Ğ¼.', today: 'Ğ¡ĞµĞ³Ğ¾Ğ´Ğ½Ñ', previous: 'ĞĞ°Ğ·Ğ°Ğ´', next: 'Ğ’Ğ¿ĞµÑ€Ñ‘Ğ´', timezone: 'Ğ§Ğ°ÑĞ¾Ğ²Ğ¾Ğ¹ Ğ¿Ğ¾ÑÑ', shared: 'ĞĞ±Ñ‰Ğ¸Ğµ ĞºĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€Ğ¸', create: 'ĞĞ¾Ğ²Ğ¾Ğµ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ğµ', free: 'ĞĞ°Ğ¹Ñ‚Ğ¸ ÑĞ²Ğ¾Ğ±Ğ¾Ğ´Ğ½Ğ¾Ğµ Ğ²Ñ€ĞµĞ¼Ñ', empty: 'ĞĞµÑ‚ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ğ¹ Ğ² Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğ¼ Ğ´Ğ¸Ğ°Ğ¿Ğ°Ğ·Ğ¾Ğ½Ğµ', day: 'Ğ”ĞµĞ½ÑŒ', week: 'ĞĞµĞ´ĞµĞ»Ñ', month: 'ĞœĞµÑÑÑ†', agenda: 'ĞŸĞ¾Ğ²ĞµÑÑ‚ĞºĞ°', side: 'Ğ¡Ğ²Ğ¾Ğ¹ÑÑ‚Ğ²Ğ° Ğ¸ ÑÑÑ‹Ğ»ĞºĞ¸', newEvent: 'Ğ¡Ğ¾Ğ±Ñ‹Ñ‚Ğ¸Ğµ ÑĞ¾Ğ·Ğ´Ğ°Ğ½Ğ¾ Ñ‡ĞµÑ€ĞµĞ· CalendarService' } : { unavailable: 'Calendar host is not connected', boundary: 'Install the existing CalendarService through a host adapter; the shell never creates fake events.', today: 'Today', previous: 'Previous', next: 'Next', timezone: 'Timezone', shared: 'Shared calendars', create: 'New event', free: 'Find free time', empty: 'No events in the selected range', day: 'Day', week: 'Week', month: 'Month', agenda: 'Agenda', side: 'Properties and links', newEvent: 'Event created through CalendarService' };
+  const labels = ru ? { unavailable: 'ĞšĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€ÑŒ Ğ¿Ğ¾ĞºĞ° Ğ½ĞµĞ´Ğ¾ÑÑ‚ÑƒĞ¿ĞµĞ½', boundary: 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡Ğ¸Ñ‚Ğµ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ ĞºĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€ÑŒ, Ñ‡Ñ‚Ğ¾Ğ±Ñ‹ ÑĞ¾Ğ·Ğ´Ğ°Ğ²Ğ°Ñ‚ÑŒ Ğ¸ Ğ¿Ñ€Ğ¾ÑĞ¼Ğ°Ñ‚Ñ€Ğ¸Ğ²Ğ°Ñ‚ÑŒ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ñ.', today: 'Ğ¡ĞµĞ³Ğ¾Ğ´Ğ½Ñ', previous: 'ĞĞ°Ğ·Ğ°Ğ´', next: 'Ğ’Ğ¿ĞµÑ€Ñ‘Ğ´', timezone: 'Ğ§Ğ°ÑĞ¾Ğ²Ğ¾Ğ¹ Ğ¿Ğ¾ÑÑ', shared: 'ĞĞ±Ñ‰Ğ¸Ğµ ĞºĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€Ğ¸', create: 'ĞĞ¾Ğ²Ğ¾Ğµ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ğµ', free: 'ĞĞ°Ğ¹Ñ‚Ğ¸ ÑĞ²Ğ¾Ğ±Ğ¾Ğ´Ğ½Ğ¾Ğµ Ğ²Ñ€ĞµĞ¼Ñ', empty: 'ĞĞµÑ‚ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ğ¹ Ğ² Ğ²Ñ‹Ğ±Ñ€Ğ°Ğ½Ğ½Ğ¾Ğ¼ Ğ´Ğ¸Ğ°Ğ¿Ğ°Ğ·Ğ¾Ğ½Ğµ', day: 'Ğ”ĞµĞ½ÑŒ', week: 'ĞĞµĞ´ĞµĞ»Ñ', month: 'ĞœĞµÑÑÑ†', agenda: 'ĞŸĞ¾Ğ²ĞµÑÑ‚ĞºĞ°', side: 'Ğ¡Ğ²Ğ¾Ğ¹ÑÑ‚Ğ²Ğ° Ğ¸ ÑÑÑ‹Ğ»ĞºĞ¸', newEvent: 'Ğ¡Ğ¾Ğ±Ñ‹Ñ‚Ğ¸Ğµ ÑĞ¾Ğ·Ğ´Ğ°Ğ½Ğ¾' } : { unavailable: 'Calendar is not available yet', boundary: 'Connect a local calendar to create and view events.', today: 'Today', previous: 'Previous', next: 'Next', timezone: 'Timezone', shared: 'Shared calendars', create: 'New event', free: 'Find free time', empty: 'No events in the selected range', day: 'Day', week: 'Week', month: 'Month', agenda: 'Agenda', side: 'Properties and links', newEvent: 'Event created' };
   React.useEffect(() => subscribeDesktopCalendarRuntime(() => setRuntime(getDesktopCalendarRuntime())), []);
   const refresh = React.useCallback(async () => { if (!runtime) return; const nextCalendars = await runtime.calendars(); setCalendars(nextCalendars); const calendarId = selectedCalendar ?? nextCalendars[0]?.id; setSelectedCalendar(calendarId); if (calendarId) setEvents(await runtime.events({ calendarId, expand: view !== 'AGENDA' })); }, [runtime, selectedCalendar, view]);
   React.useEffect(() => { void refresh(); }, [refresh]);
   const create = async () => { if (!runtime?.createEvent || !selectedCalendar) { setNotice(labels.boundary); return; } const start = new Date(Date.now() + 60 * 60_000); start.setMinutes(0, 0, 0); const end = new Date(start.getTime() + 60 * 60_000); await runtime.createEvent({ calendarId: selectedCalendar, title: labels.create, start: start.toISOString(), end: end.toISOString() }); setNotice(labels.newEvent); await refresh(); };
   return <div className="calendar-surface" data-calendar-id={tab.object?.id ?? tab.id}>
-    <div className="surface-kicker"><span className="surface-icon">â–¡</span><span>{t.calendar}</span><span className="surface-badge">{t.local}</span></div>
+    <div className="surface-kicker"><span className="surface-icon"><Icon name="canvas" size={15} /></span><span>{t.calendar}</span><span className="surface-badge">{t.local}</span></div>
     <div className="calendar-heading"><div><h1>{tab.title}</h1><p className="surface-description">{runtime ? `${calendars.length} ${labels.shared} Â· ${calendars.find(value => value.id === selectedCalendar)?.timezone ?? 'UTC'}` : labels.unavailable}</p></div><div className="calendar-actions"><button className="secondary-button" onClick={() => setNotice(labels.boundary)}>{labels.today}</button><button className="primary-button" onClick={() => void create()}>{labels.create}</button></div></div>
     <div className="calendar-toolbar"><div className="calendar-view-switcher">{([['DAY', labels.day], ['WEEK', labels.week], ['MONTH', labels.month], ['AGENDA', labels.agenda]] as const).map(([value, label]) => <button key={value} className={view === value ? 'active' : ''} onClick={() => setView(value)}>{label}</button>)}</div><div className="calendar-nav"><button onClick={() => setNotice(labels.previous)}>â€¹</button><button onClick={() => setNotice(labels.today)}>{labels.today}</button><button onClick={() => setNotice(labels.next)}>â€º</button></div>{calendars.length > 0 && <select value={selectedCalendar} onChange={event => setSelectedCalendar(event.target.value)} aria-label={labels.shared}>{calendars.map(calendar => <option key={calendar.id} value={calendar.id}>{calendar.name} Â· {calendar.visibility}</option>)}</select>}</div>
     <div className="calendar-layout"><main className="calendar-grid">{events.length ? events.map(event => <article key={event.id} className="calendar-event"><time>{formatCalendarTime(event.start)}â€“{formatCalendarTime(event.end)}</time><strong>{event.title || 'BUSY'}</strong><small>{event.timezone}</small></article>) : <div className="calendar-empty"><span>â–¡</span><p>{runtime ? labels.empty : labels.boundary}</p></div>}</main><aside className="calendar-side"><span className="section-label">{labels.side}</span><p>{labels.timezone}: {calendars.find(value => value.id === selectedCalendar)?.timezone ?? 'UTC'}</p><p>{labels.shared}: {calendars.length}</p><button className="secondary-button" onClick={() => { if (runtime?.findCommonTime) void runtime.findCommonTime().then(value => setNotice(value[0] ? `${value[0].start} â€“ ${value[0].end}` : labels.empty)); else setNotice(labels.boundary); }}>{labels.free}</button>{notice && <small>{notice}</small>}</aside></div>
@@ -1225,88 +897,165 @@ function CalendarSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShe
 function formatCalendarTime(value: string): string { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'â€”'; }
 
 function PlaceholderSurface({ tab, t }: { tab: DesktopTab; t: Copy }) {
-  return <div className="placeholder-surface"><span className="placeholder-icon">{tabIcon(tab.kind)}</span><span className="surface-kicker">{t.placeholder}</span><h1>{tab.title}</h1><p>{t.placeholderBody}</p><div className="adapter-note"><span>â—Œ</span><div><strong>Host-provided adapter boundary</strong><small>Existing subsystem can attach here without changing the desktop shell.</small></div></div></div>;
+  return <div className="placeholder-surface"><span className="placeholder-icon">{tabIcon(tab.kind)}</span><span className="surface-kicker">{t.placeholder}</span><h1>{tab.title}</h1><p>{t.placeholderBody}</p><div className="adapter-note"><span><Icon name="info" size={16} /></span><div><strong>{t.placeholder}</strong><small>{t.placeholderBody}</small></div></div></div>;
 }
 
 function EmptyPane({ shell, t }: { shell: DesktopShellController; t: Copy }) { return <div className="empty-pane"><span>âŒ˜</span><p>{t.empty}</p><button className="secondary-button" onClick={() => shell.openReference({ kind: 'home', id: 'home', label: t.home })}>{t.open}</button></div>; }
 
-function CaptureSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
+function CaptureSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
   const [runtime, setRuntime] = React.useState<DesktopCaptureRuntime | undefined>(getDesktopCaptureRuntime);
   const [page, setPage] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['list']>>>({ items: [], total: 0 });
-  const [value, setValue] = React.useState(''); const [query, setQuery] = React.useState(''); const [selectedId, setSelectedId] = React.useState(''); const [suggestions, setSuggestions] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['suggestions']>>>([]); const [destination, setDestination] = React.useState<CaptureDestinationKind>('VAULT'); const [preview, setPreview] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['preview']>>>(); const [notice, setNotice] = React.useState(''); const fileInput = React.useRef<HTMLInputElement>(null); const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
-  const refresh = React.useCallback(async () => { if (!runtime) return; try { const next = await runtime.list({ query: query.trim() || undefined, limit: 64 }); setPage(next); if (selectedId && !next.items.some(item => item.id === selectedId)) setSelectedId(''); setNotice(''); } catch { setNotice(t.captureNoRuntime); } }, [query, runtime, selectedId, t.captureNoRuntime]);
+  const initialCaptureId = tab.object?.id && tab.object.id !== 'capture' ? tab.object.id : '';
+  const [value, setValue] = React.useState(''); const [query, setQuery] = React.useState(''); const [selectedId, setSelectedId] = React.useState(initialCaptureId); const [suggestions, setSuggestions] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['suggestions']>>>([]); const [destination, setDestination] = React.useState<CaptureDestinationKind>('VAULT'); const [preview, setPreview] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['preview']>>>(); const [notice, setNotice] = React.useState(''); const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
+  const refresh = React.useCallback(async () => { if (!runtime) return; try { const next = await runtime.list({ query: query.trim() || undefined, limit: 64 }); setPage(next); setSelectedId(current => current && next.items.some(item => item.id === current) ? current : initialCaptureId && next.items.some(item => item.id === initialCaptureId) ? initialCaptureId : ''); setNotice(''); } catch { setNotice(t.captureNoRuntime); } }, [initialCaptureId, query, runtime, t.captureNoRuntime]);
   React.useEffect(() => subscribeDesktopCaptureRuntime(() => setRuntime(getDesktopCaptureRuntime())), []);
   React.useEffect(() => { void refresh(); }, [refresh]);
   React.useEffect(() => { if (!runtime?.subscribe) return; return runtime.subscribe(() => void refresh()); }, [refresh, runtime]);
   const select = async (item: Awaited<ReturnType<DesktopCaptureRuntime['list']>>['items'][number]) => { setSelectedId(item.id); setPreview(undefined); try { setSuggestions(await runtime!.suggestions(item.id)); } catch { setSuggestions([]); } };
+  React.useEffect(() => { const item = page.items.find(candidate => candidate.id === selectedId); if (item && runtime) void runtime.suggestions(item.id).then(setSuggestions).catch(() => setSuggestions([])); }, [page.items, runtime, selectedId]);
   const capture = async () => { if (!runtime || !value.trim()) return; try { const item = /^https?:\/\//i.test(value.trim()) ? await runtime.captureUrl(value.trim()) : await runtime.captureText(value); setValue(''); await refresh(); await select(item); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureUnsafe); } };
   const captureClipboard = async () => { if (!runtime) return; try { const item = await runtime.captureClipboard({ ownerConfirmed: true }); await refresh(); await select(item); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); } };
   const captureFile = async (file: File) => { if (!runtime) return; try { const item = await runtime.captureFile({ name: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, read: async () => new Uint8Array(await file.arrayBuffer()), source: { kind: 'FILE_DROP', label: file.name } }); await refresh(); await select(item); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); } };
+  const pickCaptureFile = async () => {
+    if (!runtime) return;
+    try {
+      const file = await pickDesktopFile('file');
+      if (!file) return;
+      const item = await runtime.captureFile({ name: file.name, mimeType: file.mimeType, size: file.size, read: async () => file.bytes.slice(), source: { kind: 'FILE_DROP', label: `Native picker Â· ${file.name}` } });
+      await refresh(); await select(item);
+    } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); }
+  };
   const route = async () => { if (!runtime || !selectedId) return; try { if (!preview) { setPreview(await runtime.preview(selectedId, destination)); return; } await runtime.route(selectedId, destination); setNotice(ru ? 'ĞœĞ°Ñ€ÑˆÑ€ÑƒÑ‚ Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ĞµĞ½.' : 'Capture routed.'); setPreview(undefined); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); } };
   const selected = page.items.find(item => item.id === selectedId);
-  return <div className="capture-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const files = [...event.dataTransfer.files].slice(0, 32); if (files.length) { void Promise.all(files.map(captureFile)); return; } const raw = event.dataTransfer.getData('application/x-keystone-ref'); if (raw && runtime) { try { const ref = JSON.parse(raw) as { type: string; id: string; label?: string; dataClass?: 'PUBLIC' | 'USER_EXPLICIT' | 'PRIVATE' | 'SECRET' }; void runtime.capture.captureReference({ reference: { type: ref.type, id: ref.id, label: ref.label, dataClass: ref.dataClass ?? 'USER_EXPLICIT' }, source: { kind: 'KEYSTONE_OBJECT', label: ref.label } }).then(item => { void refresh(); void select(item); }); } catch { setNotice(t.captureUnsafe); } } }}>
-    <div className="surface-kicker"><span className="surface-icon">ï¼‹</span><span>{t.capture}</span><span className="surface-badge">{runtime?.hostConnected ? 'HOST' : t.local}</span></div>
+  return <div className="capture-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const files = [...event.dataTransfer.files].slice(0, 32); if (files.length) { void Promise.all(files.map(captureFile)); return; } const raw = event.dataTransfer.getData('application/x-keystone-ref'); if (raw && runtime) { try { const ref = JSON.parse(raw) as { type: string; id: string; label?: string; dataClass?: 'PUBLIC' | 'USER_EXPLICIT' | 'PRIVATE' | 'SECRET' }; void runtime.capture.captureReference({ reference: { type: ref.type, id: ref.id, label: ref.label, dataClass: ref.dataClass ?? 'USER_EXPLICIT' }, source: { kind: 'KEYSTONE_OBJECT', label: ref.label } }).then(item => { void refresh(); void select(item); }); } catch { setNotice(t.captureUnsafe); } } }}>
+    <div className="surface-kicker"><span className="surface-icon"><Icon name="capture" size={15} /></span><span>{t.capture}</span><span className="surface-badge">{runtime?.hostConnected ? (ru ? 'ĞŸĞ¾Ğ´ĞºĞ»ÑÑ‡ĞµĞ½Ğ¾' : 'Connected') : t.local}</span></div>
     <div className="capture-heading"><div><h1>{t.capture}</h1><p className="surface-description">{t.captureHint}</p></div><kbd>{isMac() ? 'âŒ˜' : 'Ctrl'} â‡§ Space</kbd></div>
-    {!runtime?.hostConnected && <div className="adapter-note"><span>â—Œ</span><div><strong>{t.captureNoRuntime}</strong><small>{t.captureUnsafe}</small></div></div>}
-    <div className="capture-composer"><textarea value={value} onChange={event => setValue(event.target.value)} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void capture(); } }} /><div className="capture-actions"><button className="primary-button" onClick={() => void capture()} disabled={!value.trim()}>{t.capture}</button><button className="secondary-button" onClick={() => void captureClipboard()}>{t.captureClipboard}</button><button className="secondary-button" onClick={() => fileInput.current?.click()}>{t.files}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserPage({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureBrowser}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserSelection({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureSelection}</button><input ref={fileInput} type="file" hidden multiple onChange={event => { const files = [...(event.target.files ?? [])]; void Promise.all(files.slice(0, 32).map(captureFile)); event.currentTarget.value = ''; }} /></div></div>
-    <div className="capture-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Tray' : 'Search tray'} aria-label={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Tray' : 'Search tray'} /><span>{page.total} Â· {t.captureTray}</span><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button></div>
-    <div className="capture-layout"><div className="capture-list"><span className="section-label">{t.captureTray}</span>{page.items.length ? page.items.map(item => <button key={item.id} className={`capture-item${item.id === selectedId ? ' active' : ''}`} onClick={() => void select(item)}><span className="capture-item-icon">{item.payload.kind === 'URL' || item.payload.kind === 'BROWSER_PAGE' ? 'â†—' : item.payload.kind === 'FILE' || item.payload.kind === 'IMAGE' || item.payload.kind === 'DOCUMENT' ? 'â–¤' : 'ï¼‹'}</span><span><strong>{item.title}</strong><small>{item.provenance.source.kind} Â· {item.state}</small></span></button>) : <div className="adapter-note"><span>ï¼‹</span><div><strong>{t.captureNoItems}</strong><small>{t.captureDrop}</small></div></div>}</div><div className="capture-detail">{selected ? <><span className="section-label">{t.captureSource}</span><h2>{selected.title}</h2><p className="capture-preview-text">{capturePreviewText(selected)}</p><small>{selected.provenance.source.kind} Â· {selected.state} Â· {selected.provenance.dataClass}</small><div className="capture-suggestions"><span className="section-label">{t.captureSuggestions}</span>{suggestions.map(item => <button key={item.destination} className={destination === item.destination ? 'selected' : ''} onClick={() => { setDestination(item.destination); setPreview(undefined); }}><strong>{item.destination}</strong><small>{item.reason}</small></button>)}</div><div className="capture-route"><select value={destination} onChange={event => { setDestination(event.target.value as CaptureDestinationKind); setPreview(undefined); }}><option value="TASK">TASK</option><option value="VAULT">VAULT</option><option value="WEB_LIBRARY">WEB_LIBRARY</option><option value="FILES">FILES</option><option value="PHOTOS">PHOTOS</option><option value="DOCUMENTS">DOCUMENTS</option><option value="CONTACTS">CONTACTS</option><option value="CALENDAR">CALENDAR</option><option value="WORKBOARD">WORKBOARD</option><option value="SHARED_FOLDER">SHARED_FOLDER</option></select><button className="primary-button" onClick={() => void route()}>{preview ? t.captureConfirm : t.capturePreview}</button><button className="secondary-button" onClick={() => { void runtime!.dismiss(selected.id).then(() => refresh()); }}>{t.captureDismiss}</button></div>{preview && <div className="capture-consequence"><strong>{preview.title}</strong><small>{preview.summary}</small><small>{preview.disclosure} Â· {preview.warnings.join(' ') || t.privacy}</small></div>}</> : <div className="placeholder-surface"><span className="placeholder-icon">ï¼‹</span><h2>{t.captureTray}</h2><p>{t.captureDrop}</p></div>}</div></div>{notice && <small className="continuity-notice">{notice}</small>}
+    {!runtime?.hostConnected && <div className="adapter-note"><span><Icon name="info" size={17} /></span><div><strong>{t.captureNoRuntime}</strong><small>{t.captureUnsafe}</small></div></div>}
+    <div className="capture-composer"><textarea value={value} onChange={event => setValue(event.target.value)} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void capture(); } }} /><div className="capture-actions"><button className="primary-button" onClick={() => void capture()} disabled={!value.trim()}>{t.capture}</button><button className="secondary-button" onClick={() => void captureClipboard()}>{t.captureClipboard}</button><button className="secondary-button" onClick={() => void pickCaptureFile()}>{t.files}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserPage({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureBrowser}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserSelection({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureSelection}</button></div></div>
+    <div className="capture-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Ğ·Ğ°Ñ…Ğ²Ğ°Ñ‚Ğ¾Ğ²' : 'Search tray'} aria-label={ru ? 'ĞŸĞ¾Ğ¸ÑĞº Ğ·Ğ°Ñ…Ğ²Ğ°Ñ‚Ğ¾Ğ²' : 'Search tray'} /><span>{page.total} Â· {t.captureTray}</span><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button></div>
+    <div className="capture-layout"><div className="capture-list"><span className="section-label">{t.captureTray}</span>{page.items.length ? page.items.map(item => <button key={item.id} className={`capture-item${item.id === selectedId ? ' active' : ''}`} onClick={() => void select(item)}><span className="capture-item-icon"><Icon name={item.payload.kind === 'URL' || item.payload.kind === 'BROWSER_PAGE' ? 'external-link' : item.payload.kind === 'FILE' || item.payload.kind === 'IMAGE' || item.payload.kind === 'DOCUMENT' ? 'file-text' : 'capture'} size={16} /></span><span><strong>{item.title}</strong><small>{captureSourceLabel(item.provenance.source.kind, ru)} Â· {item.state}</small></span></button>) : <div className="adapter-note"><span><Icon name="capture" size={17} /></span><div><strong>{t.captureNoItems}</strong><small>{t.captureDrop}</small></div></div>}</div><div className="capture-detail">{selected ? <><span className="section-label">{t.captureSource}</span><h2>{selected.title}</h2><p className="capture-preview-text">{capturePreviewText(selected)}</p><small>{captureSourceLabel(selected.provenance.source.kind, ru)} Â· {selected.state} Â· {captureAccessLabel(selected.provenance.dataClass, ru)}</small><div className="capture-suggestions"><span className="section-label">{t.captureSuggestions}</span>{suggestions.map(item => <button key={item.destination} className={destination === item.destination ? 'selected' : ''} onClick={() => { setDestination(item.destination); setPreview(undefined); }}><strong>{captureDestinationLabel(item.destination, ru)}</strong><small>{item.reason}</small></button>)}</div><div className="capture-route"><select value={destination} onChange={event => { setDestination(event.target.value as CaptureDestinationKind); setPreview(undefined); }}><option value="TASK">{captureDestinationLabel('TASK', ru)}</option><option value="VAULT">{captureDestinationLabel('VAULT', ru)}</option><option value="WEB_LIBRARY">{captureDestinationLabel('WEB_LIBRARY', ru)}</option><option value="FILES">{captureDestinationLabel('FILES', ru)}</option><option value="PHOTOS">{captureDestinationLabel('PHOTOS', ru)}</option><option value="DOCUMENTS">{captureDestinationLabel('DOCUMENTS', ru)}</option><option value="CONTACTS">{captureDestinationLabel('CONTACTS', ru)}</option><option value="CALENDAR">{captureDestinationLabel('CALENDAR', ru)}</option><option value="WORKBOARD">{captureDestinationLabel('WORKBOARD', ru)}</option><option value="SHARED_FOLDER">{captureDestinationLabel('SHARED_FOLDER', ru)}</option></select><button className="primary-button" onClick={() => void route()}>{preview ? t.captureConfirm : t.capturePreview}</button><button className="secondary-button" onClick={() => { void runtime!.dismiss(selected.id).then(() => refresh()); }}>{t.captureDismiss}</button></div>{preview && <div className="capture-consequence"><strong>{preview.title}</strong><small>{preview.summary}</small><small>{preview.disclosure} Â· {preview.warnings.join(' ') || t.privacy}</small></div>}</> : <div className="placeholder-surface"><span className="placeholder-icon"><Icon name="capture" size={26} /></span><h2>{t.captureTray}</h2><p>{t.captureDrop}</p></div>}</div></div>{notice && <small className="continuity-notice">{notice}</small>}
   </div>;
 }
+
+function captureSourceLabel(source: string, ru: boolean): string { const labels: Record<string, [string, string]> = { FILE_DROP: ['Ğ¤Ğ°Ğ¹Ğ»', 'File'], KEYSTONE_OBJECT: ['ĞĞ±ÑŠĞµĞºÑ‚ Keystone', 'Keystone object'], BROWSER_PAGE: ['Ğ¡Ñ‚Ñ€Ğ°Ğ½Ğ¸Ñ†Ğ°', 'Page'], BROWSER_SELECTION: ['Ğ’Ñ‹Ğ´ĞµĞ»ĞµĞ½Ğ¸Ğµ', 'Selection'], CLIPBOARD: ['Ğ‘ÑƒÑ„ĞµÑ€ Ğ¾Ğ±Ğ¼ĞµĞ½Ğ°', 'Clipboard'], USER_INPUT: ['Ğ’Ğ²Ğ¾Ğ´', 'Text'] }; const value = labels[source]; return value ? (ru ? value[0] : value[1]) : (ru ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº' : 'Local source'); }
+function captureDestinationLabel(destination: CaptureDestinationKind, ru: boolean): string { const labels: Record<CaptureDestinationKind, [string, string]> = { TASK: ['Ğ—Ğ°Ğ´Ğ°Ñ‡Ğ°', 'Task'], VAULT: ['Ğ¥Ñ€Ğ°Ğ½Ğ¸Ğ»Ğ¸Ñ‰Ğµ', 'Storage'], WEB_LIBRARY: ['Web Library', 'Web Library'], FILES: ['Ğ¤Ğ°Ğ¹Ğ»Ñ‹', 'Files'], PHOTOS: ['Ğ¤Ğ¾Ñ‚Ğ¾Ğ³Ñ€Ğ°Ñ„Ğ¸Ğ¸', 'Photos'], DOCUMENTS: ['Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹', 'Documents'], CONTACTS: ['ĞšĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ñ‹', 'Contacts'], CALENDAR: ['ĞšĞ°Ğ»ĞµĞ½Ğ´Ğ°Ñ€ÑŒ', 'Calendar'], WORKBOARD: ['Ğ Ğ°Ğ±Ğ¾Ñ‡Ğ°Ñ Ğ´Ğ¾ÑĞºĞ°', 'Workboard'], SHARED_FOLDER: ['ĞĞ±Ñ‰Ğ°Ñ Ğ¿Ğ°Ğ¿ĞºĞ°', 'Shared folder'] }; const value = labels[destination]; return value ? (ru ? value[0] : value[1]) : destination; }
+function captureAccessLabel(dataClass: string, ru: boolean): string { return ru ? (dataClass === 'SECRET' ? 'ĞÑĞ¾Ğ±Ğ¾ Ğ·Ğ°Ñ‰Ğ¸Ñ‰Ñ‘Ğ½Ğ½Ñ‹Ğµ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ' : dataClass === 'PRIVATE' ? 'ĞŸÑ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ğµ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ' : 'Ğ”Ğ°Ğ½Ğ½Ñ‹Ğµ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ°') : (dataClass === 'SECRET' ? 'Highly protected data' : dataClass === 'PRIVATE' ? 'Private data' : 'Device data'); }
 
 function capturePreviewText(item: Awaited<ReturnType<DesktopCaptureRuntime['list']>>['items'][number]): string { const payload = item.payload; if (payload.kind === 'TEXT') return payload.text; if (payload.kind === 'URL') return payload.url; if (payload.kind === 'BROWSER_PAGE') return `${payload.url}\n${payload.excerpt ?? ''}`; if (payload.kind === 'BROWSER_SELECTION') return payload.selectedText; if (payload.kind === 'REFERENCE') return `${payload.reference.type} Â· ${payload.reference.id}`; if (payload.kind === 'CONTACT_CARD') return payload.vCard; if (payload.kind === 'MULTI') return `${payload.items.length} items`; return `${payload.file.name} Â· ${payload.file.size} B`;
 }
 
 function TypedReferenceDock({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const suggestions: KeystoneObjectReference[] = tab.kind === 'profile' ? [{ kind: 'chat', id: 'chat-bob', label: 'Chat Â· Bob' }, { kind: 'agent', id: 'agent-orbit', label: 'Orbit' }] : tab.kind === 'chat' ? [{ kind: 'file', id: 'file-shared', label: 'Shared file' }, { kind: 'space', id: 'space-chat', label: 'Related space' }] : tab.kind === 'file' ? [{ kind: 'chat', id: 'chat-file', label: 'Share in chat' }, { kind: 'space', id: 'space-file', label: 'Attach to Space' }] : tab.kind === 'music' ? [{ kind: 'playlist', id: 'playlist-current', label: 'Add to Playlist' }, { kind: 'profile', id: 'artist-profile', label: 'Artist profile' }] : tab.kind === 'vault' ? [{ kind: 'space', id: 'space-note', label: 'Share with Space' }] : [];
-  if (!suggestions.length) return null;
-  return <div className="reference-dock"><span className="section-label">{t.references}</span><div>{suggestions.map(ref => <button key={`${ref.kind}:${ref.id}`} draggable onDragStart={event => event.dataTransfer.setData('application/x-keystone-ref', JSON.stringify(ref))} onClick={() => shell.openReference(ref)}><span>{tabIcon(ref.kind)}</span>{ref.label}</button>)}</div></div>;
+  const ref = tab.object;
+  if (!ref) return null;
+  const link = keystoneLinkForReference(ref);
+  const copyLink = async () => {
+    try { await navigator.clipboard?.writeText(link); shell.setNotice(t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ¡ÑÑ‹Ğ»ĞºĞ° ÑĞºĞ¾Ğ¿Ğ¸Ñ€Ğ¾Ğ²Ğ°Ğ½Ğ°' : 'Link copied'); }
+    catch { shell.setNotice(t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'ĞĞµ ÑƒĞ´Ğ°Ğ»Ğ¾ÑÑŒ ÑĞºĞ¾Ğ¿Ğ¸Ñ€Ğ¾Ğ²Ğ°Ñ‚ÑŒ ÑÑÑ‹Ğ»ĞºÑƒ' : 'Could not copy link'); }
+  };
+  return <div className="reference-dock" aria-label={t.links}>
+    <span className="section-label">{t.links}</span>
+    <div>
+      <button type="button" onClick={() => void copyLink()}><span><Icon name="link" size={13}/></span>{t.shareLink}</button>
+      <button type="button" onClick={() => shell.openReference(ref, { allowDuplicate: true })}><span><Icon name="plus" size={13}/></span>{t.openInTab}</button>
+    </div>
+  </div>;
+}
+
+function InlineKeystoneLinks({ text, shell }: { text: string; shell: DesktopShellController }) {
+  const tokens = text.split(/(keystone:\/\/[^\s)\]>]+)/g);
+  return <>{tokens.map((token, index) => {
+    const ref = parseKeystoneLink(token);
+    return ref ? <button type="button" className="inline-keystone-link" key={`${token}-${index}`} onClick={() => shell.openReference(ref)}>{token}</button> : <React.Fragment key={`${token}-${index}`}>{token}</React.Fragment>;
+  })}</>;
 }
 
 function ContextSidebar({ data, t }: { data: ReturnType<ContextProviderRegistry['resolve']>; t: Copy }) {
-  return <aside className="context-sidebar" aria-label={t.context}><div className="sidebar-heading"><div><span className="section-label">{t.context}</span><h2>{data.title}</h2></div><span className="sidebar-dots">â‹¯</span></div>{data.sections.map(section => <section className="context-section" key={section.id}><h3>{section.title}</h3>{section.items.map(item => <p key={item}>{item}</p>)}</section>)}<div className="sidebar-footer"><span className="status-light"/> {t.privacy}</div></aside>;
+  return <aside className="context-sidebar" data-keystone-region="sidebar" aria-label={t.context}><div className="sidebar-heading"><div><span className="section-label">{t.context}</span><h2>{data.title}</h2></div><span className="sidebar-dots">â‹¯</span></div>{data.sections.map(section => <section className="context-section" key={section.id}><h3>{section.title}</h3>{section.items.map(item => <p key={item}>{item}</p>)}</section>)}<div className="sidebar-footer"><span className="status-light"/> {t.privacy}</div></aside>;
 }
 
 function AgentBotPanel({ shell, t, activeTab, prefill, onClose }: { shell: DesktopShellController; t: Copy; activeTab?: DesktopTab; prefill?: string; onClose: () => void }) {
-  const [prompt, setPrompt] = React.useState(prefill ?? '');
-  const [messages, setMessages] = React.useState<string[]>([]);
+  void prefill;
   const browserPage = activeTab?.kind === 'browser' ? shell.browserPage(activeTab.id) : undefined;
-  const scope = browserPage ? `${activeTab?.title ?? 'Browser'} Â· ${browserPage.origin} Â· revision ${browserPage.pageRevision}` : activeTab?.object ? `${activeTab.title} Â· ${activeTab.object.id}` : t.noObject;
-  React.useEffect(() => { if (prefill) setPrompt(prefill); }, [prefill]);
-  const submit = (event: React.FormEvent) => { event.preventDefault(); const value = prompt.trim(); if (!value) return; setMessages(current => [...current, value]); setPrompt(''); shell.setNotice(`${t.agentScope}: ${scope}`); };
+  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
+  const scope = browserPage ? `${activeTab?.title ?? t.browser} Â· ${browserPage.origin} Â· ${t.revisionLabel} ${browserPage.pageRevision}` : activeTab?.object ? `${activeTab.title} Â· ${activeTab.object.id}` : t.noObject;
   const toolFlow = shell.toolFlowState();
-  return <aside className="agent-panel" aria-label={t.agent}><div className="agent-panel-heading"><div><span className="section-label">{t.agent}</span><h2>{t.local}</h2></div><button onClick={onClose} aria-label={t.close}>Ã—</button></div><div className="agent-scope"><span className="scope-dot"/><div><small>{t.agentScope}</small><strong>{scope}</strong></div></div>{toolFlow && <section className="toolflow-card" aria-label="ToolFlow"><div className="toolflow-heading"><div><span className="section-label">ToolFlow</span><strong>{toolFlow.status}</strong></div><span className="privacy-mark">{toolFlow.privacyClass}</span></div><div className="toolflow-sequence">{toolFlow.steps.map((step, index) => <React.Fragment key={step.id}><span className={`toolflow-step ${step.status}`}><i/>{step.label}</span>{index < toolFlow.steps.length - 1 && <span className="toolflow-arrow">â†’</span>}</React.Fragment>)}</div><div className="toolflow-meta"><span>{toolFlow.sourceCount} {toolFlow.sourceCount === 1 ? 'source' : 'sources'}</span><span>{toolFlow.executionId.slice(0, 18)}</span></div>{(toolFlow.status === 'running' || toolFlow.status === 'paused') && <div className="toolflow-actions"><button className="secondary-button" onClick={() => toolFlow.status === 'paused' ? shell.resumeToolFlow() : shell.pauseToolFlow()}>{toolFlow.status === 'paused' ? 'Resume' : 'Pause'}</button><button className="secondary-button" onClick={() => shell.cancelToolFlow()}>Cancel</button></div>}</section>}<div className="agent-messages">{messages.length === 0 ? <div className="agent-empty"><span>âœ¦</span><p>{t.agentHint}</p></div> : messages.map((message, index) => <div className="agent-message" key={`${message}-${index}`}><span>you</span><p>{message}</p></div>)}</div><form className="agent-composer" onSubmit={submit}><textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={t.askAgent} aria-label={t.askAgent} rows={3}/><div><span>{t.local}</span><button className="primary-button" disabled={!prompt.trim()}>{t.send}</button></div></form></aside>;
+  const toolFlowStatus = (status: string): string => ru ? ({ running: 'Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑĞµÑ‚ÑÑ', paused: 'Ğ¿Ñ€Ğ¸Ğ¾ÑÑ‚Ğ°Ğ½Ğ¾Ğ²Ğ»ĞµĞ½Ğ¾', completed: 'Ğ·Ğ°Ğ²ĞµÑ€ÑˆĞµĞ½Ğ¾', failed: 'Ğ¾ÑˆĞ¸Ğ±ĞºĞ°', cancelled: 'Ğ¾Ñ‚Ğ¼ĞµĞ½ĞµĞ½Ğ¾' }[status] ?? status) : status;
+  const sourceCount = toolFlow?.sourceCount ?? 0;
+  const sourceLabel = ru ? (sourceCount === 1 ? 'Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸Ğº' : sourceCount < 5 ? 'Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ°' : 'Ğ¸ÑÑ‚Ğ¾Ñ‡Ğ½Ğ¸ĞºĞ¾Ğ²') : (sourceCount === 1 ? t.source : t.sources);
+  return <aside className="agent-panel" data-keystone-region="inspector" aria-label={t.agent}><div className="agent-panel-heading"><div><span className="section-label">{t.agent}</span><h2>{t.local}</h2></div><IconButton icon="close" size={14} label={t.close} onClick={onClose} /></div><div className="agent-scope"><span className="scope-dot"/><div><small>{t.agentScope}</small><strong>{scope}</strong></div></div>{toolFlow && <section className="toolflow-card" aria-label="ToolFlow"><div className="toolflow-heading"><div><span className="section-label">ToolFlow</span><strong>{toolFlowStatus(toolFlow.status)}</strong></div><span className="privacy-mark">{toolFlow.privacyClass}</span></div><div className="toolflow-sequence">{toolFlow.steps.map((step, index) => <React.Fragment key={step.id}><span className={`toolflow-step ${step.status}`}><i/>{step.label}</span>{index < toolFlow.steps.length - 1 && <span className="toolflow-arrow"><Icon name="arrow-right" size={11} /></span>}</React.Fragment>)}</div><div className="toolflow-meta"><span>{sourceCount} {sourceLabel}</span><span>{toolFlow.executionId.slice(0, 18)}</span></div>{(toolFlow.status === 'running' || toolFlow.status === 'paused') && <div className="toolflow-actions"><button type="button" className="secondary-button" onClick={() => toolFlow.status === 'paused' ? shell.resumeToolFlow() : shell.pauseToolFlow()}>{toolFlow.status === 'paused' ? t.resume : t.pause}</button><button type="button" className="secondary-button" onClick={() => shell.cancelToolFlow()}>{t.cancel}</button></div>}</section>}<div className="agent-empty agent-unavailable"><span><Icon name="bot" size={24} /></span><p>{ru ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ°Ñ ÑÑ€ĞµĞ´Ğ° AI Ğ½Ğµ Ğ¿Ğ¾Ğ´ĞºĞ»ÑÑ‡ĞµĞ½Ğ°. Ğ—Ğ°Ğ¿Ñ€Ğ¾ÑÑ‹ Ğ½Ğµ Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑÑÑ‚ÑÑ Ğ¸ Ğ´Ğ°Ğ½Ğ½Ñ‹Ğµ Ğ½Ğµ Ğ¿Ğ¾ĞºĞ¸Ğ´Ğ°ÑÑ‚ ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ²Ğ¾.' : 'A local AI host is not connected. Requests are not executed and data does not leave the device.'}</p></div><div className="agent-composer agent-composer-disabled"><span>{t.placeholder}</span><small>{t.agentHint}</small></div></aside>;
 }
 
 function ActivityEditor({ shell, t, onClose }: { shell: DesktopShellController; t: Copy; onClose: () => void }) {
   const items = shell.chromeState.activityBar;
-  return <div className="floating-editor activity-editor"><div className="editor-heading"><div><span className="section-label">{t.customize}</span><h2>{t.workspace}</h2></div><button onClick={onClose}>Ã—</button></div><p>{t.extensionSlot}</p>{items.map((item, index) => <div className="activity-edit-row" key={item.id}><span className="drag-handle">â‹®â‹®</span><span className="edit-icon">{item.icon}</span><strong>{item.label}</strong><button onClick={() => shell.setActivityVisible(item.id, !item.visible)}>{item.visible ? t.hide : t.show}</button><button onClick={() => shell.setActivityPinned(item.id, !item.pinned)}>{item.pinned ? 'â˜…' : 'â˜†'}</button><button onClick={() => index > 0 && shell.reorderActivity(item.id, index - 1)} disabled={index === 0}>â†‘</button><button onClick={() => index < items.length - 1 && shell.reorderActivity(item.id, index + 1)} disabled={index === items.length - 1}>â†“</button></div>)}<button className="secondary-button editor-done" onClick={onClose}>{t.done}</button></div>;
+  return <div className="floating-editor activity-editor"><div className="editor-heading"><div><span className="section-label">{t.customize}</span><h2>{t.workspace}</h2></div><IconButton icon="close" size={14} label={t.close} onClick={onClose} /></div><p>{t.extensionSlot}</p>{items.map((item, index) => <div className="activity-edit-row" key={item.id}><span className="drag-handle"><Icon name="ellipsis" size={14} /></span><span className="edit-icon"><Icon name={(item.icon as IconName) || 'circle'} size={15} /></span><strong>{activityLabel(item, t)}</strong><button type="button" onClick={() => shell.setActivityVisible(item.id, !item.visible)}>{item.visible ? t.hide : t.show}</button><button type="button" aria-label={item.pinned ? t.unpin : t.pin} onClick={() => shell.setActivityPinned(item.id, !item.pinned)}><Icon name="pin" size={13} /></button><button type="button" aria-label={t.moveUp} onClick={() => index > 0 && shell.reorderActivity(item.id, index - 1)} disabled={index === 0}><Icon name="arrow-up" size={13} /></button><button type="button" aria-label={t.moveDown} onClick={() => index < items.length - 1 && shell.reorderActivity(item.id, index + 1)} disabled={index === items.length - 1}><Icon name="arrow-down" size={13} /></button></div>)}<button className="secondary-button editor-done" type="button" onClick={onClose}>{t.done}</button></div>;
 }
 
 function WorkspaceMenu({ shell, t, onClose }: { shell: DesktopShellController; t: Copy; onClose: () => void }) {
   const [newName, setNewName] = React.useState('');
   const records = shell.listWorkspaces();
-  return <div className="floating-menu workspace-menu"><span className="section-label">{t.switcher}</span>{records.map(record => <button key={record.id} className={record.id === shell.getSnapshot().workspace.id ? 'workspace-option active' : 'workspace-option'} onClick={() => { shell.switchWorkspace(record.id); onClose(); }}><span className="workspace-dot"/><span>{record.name}</span><small>{record.tabs.length} tabs</small></button>)}<div className="workspace-create"><input value={newName} onChange={event => setNewName(event.target.value)} placeholder={t.newWorkspace} onKeyDown={event => { if (event.key === 'Enter' && newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}/><button onClick={() => { if (newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}>+</button></div><div className="workspace-menu-actions"><button onClick={() => { shell.renameWorkspace(window.prompt(t.rename, shell.getSnapshot().workspace.name) ?? shell.getSnapshot().workspace.name); onClose(); }}>{t.rename}</button><button onClick={() => { shell.removeWorkspace(); onClose(); }}>{t.delete}</button></div></div>;
+  const tabCount = (count: number): string => {
+    if (t.home !== 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ') return `${count} ${count === 1 ? 'tab' : t.tabs}`;
+    const word = count % 10 === 1 && count % 100 !== 11 ? 'Ğ²ĞºĞ»Ğ°Ğ´ĞºĞ°' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? 'Ğ²ĞºĞ»Ğ°Ğ´ĞºĞ¸' : t.tabs;
+    return `${count} ${word}`;
+  };
+  return <div className="floating-menu workspace-menu"><span className="section-label">{t.switcher}</span>{records.map(record => <button key={record.id} className={record.id === shell.getSnapshot().workspace.id ? 'workspace-option active' : 'workspace-option'} onClick={() => { shell.switchWorkspace(record.id); onClose(); }}><span className="workspace-dot"/><span>{record.name}</span><small>{tabCount(record.tabs.length)}</small></button>)}<div className="workspace-create"><input value={newName} onChange={event => setNewName(event.target.value)} placeholder={t.newWorkspace} onKeyDown={event => { if (event.key === 'Enter' && newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}/><button onClick={() => { if (newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}>+</button></div><div className="workspace-menu-actions"><button onClick={() => { shell.renameWorkspace(window.prompt(t.rename, shell.getSnapshot().workspace.name) ?? shell.getSnapshot().workspace.name); onClose(); }}>{t.rename}</button><button onClick={() => { shell.removeWorkspace(); onClose(); }}>{t.delete}</button></div></div>;
 }
 
 function CommandPalette({ commands, t, onRun, onClose }: { commands: ShellCommand[]; t: Copy; onRun: (command: ShellCommand) => void; onClose: () => void }) {
   const [query, setQuery] = React.useState('');
+  const [selectedIndex, setSelectedIndex] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
   React.useEffect(() => inputRef.current?.focus(), []);
-  const filtered = commands.filter(command => `${command.label} ${command.description ?? ''} ${(command.keywords ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label={t.command}><div className="palette-input"><span>âŒ˜</span><input ref={inputRef} value={query} onChange={event => setQuery(event.target.value)} placeholder={t.commandHint}/><kbd>ESC</kbd></div><div className="palette-list">{filtered.length ? filtered.map((command, index) => <button key={command.id} className={index === 0 ? 'palette-command selected' : 'palette-command'} onClick={() => onRun(command)}><span className="command-symbol">{command.id === 'ask-agent' ? 'âœ¦' : 'â€º'}</span><span><strong>{command.label}</strong>{command.description && <small>{command.description}</small>}</span><kbd>{command.id === 'split-pane' ? 'Ctrl \\' : index < 9 ? `${index + 1}` : ''}</kbd></button>) : <div className="palette-empty">{t.noCommands}</div>}</div><footer><span>{t.local}</span><span>â†‘â†“ navigate Â· Enter run</span></footer></section></div>;
+  const filtered = commands.filter(command => command.available !== false && `${command.label} ${command.description ?? ''} ${(command.keywords ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+  React.useEffect(() => setSelectedIndex(index => Math.min(index, Math.max(0, filtered.length - 1))), [filtered.length]);
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') { event.preventDefault(); setSelectedIndex(index => filtered.length ? (index + 1) % filtered.length : 0); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setSelectedIndex(index => filtered.length ? (index - 1 + filtered.length) % filtered.length : 0); }
+    else if (event.key === 'Enter') { event.preventDefault(); const command = filtered[selectedIndex]; if (command) onRun(command); }
+    else if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label={t.command}><div className="palette-input"><span>âŒ˜</span><input ref={inputRef} value={query} onChange={event => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={onKeyDown} placeholder={t.commandHint} aria-controls="command-palette-list"/><kbd>ESC</kbd></div><div className="palette-list" id="command-palette-list">{filtered.length ? filtered.map((command, index) => <button key={command.id} type="button" className={index === selectedIndex ? 'palette-command selected' : 'palette-command'} onMouseEnter={() => setSelectedIndex(index)} onClick={() => onRun(command)}><span className="command-symbol">â€º</span><span><strong>{command.label}</strong>{command.description && <small>{command.description}</small>}</span><kbd>{command.id === 'split-pane' ? 'Ctrl \\' : index < 9 ? `${index + 1}` : ''}</kbd></button>) : <div className="palette-empty">{t.noCommands}</div>}</div><footer><span>{t.local}</span><span>â†‘â†“ {t.navigate} Â· Enter {t.run.toLowerCase()}</span></footer></section></div>;
 }
 
 function OmniboxMenu({ value, t, onChoose }: { value: string; t: Copy; onChoose: (value: string) => void }) {
-  const suggestions = value.trim() ? [value.startsWith('http') ? value : `keystone://profile/${value}`, value.includes(' ') ? value : `>${value}`] : ['Bob', 'calendar tomorrow', 'what changed today?'];
-  return <div className="omnibox-menu">{suggestions.map((suggestion, index) => <button key={`${suggestion}-${index}`} onMouseDown={event => event.preventDefault()} onClick={() => onChoose(suggestion)}><span>{index === 0 ? 'âŒ•' : index === 1 ? 'â€º' : 'âœ¦'}</span><span>{suggestion}</span><small>{index === 0 ? t.search : index === 1 ? t.command : t.agent}</small></button>)}</div>;
+  const trimmed = value.trim();
+  const suggestions: Array<{ value: string; icon: IconName; label: string }> = trimmed ? [{ value: trimmed, icon: 'search', label: t.search }, { value: `>${trimmed}`, icon: 'command', label: t.command }] : [];
+  return <div className="omnibox-menu">{suggestions.length ? suggestions.map(suggestion => <button type="button" key={`${suggestion.value}-${suggestion.label}`} onMouseDown={event => event.preventDefault()} onClick={() => onChoose(suggestion.value)}><span><Icon name={suggestion.icon} size={15} /></span><span>{suggestion.value}</span><small>{suggestion.label}</small></button>) : <p className="omnibox-empty">{t.searchHint}</p>}</div>;
 }
 
-function QuickActions({ t, onChoose }: { t: Copy; onChoose: (ref: KeystoneObjectReference) => void }) {
-  const actions: Array<[keyof Copy, KeystoneObjectReference, string]> = [
-    ['capture', { kind: 'capture', id: 'capture', label: t.capture }, 'ï¼‹'], ['message', { kind: 'chat', id: 'new-message', label: t.message }, 'â—Œ'], ['group', { kind: 'chat', id: 'new-group', label: t.group }, 'â—'], ['space', { kind: 'space', id: 'new-space', label: t.space }, 'â–¦'], ['note', { kind: 'vault', id: 'new-note', label: t.note }, 'â–±'], ['canvas', { kind: 'canvas', id: 'new-canvas', vaultId: 'vault', label: t.canvas }, 'â–¡'], ['event', { kind: 'calendar', id: 'new-event', label: t.event }, 'â–¡'], ['task', { kind: 'tasks', id: 'new-task', label: t.task }, 'âœ“'], ['file', { kind: 'file', id: 'new-file', label: t.file }, 'â–¤'], ['agent', { kind: 'agent', id: 'new-agent', label: t.agent }, 'âœ¦'], ['community', { kind: 'community', id: 'new-community', label: t.community }, 'â—ˆ'],
+function QuickActions({ t, onChoose, onCapture, onNewTab }: { t: Copy; onChoose: (ref: KeystoneObjectReference) => void; onCapture: () => void; onNewTab: () => void }) {
+  const ru = t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ';
+  const actions: Array<{ key: string; label: string; icon: IconName; ref?: KeystoneObjectReference; run?: () => void }> = [
+    { key: 'task', label: ru ? 'ĞĞ¾Ğ²Ğ°Ñ Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ°' : 'New Task', icon: 'task', ref: { kind: 'tasks', id: 'tasks', label: t.task } },
+    { key: 'document', label: ru ? 'ĞĞ¾Ğ²Ñ‹Ğ¹ Ğ´Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚' : 'New Document', icon: 'document', ref: { kind: 'document', id: 'documents', label: t.documents } },
+    { key: 'ai', label: ru ? 'ĞĞ¾Ğ²Ñ‹Ğ¹ AI-Ñ‡Ğ°Ñ‚' : 'New AI Chat', icon: 'bot', ref: { kind: 'ai', id: 'new-ai-chat', label: t.localAI } },
+    { key: 'tab', label: ru ? 'ĞĞ¾Ğ²Ğ°Ñ Ğ²ĞºĞ»Ğ°Ğ´ĞºĞ°' : 'New Tab', icon: 'plus', run: onNewTab },
+    { key: 'capture', label: t.capture, icon: 'capture', run: onCapture },
   ];
-  return <div className="floating-menu quick-actions"><span className="section-label">{t.quickActions}</span><div className="quick-grid">{actions.map(([label, ref, icon]) => <button key={label} onClick={() => onChoose(ref)}><span>{icon}</span>{t[label]}</button>)}</div></div>;
+  return <div className="floating-menu quick-actions"><span className="section-label">{t.new}</span><div className="quick-grid">{actions.map(action => <button type="button" key={action.key} onClick={() => action.run ? action.run() : action.ref && onChoose(action.ref)}><span><Icon name={action.icon} size={17} /></span>{action.label}</button>)}</div></div>;
+}
+
+function QuickCaptureOverlay({ shell, t, onClose }: { shell: DesktopShellController; t: Copy; onClose: () => void }) {
+  const [value, setValue] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const inputRef = React.useRef<HTMLTextAreaElement>(null);
+  const runtime = getDesktopCaptureRuntime();
+  React.useEffect(() => inputRef.current?.focus(), []);
+  const save = async () => {
+    const content = value.trim();
+    if (!content || !runtime || busy) return;
+    setBusy(true);
+    try {
+      const item = /^https?:\/\//i.test(content) ? await runtime.captureUrl(content) : await runtime.captureText(content);
+      shell.setNotice(`${t.saved}: ${item.title}`);
+      onClose();
+    } catch (error) {
+      shell.setNotice(error instanceof Error ? error.message : t.captureUnsafe);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <div className="quick-capture-backdrop" role="presentation" onPointerDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="quick-capture-overlay" role="dialog" aria-modal="true" aria-labelledby="quick-capture-title"><div className="quick-capture-heading"><div><span className="section-label">{t.local}</span><h2 id="quick-capture-title">{t.capture}</h2></div><IconButton icon="close" size={14} label={t.close} onClick={onClose} /></div><textarea ref={inputRef} value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') onClose(); if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} /><div className="quick-capture-footer"><small>{isMac() ? 'âŒ˜' : 'Ctrl'} + Enter Â· {t.saved.toLowerCase()}</small><div><button type="button" className="secondary-button" onClick={onClose}>{t.cancel}</button><button type="button" className="primary-button" onClick={() => void save()} disabled={!value.trim() || busy}>{busy ? 'â€¦' : t.capture}</button></div></div></section></div>;
 }
 
 function handleDrop(event: React.DragEvent, shell: DesktopShellController, fallback?: KeystoneObjectReference, paneId = shell.currentPaneId) {
@@ -1315,7 +1064,7 @@ function handleDrop(event: React.DragEvent, shell: DesktopShellController, fallb
   if (droppedFiles.length) {
     const runtime = getDesktopCaptureRuntime();
     if (!runtime) { shell.setNotice('Capture host is unavailable.'); return; }
-    void Promise.all(droppedFiles.map(file => runtime.captureFile({ name: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, read: async () => new Uint8Array(await file.arrayBuffer()), source: { kind: 'FILE_DROP', label: file.name } }))).then(() => { shell.openReference({ kind: 'capture', id: 'capture', label: 'Quick Capture' }, { paneId, allowDuplicate: true }); }).catch(() => shell.setNotice('Capture file import failed.'));
+    void Promise.all(droppedFiles.map(file => runtime.captureFile({ name: file.name, mimeType: file.type || 'application/octet-stream', size: file.size, read: async () => new Uint8Array(await file.arrayBuffer()), source: { kind: 'FILE_DROP', label: file.name } }))).then(() => { shell.openReference({ kind: 'capture', id: 'capture', label: 'Quick Capture' }, { paneId }); }).catch(() => shell.setNotice('Capture file import failed.'));
     return;
   }
   const raw = event.dataTransfer.getData('application/x-keystone-ref');
@@ -1329,27 +1078,34 @@ function handleDrop(event: React.DragEvent, shell: DesktopShellController, fallb
 }
 
 function descriptionFor(tab: DesktopTab, t: Copy): string {
-  if (tab.kind === 'inbox') return t.inbox === 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ' ? 'Universal Inbox: Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ°Ñ Ğ¿Ñ€Ğ¾ĞµĞºÑ†Ğ¸Ñ ÑĞ¾Ğ¾Ğ±Ñ‰ĞµĞ½Ğ¸Ğ¹, Ğ¿Ğ¾Ñ‡Ñ‚Ñ‹, Ğ·Ğ²Ğ¾Ğ½ĞºĞ¾Ğ², collaboration Ğ¸ owned-device ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ğ¹.' : 'Universal Inbox: a local projection of messages, mail, calls, collaboration and owned-device events.';
-  if (tab.kind === 'tasks') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ›Ğ¸Ñ‡Ğ½Ñ‹Ğµ Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ¸, ÑĞ¿Ğ¸ÑĞºĞ¸, Ğ¿Ğ¾Ğ´Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ¸, ÑÑ€Ğ¾ĞºĞ¸ Ğ¸ Ğ½Ğ°Ğ¿Ğ¾Ğ¼Ğ¸Ğ½Ğ°Ğ½Ğ¸Ñ Ñ‡ĞµÑ€ĞµĞ· ÑÑƒÑ‰ĞµÑÑ‚Ğ²ÑƒÑÑ‰Ğ¸Ğ¹ TaskService.' : 'Personal tasks, lists, subtasks, due dates and reminders through the existing TaskService.';
-  if (tab.kind === 'contacts') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ›Ğ¸Ñ‡Ğ½Ğ°Ñ Ğ°Ğ´Ñ€ĞµÑĞ½Ğ°Ñ ĞºĞ½Ğ¸Ğ³Ğ°: ĞºĞ¾Ğ½Ñ‚Ğ°ĞºÑ‚Ñ‹, Ğ³Ñ€ÑƒĞ¿Ğ¿Ñ‹, Ğ´ÑƒĞ±Ğ»Ğ¸ĞºĞ°Ñ‚Ñ‹ Ğ¸ ÑĞ²Ğ½Ñ‹Ğµ ÑÑÑ‹Ğ»ĞºĞ¸ Ğ½Ğ° Identity.' : 'Personal address book: contacts, groups, duplicate review and explicit Identity links.';
+  if (tab.kind === 'inbox') return t.inbox === 'Ğ’Ñ…Ğ¾Ğ´ÑÑ‰Ğ¸Ğµ' ? 'Ğ¡Ğ¾Ğ¾Ğ±Ñ‰ĞµĞ½Ğ¸Ñ, Ğ¿Ğ¾Ñ‡Ñ‚Ğ°, Ğ·Ğ²Ğ¾Ğ½ĞºĞ¸ Ğ¸ ÑĞ¾Ğ±Ñ‹Ñ‚Ğ¸Ñ Ñ Ğ²Ğ°ÑˆĞ¸Ñ… ÑƒÑÑ‚Ñ€Ğ¾Ğ¹ÑÑ‚Ğ².' : 'Messages, mail, calls, and activity from your devices.';
+  if (tab.kind === 'tasks') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ›Ğ¸Ñ‡Ğ½Ñ‹Ğµ Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ¸, ÑĞ¿Ğ¸ÑĞºĞ¸, Ğ¿Ğ¾Ğ´Ğ·Ğ°Ğ´Ğ°Ñ‡Ğ¸, ÑÑ€Ğ¾ĞºĞ¸ Ğ¸ Ğ½Ğ°Ğ¿Ğ¾Ğ¼Ğ¸Ğ½Ğ°Ğ½Ğ¸Ñ.' : 'Personal tasks, lists, subtasks, due dates, and reminders.';
+  if (tab.kind === 'contacts') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ›Ğ¸Ñ‡Ğ½Ğ°Ñ Ğ°Ğ´Ñ€ĞµÑĞ½Ğ°Ñ ĞºĞ½Ğ¸Ğ³Ğ°, Ğ³Ñ€ÑƒĞ¿Ğ¿Ñ‹ Ğ¸ Ğ¿Ñ€Ğ¾Ğ²ĞµÑ€ĞºĞ° Ğ´ÑƒĞ±Ğ»Ğ¸ĞºĞ°Ñ‚Ğ¾Ğ².' : 'Personal address book, groups, and duplicate review.';
   if (tab.kind === 'publication') return t.publicationDisclosure;
   if (tab.kind === 'web-library') return t.webLibraryDescription;
   if (tab.kind === 'map') return t.maps;
-  if (tab.kind === 'mail') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°: Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ ĞºÑÑˆ, IMAP/SMTP/JMAP provider boundary Ğ¸ ÑĞ²Ğ½Ğ°Ñ Ğ¾Ñ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ°.' : 'External Email: local cache, IMAP/SMTP/JMAP provider boundary and explicit sending.';
-  if (tab.kind === 'profile') return `${tab.title} Â· Profile object. Follow, public media and agent references remain permission-aware.`;
-  if (tab.kind === 'chat') return 'Conversation surface. Attachments and Keystone objects are references, not duplicated media.';
-  if (tab.kind === 'community') return 'Community surface. Roles and moderation remain enforced by the existing core.';
-  if (tab.kind === 'space') return 'Shared Space surface. CRDT state and encrypted content remain in the existing subsystem.';
-  if (tab.kind === 'file') return `${t.files} Â· content-addressed object reference with provider availability handled by the existing storage layer.`;
-  if (tab.kind === 'document') return t.documents === 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹' ? 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹ Ğ¸ Ğ±ĞµĞ·Ğ¾Ğ¿Ğ°ÑĞ½Ñ‹Ğ¹ Reader Ğ¿Ğ¾Ğ²ĞµÑ€Ñ… canonical Files: PDF, EPUB, Markdown, Ğ°Ğ½Ğ½Ğ¾Ñ‚Ğ°Ñ†Ğ¸Ğ¸ Ğ¸ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ OCR.' : 'Documents and a safe Reader over canonical Files: PDF, EPUB, Markdown, annotations and local OCR.';
+  if (tab.kind === 'mail') return t.home === 'Ğ“Ğ»Ğ°Ğ²Ğ½Ğ°Ñ' ? 'Ğ’Ğ½ĞµÑˆĞ½ÑÑ Ğ¿Ğ¾Ñ‡Ñ‚Ğ°: Ğ¿Ğ¸ÑÑŒĞ¼Ğ° Ñ…Ñ€Ğ°Ğ½ÑÑ‚ÑÑ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾, Ğ¾Ñ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ° Ğ²Ñ‹Ğ¿Ğ¾Ğ»Ğ½ÑĞµÑ‚ÑÑ ÑĞ²Ğ½Ğ¾.' : 'External email: messages stay local, and sending is always explicit.';
+  if (tab.kind === 'profile') return `${tab.title} Â· Ğ¿Ñ€Ğ¾Ñ„Ğ¸Ğ»ÑŒ, Ğ¿Ğ¾Ğ´Ğ¿Ğ¸ÑĞºĞ¸ Ğ¸ Ğ¾Ñ‚ĞºÑ€Ñ‹Ñ‚Ñ‹Ğµ Ğ¼Ğ°Ñ‚ĞµÑ€Ğ¸Ğ°Ğ»Ñ‹.`;
+  if (tab.kind === 'chat') return 'Ğ Ğ°Ğ·Ğ³Ğ¾Ğ²Ğ¾Ñ€, Ğ²Ğ»Ğ¾Ğ¶ĞµĞ½Ğ¸Ñ Ğ¸ ÑÑÑ‹Ğ»ĞºĞ¸ Ğ½Ğ° Ğ¾Ğ±ÑŠĞµĞºÑ‚Ñ‹ Keystone.';
+  if (tab.kind === 'community') return 'Ğ¡Ğ¾Ğ¾Ğ±Ñ‰ĞµÑÑ‚Ğ²Ğ¾, Ñ€Ğ¾Ğ»Ğ¸ Ğ¸ Ğ¿Ğ¾Ñ€ÑĞ´Ğ¾Ğº Ğ¾Ğ±ÑÑƒĞ¶Ğ´ĞµĞ½Ğ¸Ğ¹.';
+  if (tab.kind === 'space') return 'ĞĞ±Ñ‰ĞµĞµ Ğ¿Ñ€Ğ¾ÑÑ‚Ñ€Ğ°Ğ½ÑÑ‚Ğ²Ğ¾ Ñ Ğ·Ğ°Ñ‰Ğ¸Ñ‰Ñ‘Ğ½Ğ½Ñ‹Ğ¼ ÑĞ¾Ğ´ĞµÑ€Ğ¶Ğ¸Ğ¼Ñ‹Ğ¼.';
+  if (tab.kind === 'file') return `${t.files} Â· Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğµ Ğ²ĞµÑ€ÑĞ¸Ğ¸ Ğ¸ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ğ¾ÑÑ‚ÑŒ ÑĞ¾Ğ´ĞµÑ€Ğ¶Ğ¸Ğ¼Ğ¾Ğ³Ğ¾.`;
+  if (tab.kind === 'document') return t.documents === 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹' ? 'Ğ”Ğ¾ĞºÑƒĞ¼ĞµĞ½Ñ‚Ñ‹ Ğ¸ Ğ¿Ñ€Ğ¾ÑĞ¼Ğ¾Ñ‚Ñ€: PDF, EPUB, Markdown, Ğ°Ğ½Ğ½Ğ¾Ñ‚Ğ°Ñ†Ğ¸Ğ¸ Ğ¸ Ğ»Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ¾Ğµ Ñ€Ğ°ÑĞ¿Ğ¾Ğ·Ğ½Ğ°Ğ²Ğ°Ğ½Ğ¸Ğµ.' : 'Documents and Reader: PDF, EPUB, Markdown, annotations, and local recognition.';
   if (tab.kind === 'capture') return t.captureHint;
-  if (tab.kind === 'media') return `${t.photos} Â· private timeline, albums, metadata and explicit sharing through typed host adapters.`;
-  if (tab.kind === 'music' || tab.kind === 'video') return `${t.media} Â· the same Keystone object can be opened from chat, community and library.`;
+  if (tab.kind === 'media') return `${t.photos} Â· Ğ»Ğ¸Ñ‡Ğ½Ğ°Ñ Ğ»ĞµĞ½Ñ‚Ğ°, Ğ°Ğ»ÑŒĞ±Ğ¾Ğ¼Ñ‹ Ğ¸ ÑĞ²Ğ½Ñ‹Ğ¹ Ğ¾Ğ±Ğ¼ĞµĞ½.`;
+  if (tab.kind === 'music') return t.music === 'ĞœÑƒĞ·Ñ‹ĞºĞ°' ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ğ°Ñ Ğ¼ÑƒĞ·Ñ‹ĞºĞ°Ğ»ÑŒĞ½Ğ°Ñ Ğ±Ğ¸Ğ±Ğ»Ğ¸Ğ¾Ñ‚ĞµĞºĞ° Ğ¸ Ğ²Ğ¾ÑĞ¿Ñ€Ğ¾Ğ¸Ğ·Ğ²ĞµĞ´ĞµĞ½Ğ¸Ğµ.' : 'Local music library and playback.';
+  if (tab.kind === 'video') return t.video === 'Ğ’Ğ¸Ğ´ĞµĞ¾' ? 'Ğ’Ğ¸Ğ´ĞµĞ¾, Ğ±Ğ¸Ğ±Ğ»Ğ¸Ğ¾Ñ‚ĞµĞºĞ° Ğ¸ Ğ²Ğ¾ÑĞ¿Ñ€Ğ¾Ğ¸Ğ·Ğ²ĞµĞ´ĞµĞ½Ğ¸Ğµ.' : 'Video library and playback.';
+  if (tab.kind === 'shorts') return t.shorts === 'Shorts' ? 'ĞšĞ¾Ñ€Ğ¾Ñ‚ĞºĞ¸Ğµ Ğ²Ğ¸Ğ´ĞµĞ¾ Ğ¸ Ğ¿ĞµÑ€ÑĞ¾Ğ½Ğ°Ğ»ÑŒĞ½Ğ°Ñ Ğ»ĞµĞ½Ñ‚Ğ°.' : 'Short-form video and a personal feed.';
+  if (tab.kind === 'ai') return t.localAI === 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğ¹ AI' ? 'Ğ›Ğ¾ĞºĞ°Ğ»ÑŒĞ½Ñ‹Ğµ Ğ¼Ğ¾Ğ´ĞµĞ»Ğ¸ Ğ±ĞµĞ· Ğ¾Ñ‚Ğ¿Ñ€Ğ°Ğ²ĞºĞ¸ Ğ¿Ñ€Ğ¸Ğ²Ğ°Ñ‚Ğ½Ñ‹Ñ… Ğ·Ğ°Ğ¿Ñ€Ğ¾ÑĞ¾Ğ² Ğ² ÑĞµÑ‚ÑŒ.' : 'Local models without sending private requests to the network.';
+  if (tab.kind === 'network') return t.connectivity === 'Ğ¡Ğ²ÑĞ·ÑŒ' ? 'Ğ¡Ğ¾ÑÑ‚Ğ¾ÑĞ½Ğ¸Ğµ ÑĞµÑ‚Ğ¸ Ğ¸ Ğ´Ğ¾ÑÑ‚ÑƒĞ¿Ğ½Ñ‹Ğµ ÑĞ¿Ğ¾ÑĞ¾Ğ±Ñ‹ ÑĞ¾ĞµĞ´Ğ¸Ğ½ĞµĞ½Ğ¸Ñ.' : 'Network status and available connection methods.';
   return t.placeholderBody;
 }
 
-function tabIcon(kind: DesktopTab['kind']): string {
-  return ({ home: 'âŒ‚', inbox: 'âœ‰', agent: 'âœ¦', chat: 'â—Œ', profile: 'â—', community: 'â—ˆ', space: 'â–¦', vault: 'â–±', graph: 'âŒ˜', canvas: 'â–¡', calendar: 'â–¡', tasks: 'âœ“', contacts: 'â—', map: 'âŒ–', mail: 'âœ‰', file: 'â–¤', document: 'â–¥', music: 'â™ª', playlist: 'â‰¡', video: 'â–¶', publication: 'âœ', workboard: 'â–¥', subscriptions: 'â—´', 'web-library': 'â–¤', settings: 'âš™', browser: 'â—', media: 'â–§', capture: 'ï¼‹', unknown: 'â—‡' })[kind];
+function tabIcon(kind: DesktopTab['kind']): React.ReactNode {
+  const icons: Partial<Record<DesktopTab['kind'], IconName>> = {
+    home: 'home', inbox: 'inbox', agent: 'bot', chat: 'message', profile: 'contacts', community: 'spaces', space: 'spaces', vault: 'vault', graph: 'graph', canvas: 'canvas', calendar: 'calendar', tasks: 'task', contacts: 'contacts', map: 'map', mail: 'mail', file: 'files', document: 'document', music: 'rss', playlist: 'list', video: 'play', shorts: 'play', ai: 'bot', network: 'network', publication: 'edit', workboard: 'board', subscriptions: 'rss', 'web-library': 'book-open', settings: 'settings', browser: 'globe', media: 'image', capture: 'capture', unknown: 'circle',
+  };
+  return <Icon name={icons[kind] ?? 'circle'} size={14} />;
 }
 
 // Named exports make the host extension boundary explicit.  The shell owns

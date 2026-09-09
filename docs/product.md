@@ -200,3 +200,32 @@ provides reachability; it is not a collaborator.
 The [Security](security.md) document is the canonical high-level model, and
 [Release and evidence](release.md) records what has actually been validated on
 each host.
+
+## Desktop first run and links
+
+The desktop starts with a short local setup. It creates the real owner identity
+through the identity service, provisions the current device, and commits the
+profile only after the local runtime can open its durable stores. The setup can
+also save interests, privacy defaults, appearance, an optional local AI
+provider and explicitly selected files. If initialization fails, the pending
+profile, marker and owner-scoped stores are rolled back together; the next
+launch stays in setup.
+
+Once the shell opens, Home, Search, the activity bar and tabs are navigation
+surfaces over the same canonical objects. A tab or a supported Markdown link
+can be copied as a `keystone://` link and opened in the current or a new tab.
+Object routes preserve the object identifier and revision/vault scope when
+present; missing or unauthorized objects open as a locked or unavailable
+surface rather than inventing a new record. See [Keystone links](keystone-links.md)
+for the route grammar and copy/paste behavior.
+
+## Personalization and recovery
+
+The owner can customize the desktop shell from Settings without changing the
+authority model: theme, semantic colors, typography, density, layout, Home
+sections, tabs, motion, shortcuts and supported behavior are typed local
+preferences. Scope inheritance is global → device → workspace → surface →
+window. Presets, undo/redo, scoped reset and safe JSON transfer are available.
+Custom CSS is an explicit local presentation layer with stable
+`data-keystone-*` hooks; remote imports, URLs, scripts and security changes are
+blocked. Safe UI mode disables owner CSS for recovery.
