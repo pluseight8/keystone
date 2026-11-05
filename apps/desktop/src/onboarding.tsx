@@ -98,6 +98,7 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
   const deviceInput = React.useRef<HTMLInputElement>(null);
   const currentStep = steps.indexOf(step);
   const progress = Math.round((currentStep / (steps.length - 1)) * 100);
+  const initials = (clean(avatarInitials, 2) || clean(displayName).split(/\s+/).map(word => word.match(/[\p{L}\p{N}]/u)?.[0] ?? '').join('').slice(0, 2)).toUpperCase();
 
   React.useEffect(() => {
     if (step === 'identity') requestAnimationFrame(() => ownerInput.current?.focus());
@@ -153,7 +154,7 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
       await onComplete({
         displayName: clean(displayName) || 'Вы',
         deviceName: clean(deviceName) || suggestedDeviceName(),
-        ...(clean(avatarInitials, 2) ? { avatarInitials: clean(avatarInitials, 2).toUpperCase() } : {}),
+        ...(initials ? { avatarInitials: initials } : {}),
         localAi,
         ...(localAi ? { aiProviderKind } : {}),
         ...(normalizedEndpoint ? { aiEndpoint: normalizedEndpoint } : {}),
@@ -191,25 +192,31 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
         <span className="onboarding-private-label"><Icon name="shield-check" size={14}/> Приватно по умолчанию</span>
       </header>
       <div className="onboarding-progress" role="progressbar" aria-label={`Настройка ${progress}%`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}><span style={{ width: `${progress}%` }}/></div>
-      <div className="onboarding-content">
+      <div className="onboarding-content" onKeyDown={event => {
+        // Enter in a text field advances like the primary button; selects, checkboxes and buttons keep native behaviour.
+        const target = event.target as HTMLElement;
+        if (event.key !== 'Enter' || event.nativeEvent.isComposing || !(target instanceof HTMLInputElement) || target.type === 'checkbox') return;
+        event.preventDefault();
+        event.currentTarget.querySelector<HTMLButtonElement>('.onboarding-primary:not(:disabled)')?.click();
+      }}>
         <p className="onboarding-eyebrow">Настройка Keystone</p>
         <h1 id="onboarding-title">{title}</h1>
 
         {step === 'welcome' && <div className="onboarding-welcome">
           <p className="onboarding-lead">Keystone объединяет ваши файлы, документы, задачи, медиа и локальные инструменты в одном спокойном рабочем пространстве.</p>
           <div className="onboarding-welcome-preview"><span><Icon name="files" size={17}/> Файлы</span><span><Icon name="document" size={17}/> Документы</span><span><Icon name="task" size={17}/> Задачи</span><span><Icon name="bot" size={17}/> AI</span></div>
-          <div className="onboarding-form-actions onboarding-welcome-actions"><button className="onboarding-primary" type="button" onClick={() => go('identity')}>Настроить Keystone <Icon name="arrow-right" size={16}/></button><button className="onboarding-secondary" type="button" onClick={() => go('identity')}>Сначала посмотреть</button></div>
-          <p className="onboarding-footnote">Около пяти минут. Всё можно изменить позже в настройках.</p>
+          <div className="onboarding-form-actions onboarding-welcome-actions"><button className="onboarding-primary" type="button" onClick={() => go('identity')}>Настроить Keystone <Icon name="arrow-right" size={16}/></button><button className="onboarding-secondary" type="button" onClick={() => go('ready')}>Пропустить, оставить по умолчанию</button></div>
+          <p className="onboarding-footnote">Около минуты. Всё можно изменить позже в настройках.</p>
         </div>}
 
         {step === 'identity' && <div className="onboarding-form">
           <p className="onboarding-lead">Имя показывается только в этом устройстве и в ваших локальных объектах. Его можно оставить пустым.</p>
-          <div className="onboarding-identity-row"><div className="onboarding-avatar" aria-hidden>{clean(avatarInitials, 2).toUpperCase() || '·'}</div><div className="onboarding-avatar-fields"><label htmlFor="profile-name">Имя</label><input ref={ownerInput} id="profile-name" value={displayName} onChange={event => setDisplayName(event.target.value)} maxLength={80} autoComplete="name" placeholder="Например, Мария"/><label htmlFor="profile-avatar">Инициалы аватара <span>(необязательно)</span></label><input id="profile-avatar" value={avatarInitials} onChange={event => setAvatarInitials(event.target.value.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2))} maxLength={2} placeholder="MK"/></div></div>
+          <div className="onboarding-identity-row"><div className="onboarding-avatar" aria-hidden>{initials || '·'}</div><div className="onboarding-avatar-fields"><label htmlFor="profile-name">Имя</label><input ref={ownerInput} id="profile-name" value={displayName} onChange={event => setDisplayName(event.target.value)} maxLength={80} autoComplete="name" placeholder="Например, Мария"/><label htmlFor="profile-avatar">Инициалы аватара <span>(необязательно)</span></label><input id="profile-avatar" value={avatarInitials} onChange={event => setAvatarInitials(event.target.value.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2))} maxLength={2} placeholder="MK"/></div></div>
           <OnboardingActions onBack={back} onNext={() => go('device')} next="Продолжить"/>
         </div>}
 
         {step === 'device' && <div className="onboarding-form">
-          <p className="onboarding-lead">Это имя поможет отличить устройство, когда вы позже добавите continuity или обмен рядом.</p>
+          <p className="onboarding-lead">Это имя поможет отличить устройство, когда вы позже подключите другие устройства или обмен рядом.</p>
           <label htmlFor="device-name">Имя устройства</label><input ref={deviceInput} id="device-name" value={deviceName} onChange={event => setDeviceName(event.target.value)} maxLength={80} autoComplete="off" placeholder={suggestedDeviceName()}/>
           <p className="onboarding-inline-note"><Icon name="device" size={15}/> Обнаружено: {suggestedDeviceName()}</p>
           <OnboardingActions onBack={back} onNext={() => { if (!clean(deviceName)) setDeviceName(suggestedDeviceName()); go('focus'); }} next="Продолжить"/>
@@ -251,7 +258,7 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
           <OnboardingActions onBack={back} onNext={() => go('ready')} next="Посмотреть итог"/>
         </div>}
 
-        {step === 'ready' && <div className="onboarding-ready"><div className="onboarding-ready-icon" aria-hidden><Icon name="check-circle" size={25}/></div><p className="onboarding-lead">Создадим настоящую локальную identity, сохраним устройство и откроем ваш Home.</p><dl><div><dt>Владелец</dt><dd>{clean(displayName) || 'Вы'}</dd></div><div><dt>Устройство</dt><dd>{clean(deviceName) || suggestedDeviceName()}</dd></div><div><dt>Интересы</dt><dd>{interests.includes('everything') ? 'Все разделы' : `${interests.length} выбрано`}</dd></div><div><dt>Импорт</dt><dd>{imports.length ? `${imports.length} файл(а)` : 'Позже'}</dd></div><div><dt>AI</dt><dd>{localAi ? (aiStatus === 'found' ? `Локальный провайдер · ${aiModel}` : 'Настроить после входа') : 'Позже'}</dd></div><div><dt>Вид</dt><dd>{theme === 'system' ? 'Системная тема' : theme === 'light' ? 'Светлая тема' : 'Тёмная тема'} · {density === 'compact' ? 'компактно' : 'комфортно'}</dd></div></dl><div className="onboarding-form-actions"><button className="onboarding-secondary" type="button" onClick={back}>Назад</button><button className="onboarding-primary" type="button" onClick={() => void finish()} disabled={busy} aria-busy={busy}>{busy ? 'Создаём пространство…' : 'Открыть Keystone'} <Icon name="arrow-right" size={16}/></button></div></div>}
+        {step === 'ready' && <div className="onboarding-ready"><div className="onboarding-ready-icon" aria-hidden><Icon name="check-circle" size={25}/></div><p className="onboarding-lead">Создадим локальный профиль с ключом этого устройства и откроем главную.</p><dl><div><dt>Владелец</dt><dd>{clean(displayName) || 'Вы'}</dd></div><div><dt>Устройство</dt><dd>{clean(deviceName) || suggestedDeviceName()}</dd></div><div><dt>Интересы</dt><dd>{interests.includes('everything') ? 'Все разделы' : `${interests.length} выбрано`}</dd></div><div><dt>Импорт</dt><dd>{imports.length ? `${imports.length} файл(а)` : 'Позже'}</dd></div><div><dt>AI</dt><dd>{localAi ? (aiStatus === 'found' ? `Локальный провайдер · ${aiModel}` : 'Настроить после входа') : 'Позже'}</dd></div><div><dt>Вид</dt><dd>{theme === 'system' ? 'Системная тема' : theme === 'light' ? 'Светлая тема' : 'Тёмная тема'} · {density === 'compact' ? 'компактно' : 'комфортно'}</dd></div></dl><div className="onboarding-form-actions"><button className="onboarding-secondary" type="button" onClick={back}>Назад</button><button className="onboarding-primary" type="button" onClick={() => void finish()} disabled={busy} aria-busy={busy}>{busy ? 'Создаём пространство…' : 'Открыть Keystone'} <Icon name="arrow-right" size={16}/></button></div></div>}
         {error && <p className="onboarding-error" role="alert">{error}</p>}
       </div>
       <footer className="onboarding-footer"><span>Без облачной учётной записи</span><span>Настройки можно изменить позже</span></footer>
