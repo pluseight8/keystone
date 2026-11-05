@@ -66,7 +66,8 @@ describe('real Hyperswarm network validation', () => {
       const seeds = { alice: aliceSeed, alice_device: (await IdentityManager.generate()).masterSeed, alice_phone: aliceSeed, alice_tablet: aliceSeed, bob: (await IdentityManager.generate()).masterSeed, charlie: (await IdentityManager.generate()).masterSeed, mallory: (await IdentityManager.generate()).masterSeed } as Record<Role, string>;
       const configPath = join(root, 'network.json'); await atomicWrite(configPath, { root, bootstrap: `127.0.0.1:${port}`, seeds });
       let alice = await startPeer('alice', configPath); let aliceDevice = await startPeer('alice_device', configPath); const alicePhone = await startPeer('alice_phone', configPath); const aliceTablet = await startPeer('alice_tablet', configPath); const bob = await startPeer('bob', configPath); let charlie = await startPeer('charlie', configPath); const mallory = await startPeer('mallory', configPath);
-      const first = await command(root, 'alice', { action: 'sendText', peer: 'bob', text: 'signed over Noise' }); await eventually(async () => (await command(root, 'bob', { action: 'history', peer: 'alice' })).result.messages.some((message: { id: string }) => message.id === first.result.id));
+      const first = await command(root, 'alice', { action: 'sendText', peer: 'bob', text: 'signed over Noise' }); // The first message also waits for seven freshly started peers to discover each other over the DHT.
+      await eventually(async () => (await command(root, 'bob', { action: 'history', peer: 'alice' })).result.messages.some((message: { id: string }) => message.id === first.result.id), 30_000);
       const aliceContext = await command(root, 'alice', { action: 'contextRead', text: 'signed over Noise' }); expect(aliceContext.result.status).toBe('found'); expect(aliceContext.result.citations.map((value: { objectId: string }) => value.objectId)).toContain(first.result.id);
       await command(root, 'alice', { action: 'replayLast', peer: 'bob' }); await pause(250);
       expect((await command(root, 'bob', { action: 'history', peer: 'alice' })).result.messages.filter((message: { id: string }) => message.id === first.result.id)).toHaveLength(1);
@@ -279,6 +280,8 @@ describe('real Hyperswarm network validation', () => {
       const phase24 = await command(root, 'alice', { action: 'communityPhase24Create', members: ['bob', 'charlie'] });
       const phaseCommunityId = phase24.result.communityId as string; const phaseChannelId = phase24.result.channelId as string; const phaseEvents = phase24.result.eventIds as string[];
       await eventually(async () => { const state = (await command(root, 'bob', { action: 'communityPhase24Read', communityId: phaseCommunityId })).result; return state?.members.some((member: { identity: string; active: boolean }) => member.active); });
+      // Charlie can only join after the community itself has replicated to Charlie's device.
+      await eventually(async () => (await command(root, 'charlie', { action: 'communityPhase24Read', communityId: phaseCommunityId })).result?.communityId === phaseCommunityId, 20_000);
       const charlieJoin = await command(root, 'charlie', { action: 'communityPhase24Join', peer: 'alice', communityId: phaseCommunityId });
       await command(root, 'alice', { action: 'communityPhase24Relay', peer: 'bob', communityId: phaseCommunityId, messageId: charlieJoin.result.eventId });
       const aliceIdentity = (await command(root, 'alice', { action: 'socialRead' })).result.identity as string;

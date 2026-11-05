@@ -70,7 +70,8 @@ export class CommunityReplicationService {
     const community = event.type === 'community'
       ? event
       : (await this.communities.projection(communityId))?.community;
-    if (!community || community.visibility !== 'public') {
+    if (!community) throw new Error('Community is not known on this device yet');
+    if (community.visibility !== 'public') {
       throw new Error('Community replication currently supports public communities only');
     }
   }
