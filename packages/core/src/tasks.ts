@@ -210,7 +210,8 @@ export interface CreateTaskInput {
 
 export interface UpdateTaskInput {
   readonly title?: string;
-  readonly note?: string;
+  /** `null` explicitly clears an existing note; `undefined` leaves it unchanged. */
+  readonly note?: string | null;
   readonly listId?: TaskListId | string;
   readonly start?: TaskDateInput | null;
   readonly due?: TaskDateInput | null;
@@ -707,7 +708,7 @@ export class TaskService {
     const next: Task = {
       ...current,
       ...(patch.title === undefined ? {} : { title: boundedUserText(patch.title, 4_000, 'Task title') }),
-      ...(patch.note === undefined ? {} : { note: boundedUserText(patch.note, 64_000, 'Task note') }),
+      ...(patch.note === undefined ? {} : { note: patch.note === null ? undefined : boundedUserText(patch.note, 64_000, 'Task note') }),
       ...(patch.listId === undefined ? {} : { listId: targetList.id, orderKey: this.orderKeyFor(targetList.id) }),
       ...(patch.start === undefined ? {} : { start: patch.start === null ? undefined : normalizeDate(patch.start, this.defaultTimezone) }),
       ...(patch.due === undefined ? {} : { due: patch.due === null ? undefined : normalizeDate(patch.due, this.defaultTimezone) }),

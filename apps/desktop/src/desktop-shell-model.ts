@@ -1,3 +1,6 @@
+import { emitDesktopWindowTransfer } from './desktop-window-transfer';
+import type { DesktopWindowTransferStart } from './desktop-window-transfer';
+
 /**
  * Model layer for the unified desktop shell.
  *
@@ -28,6 +31,9 @@ export type DesktopObjectKind =
   | 'music'
   | 'playlist'
   | 'video'
+  | 'shorts'
+  | 'ai'
+  | 'network'
   | 'publication'
   | 'workboard'
   | 'subscriptions'
@@ -43,6 +49,8 @@ export type DesktopVisibility = 'public' | 'contacts' | 'community' | 'private';
 export interface KeystoneObjectReference {
   kind: DesktopObjectKind;
   id: string;
+  /** Bounded local query for search/settings routes; never includes secrets. */
+  query?: string;
   /** Exact immutable publication revision, when the route points to one. */
   revisionAddress?: string;
   label?: string;
@@ -157,6 +165,66 @@ export interface WorkspaceRecord {
   updatedAt: number;
 }
 
+/** Native windows are views over one workspace record.  The registry stores
+ * ownership and window-local chrome, never a second copy of Keystone data. */
+export interface DesktopWindowGeometry {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  maximized?: boolean;
+  fullscreen?: boolean;
+}
+
+export interface DesktopWindowRecord {
+  id: string;
+  workspaceId: string;
+  tabIds: string[];
+  activeTabId?: string;
+  paneTree?: PaneNode;
+  activePaneId?: string;
+  chrome?: WorkspaceChromeState;
+  geometry?: DesktopWindowGeometry;
+  primary: boolean;
+  updatedAt: number;
+}
+
+export interface DesktopWindowStorageEnvelope {
+  version: 2;
+  primaryWindowId: string;
+  windows: DesktopWindowRecord[];
+}
+
+export interface DesktopWindowTransferCommit {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly sourceWindowId: string;
+  readonly targetWindowId: string;
+  readonly sourceIndex: number;
+  readonly targetIndex: number;
+  readonly source: DesktopWindowRecord;
+  readonly target: DesktopWindowRecord;
+}
+
+export interface DesktopWindowOpenRequest {
+  windowId: string;
+  tabId: string;
+  title: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  maximized?: boolean;
+  fullscreen?: boolean;
+}
+
+export interface DesktopWindowBridge {
+  open: (request: DesktopWindowOpenRequest) => Promise<boolean> | boolean;
+  focus: (windowId: string) => Promise<void> | void;
+  close?: (windowId: string) => Promise<void> | void;
+  closeSelf?: () => Promise<void> | void;
+}
+
 export interface DesktopShellSnapshot {
   workspace: WorkspaceRecord;
   navigation: NavigationEntry[];
@@ -175,9 +243,40 @@ export interface DesktopStorage {
 const WORKSPACES_KEY = 'keystone.desktop.workspaces.v1';
 const CURRENT_WORKSPACE_KEY = 'keystone.desktop.current-workspace.v1';
 const STARTUP_SURFACE_KEY = 'keystone.desktop.startup-surface.v1';
+export const DESKTOP_WINDOW_REGISTRY_KEY = 'keystone.desktop.window-registry.v1';
+export const DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY = 'keystone.desktop.window-registry.quarantine.v1';
+export const PRIMARY_DESKTOP_WINDOW_ID = 'main';
+export const DESKTOP_QUICK_CAPTURE_EVENT = 'keystone:open-quick-capture';
 const MAX_CLOSED_TABS = 32;
 const MAX_NAVIGATION = 100;
 const MAX_SPLIT_DEPTH = 3;
+const SINGLETON_TAB_KEYS = new Set([
+  'home:home',
+  'settings:settings',
+  'settings:search',
+  'settings:device',
+  'settings:customize',
+  'settings:continuity',
+  'settings:nearby',
+  'settings:plugins',
+  'music:music',
+  'video:video',
+  'shorts:shorts',
+  'ai:ai',
+  'network:network',
+  'tasks:tasks',
+  'document:documents',
+  'document:document',
+  'file:files',
+  'file:file',
+  'inbox:inbox',
+  'map:map',
+  'mail:mail',
+  'media:photos',
+  'media:calls',
+  'subscriptions:subscriptions',
+  'web-library:web-library',
+]);
 const KNOWN_OBJECT_KINDS = new Set<DesktopObjectKind>([
   'home',
   'inbox',
@@ -199,6 +298,9 @@ const KNOWN_OBJECT_KINDS = new Set<DesktopObjectKind>([
   'music',
   'playlist',
   'video',
+  'shorts',
+  'ai',
+  'network',
   'publication',
   'workboard',
   'subscriptions',
@@ -208,6 +310,8 @@ const KNOWN_OBJECT_KINDS = new Set<DesktopObjectKind>([
   'media',
   'capture',
 ]);
+const LEGACY_DEMO_IDS = new Set(['agent-bot', 'profile-bob', 'chat-bob', 'file-trip-plan', 'space-trip', 'agent-orbit', 'file-shared', 'space-chat', 'chat-file', 'space-file']);
+const ACTIVITY_ITEM_IDS = new Set(['home', 'search', 'music', 'video', 'shorts', 'ai', 'network', 'capture', 'tasks', 'document', 'device', 'settings', 'inbox', 'agent', 'chat', 'space', 'vault', 'graph', 'canvas', 'calendar', 'contacts', 'map', 'mail', 'file', 'media', 'calls', 'workboard', 'subscriptions', 'web-library', 'continuity', 'nearby', 'plugins']);
 
 let sequence = 0;
 function id(prefix: string): string {
@@ -255,6 +359,9 @@ export function objectTitle(ref: KeystoneObjectReference): string {
     music: 'Music',
     playlist: 'Playlist',
     video: 'Video',
+    shorts: 'Shorts',
+    ai: 'Local AI',
+    network: 'Connectivity',
     publication: 'Publication',
     workboard: 'Workboard',
     subscriptions: 'Subscriptions',
@@ -286,57 +393,65 @@ export function browserTab(url: string, title = 'Browser', browserSessionId?: st
 
 export function defaultActivityBar(): ActivityBarItem[] {
   return [
-    { id: 'home', kind: 'home', label: 'Home', icon: '⌂', visible: true, pinned: true },
-    { id: 'inbox', kind: 'inbox', label: 'Inbox', icon: '✉', visible: true, pinned: true },
-    { id: 'search', kind: 'search', label: 'Search', icon: '⌕', visible: true, pinned: true },
-    { id: 'agent', kind: 'agent', label: 'Agent Bot', icon: '✦', visible: true, pinned: true },
-    { id: 'chat', kind: 'chat', label: 'Messages', icon: '◌', visible: true, pinned: true },
-    { id: 'space', kind: 'space', label: 'Spaces', icon: '▦', visible: true, pinned: true },
-    { id: 'vault', kind: 'vault', label: 'Vault', icon: '▱', visible: true, pinned: false },
-    { id: 'graph', kind: 'graph', label: 'Graph', icon: '⌘', visible: true, pinned: false },
-    { id: 'canvas', kind: 'canvas', label: 'Canvas', icon: '□', visible: true, pinned: false },
-    { id: 'calendar', kind: 'calendar', label: 'Calendar', icon: '□', visible: true, pinned: false },
-    { id: 'tasks', kind: 'tasks', label: 'Tasks', icon: '✓', visible: true, pinned: false },
-    { id: 'contacts', kind: 'contacts', label: 'Contacts', icon: '◎', visible: true, pinned: false },
-    { id: 'map', kind: 'map', label: 'Maps', icon: '⌖', visible: true, pinned: false },
-    { id: 'mail', kind: 'mail', label: 'External Email', icon: '✉', visible: true, pinned: false },
-    { id: 'file', kind: 'file', label: 'Files', icon: '▤', visible: true, pinned: false },
-    { id: 'document', kind: 'document', label: 'Documents', icon: '▥', visible: true, pinned: false },
-    { id: 'media', kind: 'media', label: 'Photos', icon: '▧', visible: true, pinned: false },
-    { id: 'capture', kind: 'capture', label: 'Quick Capture', icon: '＋', visible: true, pinned: true },
-    { id: 'calls', kind: 'media', label: 'Calls', icon: '☎', visible: true, pinned: false },
-    { id: 'workboard', kind: 'workboard', label: 'Workboard', icon: '▥', visible: true, pinned: false },
-    { id: 'subscriptions', kind: 'subscriptions', label: 'Subscriptions', icon: '◴', visible: true, pinned: false },
-    { id: 'web-library', kind: 'web-library', label: 'Web Library', icon: '▤', visible: true, pinned: false },
-    { id: 'continuity', kind: 'settings', label: 'Continuity', icon: '⇆', visible: true, pinned: false },
-    { id: 'nearby', kind: 'settings', label: 'Nearby Exchange', icon: '⇄', visible: true, pinned: false },
-    { id: 'plugins', kind: 'plugins', label: 'Plugins', icon: '⊞', visible: true, pinned: false, extensionSlot: true },
-    { id: 'settings', kind: 'settings', label: 'Settings', icon: '⚙', visible: true, pinned: false },
+    { id: 'home', kind: 'home', label: 'Home', icon: 'home', visible: true, pinned: true },
+    { id: 'search', kind: 'search', label: 'Search', icon: 'search', visible: true, pinned: true },
+    { id: 'music', kind: 'music', label: 'Music', icon: 'rss', visible: true, pinned: true },
+    { id: 'video', kind: 'video', label: 'Video', icon: 'play', visible: true, pinned: true },
+    { id: 'shorts', kind: 'shorts', label: 'Shorts', icon: 'play', visible: false, pinned: false },
+    { id: 'ai', kind: 'ai', label: 'Local AI', icon: 'bot', visible: false, pinned: false },
+    { id: 'network', kind: 'network', label: 'Connectivity', icon: 'network', visible: false, pinned: false },
+    { id: 'capture', kind: 'capture', label: 'Quick Capture', icon: 'capture', visible: true, pinned: true },
+    { id: 'tasks', kind: 'tasks', label: 'Tasks', icon: 'task', visible: true, pinned: true },
+    { id: 'document', kind: 'document', label: 'Documents', icon: 'document', visible: true, pinned: true },
+    { id: 'device', kind: 'settings', label: 'Device', icon: 'device', visible: false, pinned: false },
+    { id: 'settings', kind: 'settings', label: 'Settings', icon: 'settings', visible: true, pinned: false },
+    { id: 'inbox', kind: 'inbox', label: 'Inbox', icon: 'inbox', visible: false, pinned: false },
+    { id: 'agent', kind: 'agent', label: 'Agent Bot', icon: 'bot', visible: false, pinned: false },
+    { id: 'chat', kind: 'chat', label: 'Messages', icon: 'message', visible: false, pinned: false },
+    { id: 'space', kind: 'space', label: 'Spaces', icon: 'spaces', visible: false, pinned: false },
+    { id: 'vault', kind: 'vault', label: 'Vault', icon: 'vault', visible: false, pinned: false },
+    { id: 'graph', kind: 'graph', label: 'Graph', icon: 'graph', visible: false, pinned: false },
+    { id: 'canvas', kind: 'canvas', label: 'Canvas', icon: 'canvas', visible: false, pinned: false },
+    { id: 'calendar', kind: 'calendar', label: 'Calendar', icon: 'calendar', visible: false, pinned: false },
+    { id: 'contacts', kind: 'contacts', label: 'Contacts', icon: 'contacts', visible: false, pinned: false },
+    { id: 'map', kind: 'map', label: 'Maps', icon: 'map', visible: false, pinned: false },
+    { id: 'mail', kind: 'mail', label: 'External Email', icon: 'mail', visible: false, pinned: false },
+    { id: 'file', kind: 'file', label: 'Files', icon: 'files', visible: false, pinned: false },
+    { id: 'media', kind: 'media', label: 'Photos', icon: 'image', visible: false, pinned: false },
+    { id: 'calls', kind: 'media', label: 'Calls', icon: 'phone', visible: false, pinned: false },
+    { id: 'workboard', kind: 'workboard', label: 'Workboard', icon: 'board', visible: false, pinned: false },
+    { id: 'subscriptions', kind: 'subscriptions', label: 'Subscriptions', icon: 'rss', visible: false, pinned: false },
+    { id: 'web-library', kind: 'web-library', label: 'Web Library', icon: 'book-open', visible: false, pinned: false },
+    { id: 'continuity', kind: 'settings', label: 'Continuity', icon: 'device', visible: false, pinned: false },
+    { id: 'nearby', kind: 'settings', label: 'Nearby Exchange', icon: 'nearby', visible: false, pinned: false },
+    { id: 'plugins', kind: 'plugins', label: 'Plugins', icon: 'plugins', visible: false, pinned: false, extensionSlot: true },
   ];
 }
 
 export function defaultPaneTree(): PaneNode {
   const home = tabForReference({ kind: 'home', id: 'home', label: 'Home' }, { pinned: true });
-  const agent = tabForReference({ kind: 'agent', id: 'agent-bot', label: 'Agent Bot' }, { pinned: true });
   // Keep the initial layout compact: the shell can split it without creating
   // a second model or copying either object.
-  return { type: 'leaf', id: createPaneId(), tabIds: [home.id, agent.id], activeTabId: home.id };
+  return { type: 'leaf', id: createPaneId(), tabIds: [home.id], activeTabId: home.id };
 }
 
 function defaultRecord(name = 'Personal'): WorkspaceRecord {
   const home = tabForReference({ kind: 'home', id: 'home', label: 'Home' }, { pinned: true });
-  const agent = tabForReference({ kind: 'agent', id: 'agent-bot', label: 'Agent Bot' }, { pinned: true });
-  const paneTree: PaneNode = { type: 'leaf', id: createPaneId(), tabIds: [home.id, agent.id], activeTabId: home.id };
+  const paneTree: PaneNode = { type: 'leaf', id: createPaneId(), tabIds: [home.id], activeTabId: home.id };
   return {
     id: createWorkspaceId(),
     name,
-    tabs: [home, agent],
+    tabs: [home],
     closedTabs: [],
     paneTree,
     activePaneId: paneTree.id,
-    chrome: { contextSidebarOpen: true, agentPanelOpen: false, activityBar: defaultActivityBar(), contextSidebarWidth: 280, agentPanelWidth: 360 },
+    chrome: defaultWorkspaceChrome(),
     updatedAt: now(),
   };
+}
+
+function defaultWorkspaceChrome(): WorkspaceChromeState {
+  return { contextSidebarOpen: false, agentPanelOpen: false, activityBar: defaultActivityBar(), contextSidebarWidth: 280, agentPanelWidth: 360 };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -386,6 +501,7 @@ function safeBrowserOrigin(value: string): string {
 function sanitizeRef(value: unknown): KeystoneObjectReference | undefined {
   if (!isRecord(value) || typeof value.id !== 'string' || !value.id.trim()) return undefined;
   const ref: KeystoneObjectReference = { kind: safeKind(value.kind), id: value.id.slice(0, 256) };
+  if (typeof value.query === 'string' && value.query.trim()) ref.query = value.query.trim().slice(0, 256);
   if (ref.kind === 'publication' && typeof value.revisionAddress === 'string' && /^sha256-[a-f0-9]{64}$/i.test(value.revisionAddress)) ref.revisionAddress = value.revisionAddress;
   if (typeof value.label === 'string') ref.label = value.label.slice(0, 120);
   const visibility = safeVisibility(value.visibility);
@@ -395,17 +511,25 @@ function sanitizeRef(value: unknown): KeystoneObjectReference | undefined {
 
 function sanitizeTab(value: unknown): DesktopTab | undefined {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.title !== 'string') return undefined;
+  if (LEGACY_DEMO_IDS.has(value.id)) return undefined;
   const kind = safeKind(value.kind);
   const tab: DesktopTab = {
     id: value.id.slice(0, 128),
     kind,
-    title: value.title.slice(0, 120),
+    title: value.title.trim().slice(0, 120),
     pinned: value.pinned === true,
     dirty: value.dirty === true,
     createdAt: typeof value.createdAt === 'number' ? value.createdAt : now(),
   };
   const ref = sanitizeRef(value.object);
-  if (ref) tab.object = ref;
+  if (ref && LEGACY_DEMO_IDS.has(ref.id)) return undefined;
+  if (ref) {
+    tab.object = ref;
+    // The reference is the source of truth for a rendered object surface.
+    // Repair stale sessions where an old tab kind disagreed with its route.
+    tab.kind = ref.kind;
+    if (!tab.title) tab.title = objectTitle(ref);
+  }
   const url = sanitizeUrlForPersistence(typeof value.url === 'string' ? value.url : undefined);
   if (url) tab.url = url;
   if (typeof value.browserSessionId === 'string' && value.browserSessionId.length <= 256 && !/[\u0000-\u001f]/.test(value.browserSessionId)) tab.browserSessionId = value.browserSessionId;
@@ -414,7 +538,41 @@ function sanitizeTab(value: unknown): DesktopTab | undefined {
   if (value.browserDataClass === 'PUBLIC' || value.browserDataClass === 'USER_EXPLICIT' || value.browserDataClass === 'PRIVATE' || value.browserDataClass === 'SECRET') tab.browserDataClass = value.browserDataClass;
   if (value.browserActivity === 'IDLE' || value.browserActivity === 'OBSERVING' || value.browserActivity === 'NAVIGATING' || value.browserActivity === 'ACTING' || value.browserActivity === 'WAITING' || value.browserActivity === 'PAUSED' || value.browserActivity === 'NEEDS_CONFIRMATION' || value.browserActivity === 'FAILED') tab.browserActivity = value.browserActivity;
   if (value.locked === true) tab.locked = true;
+  if (!tab.title || tab.kind === 'unknown' || (!tab.object && tab.kind !== 'browser')) return undefined;
   return tab;
+}
+
+function singletonTabKey(tab: DesktopTab): string | undefined {
+  if (!tab.object) return undefined;
+  const key = `${tab.object.kind}:${tab.object.id}`;
+  return SINGLETON_TAB_KEYS.has(key) ? key : undefined;
+}
+
+/**
+ * Repair session presentation state without touching the object stores. Old
+ * builds could leave duplicate singleton routes, duplicate tab ids, or a
+ * persistent Quick Capture tray behind. These are tabs only; removing them
+ * cannot remove owner data, tasks, documents, or captured payloads.
+ */
+function normalizeSessionTabs(tabs: DesktopTab[], closedTabs: DesktopTab[]): { tabs: DesktopTab[]; closedTabs: DesktopTab[] } {
+  const active: DesktopTab[] = [];
+  const closed: DesktopTab[] = [];
+  const seenIds = new Set<string>();
+  const seenSingletons = new Set<string>();
+  const append = (tab: DesktopTab, target: DesktopTab[]): void => {
+    if (seenIds.has(tab.id) || tab.kind === 'unknown') return;
+    // Quick Capture is an overlay. A legacy persistent tray tab is only a
+    // stale presentation record; captured items remain in CaptureService.
+    if (tab.kind === 'capture' && tab.object?.id === 'capture') return;
+    const singleton = singletonTabKey(tab);
+    if (singleton && seenSingletons.has(singleton)) return;
+    seenIds.add(tab.id);
+    if (singleton) seenSingletons.add(singleton);
+    target.push(tab);
+  };
+  for (const tab of tabs) append(tab, active);
+  for (const tab of closedTabs) append(tab, closed);
+  return { tabs: active.slice(0, 100), closedTabs: closed.slice(0, MAX_CLOSED_TABS) };
 }
 
 function sanitizePane(value: unknown): PaneNode | undefined {
@@ -433,21 +591,27 @@ function sanitizePane(value: unknown): PaneNode | undefined {
 
 function sanitizeActivityBar(value: unknown): ActivityBarItem[] {
   if (!Array.isArray(value)) return defaultActivityBar();
+  const canonicalIcons = new Map(defaultActivityBar().map(item => [item.id, item.icon]));
   const seen = new Set<string>();
   const items = value.flatMap(entry => {
     if (!isRecord(entry) || typeof entry.id !== 'string' || typeof entry.label !== 'string' || typeof entry.icon !== 'string' || seen.has(entry.id)) return [];
     seen.add(entry.id);
-    const item: ActivityBarItem = { id: entry.id.slice(0, 80), kind: entry.kind === 'search' || entry.kind === 'plugins' ? entry.kind : safeKind(entry.kind), label: entry.label.slice(0, 80), icon: entry.icon.slice(0, 4), visible: entry.visible !== false, pinned: entry.pinned === true };
+    if (!ACTIVITY_ITEM_IDS.has(entry.id)) return [];
+    const item: ActivityBarItem = { id: entry.id.slice(0, 80), kind: entry.kind === 'search' || entry.kind === 'plugins' ? entry.kind : safeKind(entry.kind), label: entry.label.slice(0, 80), icon: canonicalIcons.get(entry.id) ?? entry.icon.slice(0, 32), visible: entry.visible !== false, pinned: entry.pinned === true };
     if (entry.extensionSlot === true) item.extensionSlot = true;
     return [item];
   });
+  for (const fallback of defaultActivityBar()) if (!seen.has(fallback.id)) items.push(fallback);
   return items.length ? items.slice(0, 32) : defaultActivityBar();
 }
 
 function sanitizeRecord(value: unknown): WorkspaceRecord | undefined {
   if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string') return undefined;
-  const tabs = Array.isArray(value.tabs) ? value.tabs.flatMap(tab => { const safe = sanitizeTab(tab); return safe ? [safe] : []; }).slice(0, 100) : [];
-  const closedTabs = Array.isArray(value.closedTabs) ? value.closedTabs.flatMap(tab => { const safe = sanitizeTab(tab); return safe ? [safe] : []; }).slice(0, MAX_CLOSED_TABS) : [];
+  const rawTabs = Array.isArray(value.tabs) ? value.tabs.flatMap(tab => { const safe = sanitizeTab(tab); return safe ? [safe] : []; }) : [];
+  const rawClosedTabs = Array.isArray(value.closedTabs) ? value.closedTabs.flatMap(tab => { const safe = sanitizeTab(tab); return safe ? [safe] : []; }) : [];
+  const normalized = normalizeSessionTabs(rawTabs, rawClosedTabs);
+  const tabs = normalized.tabs;
+  const closedTabs = normalized.closedTabs;
   const paneTree = sanitizePane(value.paneTree);
   if (!paneTree) return undefined;
   const tabIds = new Set(tabs.map(tab => tab.id));
@@ -462,7 +626,7 @@ function sanitizeRecord(value: unknown): WorkspaceRecord | undefined {
     paneTree: cleanTree,
     activePaneId: typeof value.activePaneId === 'string' && findLeaf(cleanTree, value.activePaneId) ? value.activePaneId : leaf.id,
     chrome: {
-      contextSidebarOpen: chromeRecord.contextSidebarOpen !== false,
+      contextSidebarOpen: chromeRecord.contextSidebarOpen === true,
       agentPanelOpen: chromeRecord.agentPanelOpen === true,
       activityBar: sanitizeActivityBar(chromeRecord.activityBar),
       contextSidebarWidth: boundedWidth(chromeRecord.contextSidebarWidth, 280),
@@ -483,6 +647,11 @@ function filterPaneTabs(node: PaneNode, validIds: Set<string>): PaneNode {
     return { type: 'leaf', id: node.id, tabIds, ...(activeTabId ? { activeTabId } : {}) };
   }
   return { ...node, first: filterPaneTabs(node.first, validIds), second: filterPaneTabs(node.second, validIds) };
+}
+
+function paneTreeForTabs(tabs: DesktopTab[]): PaneNode {
+  const tabIds = tabs.map(tab => tab.id);
+  return { type: 'leaf', id: createPaneId(), tabIds, ...(tabIds[0] ? { activeTabId: tabIds[0] } : {}) };
 }
 
 function firstLeaf(node: PaneNode): Extract<PaneNode, { type: 'leaf' }> {
@@ -543,6 +712,19 @@ export class TabManager {
     return { ...tab, object: tab.object ? { ...tab.object } : undefined };
   }
 
+  /** Remove a tab from the current window without placing it in Reopen. */
+  take(tabId: string): DesktopTab | undefined {
+    const tab = this.tabsById.get(tabId);
+    if (!tab) return undefined;
+    this.tabsById.delete(tabId);
+    this.order = this.order.filter(idValue => idValue !== tabId);
+    return { ...tab, object: tab.object ? { ...tab.object } : undefined };
+  }
+
+  findByReference(ref: KeystoneObjectReference): DesktopTab | undefined {
+    return this.list().find(tab => tab.object?.kind === ref.kind && tab.object.id === ref.id);
+  }
+
   reopen(): DesktopTab | undefined {
     const tab = this.closed.shift();
     if (!tab) return undefined;
@@ -591,8 +773,13 @@ export class TabManager {
   reorder(tabId: string, targetIndex: number): boolean {
     const currentIndex = this.order.indexOf(tabId);
     if (currentIndex < 0) return false;
+    const tab = this.tabsById.get(tabId);
+    if (!tab) return false;
     this.order.splice(currentIndex, 1);
-    this.order.splice(Math.max(0, Math.min(this.order.length, targetIndex)), 0, tabId);
+    const pinnedCount = this.order.filter(idValue => this.tabsById.get(idValue)?.pinned).length;
+    const lowerBound = tab.pinned ? 0 : pinnedCount;
+    const upperBound = tab.pinned ? pinnedCount : this.order.length;
+    this.order.splice(Math.max(lowerBound, Math.min(upperBound, targetIndex)), 0, tabId);
     return true;
   }
 
@@ -777,6 +964,10 @@ export class WorkspaceManager {
     const loaded = this.read();
     this.records = new Map(loaded.workspaces.map(record => [record.id, record]));
     this.currentId = this.records.has(loaded.currentId) ? loaded.currentId : loaded.workspaces[0].id;
+    // Persist the sanitized envelope immediately so a stale session is
+    // migrated once at the boundary and cannot be resurrected by a later
+    // window or host process.
+    this.write();
   }
 
   current(): WorkspaceRecord { return cloneRecord(this.records.get(this.currentId) ?? defaultRecord()); }
@@ -824,6 +1015,14 @@ export class WorkspaceManager {
     return this.current();
   }
 
+  reload(): WorkspaceRecord {
+    const loaded = this.read();
+    this.records = new Map(loaded.workspaces.map(record => [record.id, record]));
+    this.currentId = this.records.has(loaded.currentId) ? loaded.currentId : loaded.workspaces[0].id;
+    this.write();
+    return this.current();
+  }
+
   private read(): WorkspaceStorageEnvelope {
     try {
       const raw = this.storage.getItem(WORKSPACES_KEY);
@@ -850,6 +1049,432 @@ export class WorkspaceManager {
     } catch {
       // Private browsing/storage quota failures should not break navigation.
     }
+  }
+}
+
+function cloneWindowRecord(record: DesktopWindowRecord): DesktopWindowRecord {
+  return {
+    ...record,
+    tabIds: [...record.tabIds],
+    paneTree: record.paneTree ? clonePane(record.paneTree) : undefined,
+    chrome: record.chrome ? JSON.parse(JSON.stringify(record.chrome)) as WorkspaceChromeState : undefined,
+    geometry: record.geometry ? { ...record.geometry } : undefined,
+  };
+}
+
+const WINDOW_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const MAX_QUARANTINED_WINDOW_STATE = 96_000;
+
+function validateWindowGeometry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const validInteger = (candidate: unknown, minimum: number, maximum: number): boolean => typeof candidate === 'number' && Number.isSafeInteger(candidate) && candidate >= minimum && candidate <= maximum;
+  if (!validInteger(value.width, 900, 10_000) || !validInteger(value.height, 600, 10_000)) return false;
+  if (value.x !== undefined && !validInteger(value.x, -100_000, 100_000)) return false;
+  if (value.y !== undefined && !validInteger(value.y, -100_000, 100_000)) return false;
+  if (value.maximized !== undefined && typeof value.maximized !== 'boolean') return false;
+  if (value.fullscreen !== undefined && typeof value.fullscreen !== 'boolean') return false;
+  return true;
+}
+
+export interface DesktopWindowRegistryValidation {
+  readonly ok: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Validate the raw versioned registry before any sanitizing repair can make a
+ * stale native-window record look trustworthy. The canonical native primary
+ * is always the Tauri `main` window; anything else is quarantined.
+ */
+export function validateDesktopWindowRegistry(value: unknown): DesktopWindowRegistryValidation {
+  if (!isRecord(value) || value.version !== 2 || !Array.isArray(value.windows)) return { ok: false, reason: 'unsupported-version-or-shape' };
+  if (value.primaryWindowId !== PRIMARY_DESKTOP_WINDOW_ID) return { ok: false, reason: 'primary-window-is-not-main' };
+  const ids = new Set<string>();
+  const ownedTabs = new Set<string>();
+  let primaryCount = 0;
+  for (const entry of value.windows) {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || !WINDOW_ID_PATTERN.test(entry.id) || ids.has(entry.id)) return { ok: false, reason: 'duplicate-or-invalid-window-id' };
+    if (typeof entry.workspaceId !== 'string' || !WINDOW_ID_PATTERN.test(entry.workspaceId)) return { ok: false, reason: 'invalid-workspace-id' };
+    if (!Array.isArray(entry.tabIds)) return { ok: false, reason: 'invalid-tab-ownership-list' };
+    const localTabs = new Set<string>();
+    for (const tabId of entry.tabIds) {
+      if (typeof tabId !== 'string' || !WINDOW_ID_PATTERN.test(tabId) || localTabs.has(tabId)) return { ok: false, reason: 'duplicate-or-invalid-tab-id' };
+      localTabs.add(tabId);
+      const ownershipKey = `${entry.workspaceId}:${tabId}`;
+      if (ownedTabs.has(ownershipKey)) return { ok: false, reason: 'duplicate-tab-ownership' };
+      ownedTabs.add(ownershipKey);
+    }
+    if (entry.id !== PRIMARY_DESKTOP_WINDOW_ID && entry.tabIds.length === 0) return { ok: false, reason: 'empty-secondary-window' };
+    if (entry.id === PRIMARY_DESKTOP_WINDOW_ID && entry.primary !== true) return { ok: false, reason: 'main-is-not-primary' };
+    if (entry.primary === true) primaryCount += 1;
+    if (entry.updatedAt !== undefined && (typeof entry.updatedAt !== 'number' || !Number.isFinite(entry.updatedAt))) return { ok: false, reason: 'invalid-window-timestamp' };
+    if (entry.geometry !== undefined && !validateWindowGeometry(entry.geometry)) return { ok: false, reason: 'impossible-window-geometry' };
+    for (const transferKey of ['transfers', 'pendingTransfers', 'transferTransactions']) {
+      if (Array.isArray(entry[transferKey]) && entry[transferKey].length > 0) return { ok: false, reason: 'stale-transfer-transaction' };
+      if (entry[transferKey] !== undefined && !Array.isArray(entry[transferKey])) return { ok: false, reason: 'invalid-transfer-transaction-state' };
+    }
+    ids.add(entry.id);
+  }
+  if (value.windows.length > 0 && (primaryCount !== 1 || !ids.has(PRIMARY_DESKTOP_WINDOW_ID))) return { ok: false, reason: 'primary-window-count' };
+  return { ok: true };
+}
+
+function sanitizeWindowGeometry(value: unknown): DesktopWindowGeometry | undefined {
+  if (!isRecord(value)) return undefined;
+  const width = typeof value.width === 'number' && Number.isFinite(value.width) ? Math.max(900, Math.min(10000, Math.round(value.width))) : 1280;
+  const height = typeof value.height === 'number' && Number.isFinite(value.height) ? Math.max(600, Math.min(10000, Math.round(value.height))) : 800;
+  const geometry: DesktopWindowGeometry = { width, height };
+  if (typeof value.x === 'number' && Number.isFinite(value.x)) geometry.x = Math.round(value.x);
+  if (typeof value.y === 'number' && Number.isFinite(value.y)) geometry.y = Math.round(value.y);
+  if (value.maximized === true) geometry.maximized = true;
+  if (value.fullscreen === true) geometry.fullscreen = true;
+  return geometry;
+}
+
+function sanitizeWindowChrome(value: unknown): WorkspaceChromeState | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    contextSidebarOpen: value.contextSidebarOpen === true,
+    agentPanelOpen: value.agentPanelOpen === true,
+    activityBar: sanitizeActivityBar(value.activityBar),
+    contextSidebarWidth: boundedWidth(value.contextSidebarWidth, 280),
+    agentPanelWidth: boundedWidth(value.agentPanelWidth, 360),
+  };
+}
+
+function sanitizeWindowRecord(value: unknown): DesktopWindowRecord | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.workspaceId !== 'string') return undefined;
+  const tabIds = Array.isArray(value.tabIds)
+    ? [...new Set(value.tabIds.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0))].slice(0, 100)
+    : [];
+  const paneTree = sanitizePane(value.paneTree);
+  const activeTabId = typeof value.activeTabId === 'string' && tabIds.includes(value.activeTabId) ? value.activeTabId : tabIds[0];
+  const activePaneId = typeof value.activePaneId === 'string' ? value.activePaneId.slice(0, 128) : undefined;
+  return {
+    id: value.id.slice(0, 128),
+    workspaceId: value.workspaceId.slice(0, 128),
+    tabIds,
+    ...(activeTabId ? { activeTabId } : {}),
+    ...(paneTree ? { paneTree } : {}),
+    ...(activePaneId ? { activePaneId } : {}),
+    ...(sanitizeWindowChrome(value.chrome) ? { chrome: sanitizeWindowChrome(value.chrome) } : {}),
+    ...(sanitizeWindowGeometry(value.geometry) ? { geometry: sanitizeWindowGeometry(value.geometry) } : {}),
+    primary: value.primary === true,
+    updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : now(),
+  };
+}
+
+/**
+ * Durable ownership map for native Keystone windows.  A workspace still
+ * stores the canonical tab payloads; this registry only answers which native
+ * window currently owns each tab and keeps window-local layout metadata.
+ */
+export class DesktopWindowRegistry {
+  private envelope: DesktopWindowStorageEnvelope;
+  private readonly storage: DesktopStorage;
+
+  constructor(storage: DesktopStorage = defaultStorage()) {
+    this.storage = storage;
+    this.envelope = this.read();
+  }
+
+  reload(): void { this.envelope = this.read(); }
+
+  list(workspaceId?: string): DesktopWindowRecord[] {
+    return this.envelope.windows.filter(window => !workspaceId || window.workspaceId === workspaceId).map(cloneWindowRecord);
+  }
+
+  get(windowId: string): DesktopWindowRecord | undefined {
+    const record = this.envelope.windows.find(window => window.id === windowId);
+    return record ? cloneWindowRecord(record) : undefined;
+  }
+
+  get primaryWindowId(): string { return this.envelope.primaryWindowId; }
+
+  /** Bring an older/partial registry up to date with the current workspace. */
+  ensureWorkspace(workspace: WorkspaceRecord): DesktopWindowRecord {
+    if (!this.validateWorkspaceState(workspace)) {
+      this.quarantine(JSON.stringify(this.envelope), 'stale-or-invalid-workspace-ownership');
+      this.envelope = { version: 2, primaryWindowId: PRIMARY_DESKTOP_WINDOW_ID, windows: [] };
+    }
+    const canonicalIds = new Set(workspace.tabs.map(tab => tab.id));
+    let primary = this.envelope.windows.find(window => window.id === PRIMARY_DESKTOP_WINDOW_ID && window.primary);
+    if (!primary) {
+      primary = this.envelope.windows.find(window => window.primary);
+    }
+    if (!primary) {
+      primary = {
+        id: PRIMARY_DESKTOP_WINDOW_ID,
+        workspaceId: workspace.id,
+        tabIds: [],
+        primary: true,
+        updatedAt: now(),
+      };
+      this.envelope.windows.unshift(primary);
+    }
+    this.envelope.primaryWindowId = primary.id;
+    primary.primary = true;
+    primary.workspaceId = workspace.id;
+    // A native secondary is only meaningful while it owns at least one tab.
+    // Prune stale empty records left by a host close or an interrupted
+    // transfer before rebuilding ownership, so restart can never recreate a
+    // blank detached window.
+    this.envelope.windows = this.envelope.windows.filter(window => window.workspaceId !== workspace.id || window.id === primary!.id || window.tabIds.length > 0);
+    for (const window of this.envelope.windows) if (window.id !== primary.id && window.workspaceId === workspace.id) window.primary = false;
+    primary.paneTree ??= clonePane(workspace.paneTree);
+    primary.activePaneId ??= workspace.activePaneId;
+    primary.chrome ??= JSON.parse(JSON.stringify(workspace.chrome)) as WorkspaceChromeState;
+
+    const relevant = this.envelope.windows.filter(window => window.workspaceId === workspace.id);
+    if (!relevant.includes(primary)) relevant.unshift(primary);
+    const assigned = new Set<string>();
+    for (const window of relevant) {
+      const unique = window.tabIds.filter(tabId => canonicalIds.has(tabId) && !assigned.has(tabId));
+      window.tabIds = unique;
+      for (const tabId of unique) assigned.add(tabId);
+      window.activeTabId = window.activeTabId && window.tabIds.includes(window.activeTabId) ? window.activeTabId : window.tabIds[0];
+      window.updatedAt = now();
+    }
+    // Any tab not yet owned belongs to the primary window.  Preserve the
+    // workspace order so a first launch is deterministic and calm.
+    for (const tab of workspace.tabs) if (!assigned.has(tab.id)) { primary.tabIds.push(tab.id); assigned.add(tab.id); }
+    primary.tabIds = [...new Set(primary.tabIds)];
+    primary.activeTabId = primary.activeTabId && primary.tabIds.includes(primary.activeTabId) ? primary.activeTabId : primary.tabIds[0];
+    if (primary.tabIds.length && !primary.paneTree) primary.paneTree = clonePane(workspace.paneTree);
+    // The first pass above repairs ownership. Prune records that became empty
+    // after invalid/stale tab ids were removed; otherwise a phantom native
+    // window could be recreated on the next launch.
+    this.envelope.windows = this.envelope.windows.filter(window => window.workspaceId !== workspace.id || window.id === primary!.id || window.tabIds.length > 0);
+    this.write();
+    return cloneWindowRecord(primary);
+  }
+
+  /** Keep the real tabs but collapse a previous multi-window session to main. */
+  consolidateWorkspaceWindows(workspace: WorkspaceRecord): DesktopWindowRecord {
+    const primary = this.ensureWorkspace(workspace);
+    const record = this.envelope.windows.find(window => window.id === primary.id)!;
+    record.tabIds = workspace.tabs.map(tab => tab.id);
+    record.activeTabId = record.activeTabId && record.tabIds.includes(record.activeTabId) ? record.activeTabId : record.tabIds[0];
+    record.updatedAt = now();
+    this.envelope.windows = this.envelope.windows.filter(window => window.workspaceId !== workspace.id || window.id === record.id);
+    this.envelope.primaryWindowId = record.id;
+    this.write();
+    return cloneWindowRecord(record);
+  }
+
+  /** Reset window/tab presentation state while leaving canonical tab content intact. */
+  resetWorkspaceLayout(workspace: WorkspaceRecord): DesktopWindowRecord {
+    const primary = this.ensureWorkspace(workspace);
+    const record = this.envelope.windows.find(window => window.id === primary.id)!;
+    const paneTree = paneTreeForTabs(workspace.tabs);
+    record.tabIds = workspace.tabs.map(tab => tab.id);
+    record.activeTabId = record.tabIds[0];
+    record.paneTree = paneTree;
+    record.activePaneId = paneTree.id;
+    record.chrome = defaultWorkspaceChrome();
+    record.updatedAt = now();
+    this.envelope.windows = this.envelope.windows.filter(window => window.workspaceId !== workspace.id || window.id === record.id);
+    this.envelope.primaryWindowId = record.id;
+    this.write();
+    return cloneWindowRecord(record);
+  }
+
+  prepareWindow(windowId: string, workspace: WorkspaceRecord, detachedTabId?: string): DesktopWindowRecord | undefined {
+    this.ensureWorkspace(workspace);
+    let record = this.envelope.windows.find(window => window.id === windowId && window.workspaceId === workspace.id);
+    if (!record && windowId !== this.envelope.primaryWindowId && detachedTabId && workspace.tabs.some(tab => tab.id === detachedTabId)) {
+      record = { id: windowId.slice(0, 128), workspaceId: workspace.id, tabIds: [], primary: false, updatedAt: now() };
+      this.envelope.windows.push(record);
+    }
+    // A missing secondary record means that the native window was closed or
+    // its last tab was accepted elsewhere. Never fall back to the primary
+    // record here: doing so would make a stale secondary render the primary
+    // window again instead of closing cleanly.
+    if (!record) return windowId === this.envelope.primaryWindowId ? this.get(this.envelope.primaryWindowId) : undefined;
+    if (detachedTabId && workspace.tabs.some(tab => tab.id === detachedTabId)) this.assignTab(workspace.id, detachedTabId, record.id, false);
+    const refreshed = this.envelope.windows.find(window => window.id === record!.id) ?? record;
+    refreshed.activeTabId = refreshed.activeTabId && refreshed.tabIds.includes(refreshed.activeTabId) ? refreshed.activeTabId : refreshed.tabIds[0];
+    this.write();
+    return cloneWindowRecord(refreshed);
+  }
+
+  ownerOf(workspaceId: string, tabId: string): DesktopWindowRecord | undefined {
+    const owner = this.envelope.windows.find(window => window.workspaceId === workspaceId && window.tabIds.includes(tabId));
+    return owner ? cloneWindowRecord(owner) : undefined;
+  }
+
+  ownerOfReference(workspaceId: string, workspace: WorkspaceRecord, ref: KeystoneObjectReference): DesktopWindowRecord | undefined {
+    const tab = workspace.tabs.find(candidate => candidate.object?.kind === ref.kind && candidate.object.id === ref.id);
+    return tab ? this.ownerOf(workspaceId, tab.id) : undefined;
+  }
+
+  createDetached(workspaceId: string, tabId: string, geometry?: DesktopWindowGeometry): DesktopWindowRecord | undefined {
+    const owner = this.ownerOf(workspaceId, tabId);
+    if (!owner) return undefined;
+    const window: DesktopWindowRecord = {
+      id: id('window'),
+      workspaceId,
+      tabIds: [tabId],
+      activeTabId: tabId,
+      geometry: geometry ? { ...geometry } : undefined,
+      primary: false,
+      updatedAt: now(),
+    };
+    const source = this.envelope.windows.find(candidate => candidate.id === owner.id);
+    if (!source) return undefined;
+    source.tabIds = source.tabIds.filter(candidate => candidate !== tabId);
+    source.activeTabId = source.activeTabId === tabId ? source.tabIds[0] : source.activeTabId;
+    this.envelope.windows.push(window);
+    this.write();
+    return cloneWindowRecord(window);
+  }
+
+  assignTab(workspaceId: string, tabId: string, targetWindowId: string, write = true): boolean {
+    const target = this.envelope.windows.find(window => window.id === targetWindowId && window.workspaceId === workspaceId);
+    if (!target) return false;
+    let found = false;
+    for (const window of this.envelope.windows) {
+      if (window.workspaceId !== workspaceId) continue;
+      const had = window.tabIds.includes(tabId);
+      window.tabIds = window.tabIds.filter(candidate => candidate !== tabId);
+      if (had) { found = true; if (window.activeTabId === tabId) window.activeTabId = window.tabIds[0]; }
+    }
+    if (!target.tabIds.includes(tabId)) target.tabIds.push(tabId);
+    target.activeTabId = tabId;
+    if (write) this.write();
+    return found || target.tabIds.includes(tabId);
+  }
+
+  /**
+   * Commit a cross-window move in one registry write.  The source ownership
+   * is checked immediately before mutation; a stale drag cannot steal a tab
+   * that another window has already moved.  No intermediate state is exposed
+   * to a reload, so a tab is either owned by the source or by the target.
+   */
+  transferTabAt(workspaceId: string, tabId: string, sourceWindowId: string, targetWindowId: string, targetIndex = Number.MAX_SAFE_INTEGER): DesktopWindowTransferCommit | undefined {
+    if (!tabId || sourceWindowId === targetWindowId) return undefined;
+    const windows = this.envelope.windows.filter(window => window.workspaceId === workspaceId);
+    const source = windows.find(window => window.id === sourceWindowId);
+    const target = windows.find(window => window.id === targetWindowId);
+    const owners = windows.filter(window => window.tabIds.includes(tabId));
+    if (!source || !target || source === target || owners.length !== 1 || owners[0] !== source) return undefined;
+    const sourceIndex = source.tabIds.indexOf(tabId);
+    if (sourceIndex < 0) return undefined;
+    source.tabIds.splice(sourceIndex, 1);
+    source.activeTabId = source.activeTabId === tabId ? source.tabIds[0] : source.activeTabId;
+    const insertion = Math.max(0, Math.min(target.tabIds.length, Number.isSafeInteger(targetIndex) ? targetIndex : target.tabIds.length));
+    target.tabIds.splice(insertion, 0, tabId);
+    target.activeTabId = tabId;
+    source.updatedAt = now();
+    target.updatedAt = now();
+    this.write();
+    return { workspaceId, tabId, sourceWindowId, targetWindowId, sourceIndex, targetIndex: insertion, source: cloneWindowRecord(source), target: cloneWindowRecord(target) };
+  }
+
+  /** Merge all source tabs with one atomic ownership write. */
+  transferAllAt(workspaceId: string, sourceWindowId: string, targetWindowId: string): boolean {
+    if (sourceWindowId === targetWindowId) return false;
+    const windows = this.envelope.windows.filter(window => window.workspaceId === workspaceId);
+    const source = windows.find(window => window.id === sourceWindowId);
+    const target = windows.find(window => window.id === targetWindowId);
+    if (!source || !target || source.primary || !source.tabIds.length) return false;
+    const sourceIds = [...source.tabIds];
+    const ownerCounts = new Map<string, number>();
+    for (const window of windows) for (const tabId of window.tabIds) ownerCounts.set(tabId, (ownerCounts.get(tabId) ?? 0) + 1);
+    if (sourceIds.some(tabId => ownerCounts.get(tabId) !== 1)) return false;
+    source.tabIds = [];
+    source.activeTabId = undefined;
+    for (const tabId of sourceIds) if (!target.tabIds.includes(tabId)) target.tabIds.push(tabId);
+    target.activeTabId = sourceIds.at(-1) ?? target.activeTabId;
+    source.updatedAt = now();
+    target.updatedAt = now();
+    this.write();
+    return true;
+  }
+
+  update(windowId: string, patch: Partial<Omit<DesktopWindowRecord, 'id' | 'primary'>>): boolean {
+    const record = this.envelope.windows.find(window => window.id === windowId);
+    if (!record) return false;
+    if (patch.workspaceId) record.workspaceId = patch.workspaceId.slice(0, 128);
+    if (patch.tabIds) record.tabIds = [...new Set(patch.tabIds)].slice(0, 100);
+    if (patch.activeTabId !== undefined) record.activeTabId = patch.activeTabId && record.tabIds.includes(patch.activeTabId) ? patch.activeTabId : record.tabIds[0];
+    if (patch.paneTree) record.paneTree = clonePane(patch.paneTree);
+    if (patch.activePaneId !== undefined) record.activePaneId = patch.activePaneId;
+    if (patch.chrome) record.chrome = JSON.parse(JSON.stringify(patch.chrome)) as WorkspaceChromeState;
+    if (patch.geometry) record.geometry = { ...patch.geometry };
+    record.updatedAt = now();
+    this.write();
+    return true;
+  }
+
+  remove(windowId: string, transferTabsToPrimary = true): boolean {
+    const record = this.envelope.windows.find(window => window.id === windowId);
+    if (!record || record.primary) return false;
+    const primary = this.envelope.windows.find(window => window.id === this.envelope.primaryWindowId && window.workspaceId === record.workspaceId);
+    if (transferTabsToPrimary && primary) {
+      for (const tabId of record.tabIds) if (!primary.tabIds.includes(tabId)) primary.tabIds.push(tabId);
+      primary.activeTabId ??= primary.tabIds[0];
+    }
+    this.envelope.windows = this.envelope.windows.filter(window => window.id !== windowId);
+    this.write();
+    return true;
+  }
+
+  private read(): DesktopWindowStorageEnvelope {
+    try {
+      const raw = this.storage.getItem(DESKTOP_WINDOW_REGISTRY_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as unknown;
+        if (isRecord(parsed) && parsed.version === 2 && Array.isArray(parsed.windows) && validateDesktopWindowRegistry(parsed).ok) {
+          const seen = new Set<string>();
+          const windows = parsed.windows.flatMap(entry => {
+            const record = sanitizeWindowRecord(entry);
+            if (!record || seen.has(record.id)) return [];
+            seen.add(record.id);
+            return [record];
+          });
+          if (windows.length) {
+            return { version: 2, primaryWindowId: PRIMARY_DESKTOP_WINDOW_ID, windows };
+          }
+        } else {
+          this.quarantine(raw, isRecord(parsed) && parsed.version === 1 ? 'legacy-v1-registry' : validateDesktopWindowRegistry(parsed).reason ?? 'invalid-registry');
+        }
+      }
+    } catch {
+      this.quarantine(this.storage.getItem(DESKTOP_WINDOW_REGISTRY_KEY) ?? '', 'malformed-registry-json');
+    }
+    return { version: 2, primaryWindowId: PRIMARY_DESKTOP_WINDOW_ID, windows: [] };
+  }
+
+  private validateWorkspaceState(workspace: WorkspaceRecord): boolean {
+    const raw = this.envelope;
+    const validation = validateDesktopWindowRegistry(raw);
+    if (!validation.ok && raw.windows.length > 0) return false;
+    const relevant = raw.windows.filter(window => window.workspaceId === workspace.id);
+    const primary = raw.windows.find(window => window.id === PRIMARY_DESKTOP_WINDOW_ID);
+    if (primary && primary.workspaceId !== workspace.id) return false;
+    const canonicalIds = new Set(workspace.tabs.map(tab => tab.id));
+    const owned = new Set<string>();
+    for (const window of relevant) {
+      if (window.id !== PRIMARY_DESKTOP_WINDOW_ID && window.tabIds.length === 0) return false;
+      for (const tabId of window.tabIds) {
+        if (!canonicalIds.has(tabId) || owned.has(tabId)) return false;
+        owned.add(tabId);
+      }
+    }
+    return true;
+  }
+
+  private quarantine(raw: string, reason: string): void {
+    const bounded = raw.slice(0, MAX_QUARANTINED_WINDOW_STATE);
+    try {
+      this.storage.setItem(DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY, JSON.stringify({ version: 1, reason, capturedAt: now(), raw: bounded }));
+    } catch { /* diagnostics are best effort */ }
+    if (raw) console.warn(`[Keystone] rejected persisted window registry: ${reason}`);
+  }
+
+  private write(): void {
+    try { this.storage.setItem(DESKTOP_WINDOW_REGISTRY_KEY, JSON.stringify(this.envelope)); } catch { /* optional storage */ }
   }
 }
 
@@ -892,10 +1517,35 @@ export class KeystoneLinkRouter {
   private resolveKeystone(input: string): RouteResult {
     let parsed: URL;
     try { parsed = new URL(input); } catch { return { kind: 'invalid', input, reason: 'malformed-link' }; }
-    const kind = parsed.hostname as DesktopObjectKind | 'place';
-    const path = parsed.pathname.split('/').filter(Boolean).map(segment => decodeURIComponent(segment));
-    const visualKind: DesktopObjectKind = kind === 'place' ? 'map' : kind === 'vault' && path[1] === 'graph' ? 'graph' : kind === 'vault' && path[1] === 'canvas' ? 'canvas' : kind;
-    const objectId = kind === 'place' ? path[0] : visualKind === 'graph' ? path[0] : visualKind === 'canvas' ? path[2] : (kind === 'calendar' && path[0] === 'event' ? path[1] : kind === 'vault' && path[1] === 'note' ? path[2] : path[0]) ?? decodeURIComponent(parsed.searchParams.get('id') || '').trim();
+    if (parsed.protocol !== 'keystone:' || parsed.username || parsed.password || parsed.port || parsed.hash) return { kind: 'invalid', input, reason: 'malformed-link' };
+    const kind = parsed.hostname as DesktopObjectKind | 'place' | 'task' | 'conversation' | 'devices' | 'files' | 'documents';
+    const path = parsed.pathname.split('/').filter(Boolean).map(segment => {
+      try { return decodeURIComponent(segment); } catch { return ''; }
+    });
+    const routeRefs: Record<string, KeystoneObjectReference> = {
+      home: { kind: 'home', id: 'home', label: 'Home' },
+      search: { kind: 'settings', id: 'search', label: 'Search' },
+      settings: { kind: 'settings', id: 'settings', label: 'Settings' },
+      music: { kind: 'music', id: 'music', label: 'Music' },
+      video: { kind: 'video', id: 'video', label: 'Video' },
+      shorts: { kind: 'shorts', id: 'shorts', label: 'Shorts' },
+      files: { kind: 'file', id: 'files', label: 'Files' },
+      documents: { kind: 'document', id: 'documents', label: 'Documents' },
+      tasks: { kind: 'tasks', id: 'tasks', label: 'Tasks' },
+      capture: { kind: 'capture', id: 'capture', label: 'Quick Capture' },
+      ai: { kind: 'ai', id: 'ai', label: 'Local AI' },
+      devices: { kind: 'settings', id: 'device', label: 'Device' },
+      network: { kind: 'network', id: 'network', label: 'Connectivity' },
+    };
+    if (!path.length && routeRefs[kind]) return { kind: 'object', input, ref: routeRefs[kind] };
+    if ((kind === 'task' || kind === 'conversation') && path.length === 1) {
+      const ref: KeystoneObjectReference = { kind: kind === 'task' ? 'tasks' : 'chat', id: path[0] };
+      return path[0] && path[0].length <= 256 && !/[\u0000-\u001f]/.test(path[0]) ? { kind: 'object', input, ref } : { kind: 'invalid', input, reason: 'unknown-object' };
+    }
+    const visualKind: DesktopObjectKind = kind === 'place' ? 'map' : kind === 'task' ? 'tasks' : kind === 'conversation' ? 'chat' : kind === 'vault' && path[1] === 'graph' ? 'graph' : kind === 'vault' && path[1] === 'canvas' ? 'canvas' : kind as DesktopObjectKind;
+    let queryId = '';
+    try { queryId = decodeURIComponent(parsed.searchParams.get('id') || '').trim(); } catch { return { kind: 'invalid', input, reason: 'malformed-link' }; }
+    const objectId = kind === 'place' ? path[0] : visualKind === 'graph' ? path[0] : visualKind === 'canvas' ? path[2] : (kind === 'calendar' && path[0] === 'event' ? path[1] : kind === 'vault' && path[1] === 'note' ? path[2] : path[0]) ?? queryId;
     if (!KNOWN_OBJECT_KINDS.has(visualKind) || !objectId || objectId.length > 256 || /[\u0000-\u001f]/.test(objectId)) return { kind: 'invalid', input, reason: 'unknown-object' };
     const revisionAddress = visualKind === 'publication' && path[1] === 'revision' && /^sha256-[a-f0-9]{64}$/i.test(path[2] ?? '') ? path[2] : undefined;
     if (visualKind === 'publication' && path[1] === 'revision' && !revisionAddress) return { kind: 'invalid', input, reason: 'unknown-object' };
@@ -928,15 +1578,55 @@ export interface ShellCommand {
   label: string;
   description?: string;
   keywords?: string[];
+  /** Commands kept for compatibility can be represented but are hidden from the palette. */
+  available?: boolean;
   run: (shell: DesktopShellController) => void;
 }
 
 export function defaultShellCommands(locale: 'en' | 'ru' = 'en'): ShellCommand[] {
   const ru = locale === 'ru';
   const label = (en: string, russian: string) => ru ? russian : en;
+  const unavailable = (id: string, en: string, russian: string): ShellCommand => ({
+    id,
+    label: label(en, russian),
+    available: false,
+    description: label('Unavailable until its host adapter is connected', 'Недоступно до подключения host adapter'),
+    run: shell => shell.setNotice(label(`${en} is unavailable on this host.`, `${russian} недоступно на этом host.`)),
+  });
+  return [
+    { id: 'open', label: label('Open Home', 'Открыть главную'), keywords: ['home', 'start', 'главная'], run: shell => shell.openReference({ kind: 'home', id: 'home', label: label('Home', 'Главная') }) },
+    { id: 'open-search', label: label('Search local data', 'Искать локальные данные'), keywords: ['search', 'find', 'поиск'], run: shell => shell.openReference({ kind: 'settings', id: 'search', label: label('Search', 'Поиск') }) },
+    { id: 'open-music', label: label('Open Music', 'Открыть музыку'), keywords: ['music', 'audio', 'tracks', 'музыка', 'аудио'], run: shell => shell.openReference({ kind: 'music', id: 'music', label: label('Music', 'Музыка') }) },
+    { id: 'open-video', label: label('Open Video', 'Открыть видео'), keywords: ['video', 'videos', 'видео'], run: shell => shell.openReference({ kind: 'video', id: 'video', label: label('Video', 'Видео') }) },
+    { id: 'open-shorts', label: label('Open Shorts', 'Открыть Shorts'), keywords: ['shorts', 'short video', 'короткие видео'], run: shell => shell.openReference({ kind: 'shorts', id: 'shorts', label: label('Shorts', 'Shorts') }) },
+    { id: 'open-ai', label: label('Open Local AI', 'Открыть локальный AI'), keywords: ['ai', 'local ai', 'ollama', 'lm studio', 'локальный ai'], run: shell => shell.openReference({ kind: 'ai', id: 'ai', label: label('Local AI', 'Локальный AI') }) },
+    { id: 'open-connectivity', label: label('Open Connectivity', 'Открыть connectivity'), keywords: ['connectivity', 'network', 'offline', 'p2p', 'связь', 'сеть'], run: shell => shell.openReference({ kind: 'network', id: 'network', label: label('Connectivity', 'Связь') }) },
+    { id: 'open-capture', label: label('Open Quick Capture', 'Открыть Quick Capture'), keywords: ['capture', 'quick capture', 'захват'], run: shell => shell.requestQuickCapture() },
+    { id: 'open-tasks', label: label('Open Tasks', 'Открыть задачи'), keywords: ['tasks', 'todo', 'planning', 'задачи'], run: shell => shell.openReference({ kind: 'tasks', id: 'tasks', label: label('Tasks', 'Задачи') }) },
+    { id: 'new-task', label: label('New Task', 'Новая задача'), keywords: ['new task', 'todo', 'новая задача'], run: shell => shell.openReference({ kind: 'tasks', id: 'new-task', label: label('New Task', 'Новая задача') }, { allowDuplicate: true }) },
+    { id: 'open-documents', label: label('Open Documents', 'Открыть документы'), keywords: ['documents', 'document', 'reader', 'pdf', 'epub', 'документы'], run: shell => shell.openReference({ kind: 'document', id: 'documents', label: label('Documents', 'Документы') }) },
+    { id: 'new-document', label: label('New Markdown document', 'Новый Markdown-документ'), keywords: ['new document', 'markdown', 'документ'], run: shell => shell.openReference({ kind: 'document', id: 'new-document', label: label('New document', 'Новый документ') }, { allowDuplicate: true }) },
+    { id: 'open-device', label: label('Open device and identity', 'Открыть устройство и identity'), keywords: ['device', 'identity', 'устройство', 'identity'], run: shell => shell.openReference({ kind: 'settings', id: 'device', label: label('Device', 'Устройство') }) },
+    { id: 'settings', label: label('Open Settings', 'Открыть настройки'), keywords: ['settings', 'preferences', 'настройки'], run: shell => shell.openReference({ kind: 'settings', id: 'settings', label: label('Settings', 'Настройки') }) },
+    { id: 'toggle-sidebar', label: label('Toggle context sidebar', 'Показать/скрыть панель контекста'), run: shell => shell.toggleContextSidebar() },
+    { id: 'split-pane', label: label('Split pane', 'Разделить панель'), keywords: ['split', 'разделить'], run: shell => shell.splitPane('vertical') },
+    { id: 'close-tab', label: label('Close tab', 'Закрыть вкладку'), keywords: ['close', 'закрыть'], run: shell => shell.closeActiveTab() },
+    { id: 'reopen-tab', label: label('Reopen closed tab', 'Открыть закрытую вкладку'), keywords: ['reopen', 'restore', 'открыть снова'], run: shell => shell.reopenClosedTab() },
+    { id: 'switch-workspace', label: label('Switch workspace', 'Сменить рабочее пространство'), keywords: ['workspace', 'пространство'], run: shell => shell.toggleWorkspaceMenu() },
+    unavailable('open-vault', 'Open Vault', 'Открыть Vault'),
+    unavailable('open-vault-graph', 'Open Vault Graph', 'Открыть граф Vault'),
+    unavailable('open-mail', 'Open External Email', 'Открыть внешнюю почту'),
+    unavailable('compose-mail', 'Compose external mail', 'Написать внешнее письмо'),
+  ];
+}
+
+/** Historical command catalog retained only for migration/test compatibility. */
+function legacyShellCommands(locale: 'en' | 'ru' = 'en'): ShellCommand[] {
+  const ru = locale === 'ru';
+  const label = (en: string, russian: string) => ru ? russian : en;
   return [
     { id: 'open', label: label('Open…', 'Открыть…'), keywords: ['tab', 'object'], run: shell => shell.openReference({ kind: 'home', id: 'home', label: 'Home' }) },
-    { id: 'open-capture', label: label('Open Quick Capture', 'Открыть Quick Capture'), keywords: ['capture', 'quick capture', 'share in', 'clipboard', 'захват', 'быстрый ввод'], run: shell => shell.openReference({ kind: 'capture', id: 'capture', label: label('Quick Capture', 'Быстрый захват') }) },
+    { id: 'open-capture', label: label('Open Quick Capture', 'Открыть Quick Capture'), keywords: ['capture', 'quick capture', 'share in', 'clipboard', 'захват', 'быстрый ввод'], run: shell => shell.requestQuickCapture() },
     { id: 'open-maps', label: label('Open Maps', 'Открыть Карты'), keywords: ['maps', 'map', 'open maps', 'карты', 'карта'], run: shell => shell.openReference({ kind: 'map', id: 'map', label: label('Maps', 'Карты') }) },
     { id: 'open-mail', label: label('Open External Email', 'Открыть внешнюю почту'), keywords: ['mail', 'email', 'inbox', 'почта', 'письма'], run: shell => shell.openReference({ kind: 'mail', id: 'mail', label: label('External Email', 'Внешняя почта') }) },
     { id: 'open-documents', label: label('Open Documents', 'Открыть документы'), keywords: ['documents', 'document', 'reader', 'pdf', 'epub', 'ocr', 'документы', 'ридер', 'сканирование'], run: shell => shell.openReference({ kind: 'document', id: 'documents', label: label('Documents', 'Документы') }) },
@@ -1056,8 +1746,8 @@ export function createDefaultContextRegistry(locale: 'en' | 'ru' = 'en'): Contex
       const objectId = ref?.id ?? '—';
       return { title, sections: [
         { id: 'properties', title: ru ? 'Свойства' : 'Properties', items: [`${ru ? 'Тип' : 'Type'}: ${ref?.kind ?? 'unknown'}`, `${ru ? 'ID объекта' : 'Object ID'}: ${objectId}`] },
-        { id: 'links', title: ru ? 'Связи' : 'Links', items: [ru ? 'Backlinks — placeholder' : 'Backlinks — placeholder', ru ? 'Исходящие ссылки' : 'Outgoing links'] },
-        { id: 'related', title: ru ? 'Связанные объекты' : 'Related objects', items: [ru ? 'Здесь появятся разрешённые связи' : 'Allowed references will appear here'] },
+        { id: 'links', title: ru ? 'Связи' : 'Links', items: [ru ? 'Связи появятся после подключения соответствующего сервиса.' : 'Links appear when the corresponding service is connected.'] },
+        { id: 'related', title: ru ? 'Связанные объекты' : 'Related objects', items: [ru ? 'Нет загруженных связанных объектов.' : 'No related objects are loaded.'] },
       ] };
     },
   });
@@ -1067,6 +1757,9 @@ export function createDefaultContextRegistry(locale: 'en' | 'ru' = 'en'): Contex
 
 export class DesktopShellController {
   readonly workspaceManager: WorkspaceManager;
+  readonly windowRegistry: DesktopWindowRegistry;
+  readonly windowId: string;
+  readonly isPrimaryWindow: boolean;
   readonly router: KeystoneLinkRouter;
   private readonly storage: DesktopStorage;
   private startupPreference: DesktopStartupPreference;
@@ -1079,27 +1772,152 @@ export class DesktopShellController {
   private browserStates = new Map<string, DesktopBrowserRuntimeState>();
   private toolFlow?: DesktopToolFlowState;
   private toolFlowControls?: { pause?: () => void; resume?: () => void; cancel?: () => void };
+  private windowBridge?: DesktopWindowBridge;
+  private ownedTabIds = new Set<string>();
 
-  constructor(options: { storage?: DesktopStorage; canOpen?: RoutePermission } = {}) {
+  constructor(options: { storage?: DesktopStorage; canOpen?: RoutePermission; windowId?: string; detachedTabId?: string; windowBridge?: DesktopWindowBridge; startupMode?: 'restore' | 'clean' } = {}) {
     this.storage = options.storage ?? defaultStorage();
     this.startupPreference = readDesktopStartup(this.storage);
     this.workspaceManager = new WorkspaceManager(this.storage);
+    this.windowRegistry = new DesktopWindowRegistry(this.storage);
     this.router = new KeystoneLinkRouter(options.canOpen ?? (() => true));
     const record = this.workspaceManager.current();
-    this.tabs = new TabManager(record.tabs, record.closedTabs);
-    this.panes = new PaneManager(record.paneTree);
+    this.windowBridge = options.windowBridge;
+    this.windowRegistry.ensureWorkspace(record);
+    const requestedWindowId = options.windowId ?? this.windowRegistry.primaryWindowId;
+    const windowRecord = this.windowRegistry.prepareWindow(requestedWindowId, record, options.detachedTabId);
+    // Keep the URL-selected native window identity even when its registry
+    // record is not visible yet.  A secondary WebView can start a few ticks
+    // before the source WebView's localStorage write is observable; falling
+    // back to the primary here would render a duplicate primary shell.  The
+    // host retries refreshFromStorage and either adopts the record or closes
+    // the now-unowned secondary window.
+    this.windowId = requestedWindowId;
+    this.isPrimaryWindow = requestedWindowId === PRIMARY_DESKTOP_WINDOW_ID || windowRecord?.primary === true;
+    const cleanStartup = options.startupMode === 'clean' && this.isPrimaryWindow;
+    const cleanHome = record.tabs.find(tab => tab.object?.kind === 'home' && tab.object.id === 'home')
+      ?? tabForReference({ kind: 'home', id: 'home', label: 'Home' }, { pinned: true });
+    const visibleIds = cleanStartup ? new Set([cleanHome.id]) : new Set(windowRecord?.tabIds ?? (this.isPrimaryWindow ? record.tabs.map(tab => tab.id) : []));
+    this.ownedTabIds = new Set(visibleIds);
+    const initialTabs = cleanStartup ? [cleanHome] : windowRecord?.tabIds.flatMap(tabId => record.tabs.filter(tab => tab.id === tabId)) ?? [];
+    this.tabs = new TabManager(initialTabs, record.closedTabs);
+    const initialPaneTree = cleanStartup
+      ? paneTreeForTabs(initialTabs)
+      : this.isPrimaryWindow
+      ? filterPaneTabs(record.paneTree, new Set(initialTabs.map(tab => tab.id)))
+      : windowRecord?.paneTree
+        ? filterPaneTabs(windowRecord.paneTree, new Set(initialTabs.map(tab => tab.id)))
+        : paneTreeForTabs(initialTabs);
+    this.panes = new PaneManager(initialPaneTree);
     this.navigation = new DesktopNavigation();
-    this.chrome = JSON.parse(JSON.stringify(record.chrome)) as WorkspaceChromeState;
-    for (const tab of record.tabs) if (tab.kind === 'browser') this.browserStates.set(tab.id, { sessionId: tab.browserSessionId, activity: tab.browserActivity ?? 'IDLE', page: tab.browserPageRevision !== undefined && tab.url ? { tabId: tab.id, url: tab.url, origin: safeBrowserOrigin(tab.url), title: tab.title, pageRevision: tab.browserPageRevision, dataClass: tab.browserDataClass ?? 'PUBLIC' } : undefined });
+    this.chrome = JSON.parse(JSON.stringify(cleanStartup ? defaultWorkspaceChrome() : windowRecord?.chrome ?? record.chrome)) as WorkspaceChromeState;
+    this.ensureActivePaneHasTab();
+    for (const tab of initialTabs) if (tab.kind === 'browser') this.browserStates.set(tab.id, { sessionId: tab.browserSessionId, activity: tab.browserActivity ?? 'IDLE', page: tab.browserPageRevision !== undefined && tab.url ? { tabId: tab.id, url: tab.url, origin: safeBrowserOrigin(tab.url), title: tab.title, pageRevision: tab.browserPageRevision, dataClass: tab.browserDataClass ?? 'PUBLIC' } : undefined });
     this.revalidateTabs();
-    this.restoreStartupSurface();
+    if (this.isPrimaryWindow && initialTabs.length === 0 && this.tabs.list().length > 0) this.persistRecord(this.capture());
+    const startupTarget = this.startupPreference.surface === 'workspace' ? this.startupPreference.target : undefined;
+    if (startupTarget && this.tabs.findByReference(startupTarget)?.locked) this.openReference({ kind: 'home', id: 'home', label: 'Home' });
   }
 
   subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   getSnapshot(): DesktopShellSnapshot { return { workspace: this.capture(), navigation: this.navigation.list(), ...(this.toolFlow ? { toolFlow: this.toolFlowState() } : {}) }; }
+  flush(): void { this.persistRecord(this.capture()); }
   get currentPaneId(): string { return this.capture().activePaneId; }
   get currentTab(): DesktopTab | undefined { const pane = this.panes.leaf(this.currentPaneId); return pane?.activeTabId ? this.tabs.get(pane.activeTabId) : undefined; }
   get currentNotice(): string { return this.notice; }
+  /** Tabs owned by this native window, excluding tabs held by sibling windows. */
+  currentTabs(): DesktopTab[] { return this.tabs.list(); }
+  requestQuickCapture(): void {
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(DESKTOP_QUICK_CAPTURE_EVENT));
+    else this.setNotice('Quick Capture is available in the desktop shell.');
+  }
+  setWindowBridge(bridge: DesktopWindowBridge | undefined): void { this.windowBridge = bridge; }
+  listWindows(): DesktopWindowRecord[] { return this.windowRegistry.list(this.workspaceManager.current().id); }
+  windowRecord(): DesktopWindowRecord | undefined { return this.windowRegistry.get(this.windowId); }
+  setWindowGeometry(geometry: DesktopWindowGeometry): void { this.windowRegistry.update(this.windowId, { geometry }); }
+  /** Collapse a restored multi-window session without changing its tabs. */
+  consolidateWindows(): boolean {
+    const workspace = this.workspaceManager.current();
+    for (const window of this.windowRegistry.list(workspace.id)) {
+      if (!window.primary) void Promise.resolve(this.windowBridge?.close?.(window.id));
+    }
+    const primary = this.windowRegistry.consolidateWorkspaceWindows(workspace);
+    if (this.isPrimaryWindow) {
+      this.loadWindowRecord(workspace, primary);
+    } else {
+      this.tabs = new TabManager([], workspace.closedTabs);
+      this.panes = new PaneManager(paneTreeForTabs([]));
+      this.closeEmptySecondaryWindow();
+    }
+    this.emit();
+    return true;
+  }
+
+  /**
+   * Reset only presentation state. With preserveTabs=false, active tabs move
+   * to the bounded reopen queue; their underlying Keystone objects remain in
+   * the canonical services and are not deleted.
+   */
+  resetWindowAndTabLayout(options: { preserveTabs?: boolean } = {}): boolean {
+    const workspace = this.workspaceManager.current();
+    const preserveTabs = options.preserveTabs !== false;
+    for (const window of this.windowRegistry.list(workspace.id)) {
+      if (!window.primary) void Promise.resolve(this.windowBridge?.close?.(window.id));
+    }
+    const home = workspace.tabs.find(tab => tab.object?.kind === 'home' && tab.object.id === 'home')
+      ?? tabForReference({ kind: 'home', id: 'home', label: 'Home' }, { pinned: true });
+    const tabs = preserveTabs ? workspace.tabs : [home];
+    const movedToClosed = preserveTabs ? [] : workspace.tabs.filter(tab => tab.id !== home.id);
+    const normalized = normalizeSessionTabs(tabs, [...movedToClosed, ...workspace.closedTabs]);
+    const paneTree = paneTreeForTabs(normalized.tabs);
+    const resetRecord: WorkspaceRecord = {
+      ...workspace,
+      tabs: normalized.tabs,
+      closedTabs: normalized.closedTabs,
+      paneTree,
+      activePaneId: paneTree.id,
+      chrome: defaultWorkspaceChrome(),
+      updatedAt: now(),
+    };
+    this.workspaceManager.save(resetRecord);
+    const primary = this.windowRegistry.resetWorkspaceLayout(resetRecord);
+    this.navigation = new DesktopNavigation();
+    if (this.isPrimaryWindow) {
+      this.loadWindowRecord(resetRecord, primary);
+    } else {
+      this.tabs = new TabManager([], resetRecord.closedTabs);
+      this.panes = new PaneManager(paneTreeForTabs([]));
+      this.closeEmptySecondaryWindow();
+    }
+    this.emit();
+    return true;
+  }
+  refreshFromStorage(): void {
+    const workspace = this.workspaceManager.reload();
+    this.windowRegistry.reload();
+    this.windowRegistry.ensureWorkspace(workspace);
+    const record = this.windowRegistry.prepareWindow(this.windowId, workspace);
+    if (!record && !this.isPrimaryWindow) {
+      this.tabs = new TabManager([], this.tabs.closedTabs);
+      this.panes = new PaneManager(paneTreeForTabs([]));
+      this.closeEmptySecondaryWindow();
+      this.emit();
+      return;
+    }
+    if (record) this.loadWindowRecord(workspace, record);
+    if (!this.isPrimaryWindow && this.tabs.list().length === 0) {
+      this.closeEmptySecondaryWindow();
+      this.emit();
+      return;
+    }
+    this.emit();
+  }
+  handleNativeWindowClose(): void {
+    if (!this.isPrimaryWindow) {
+      this.windowRegistry.remove(this.windowId, true);
+      this.emit();
+    }
+  }
   startupSurface(): DesktopStartupPreference { return { ...this.startupPreference, target: this.startupPreference.target ? { ...this.startupPreference.target } : undefined }; }
   setStartupSurface(surface: DesktopStartupSurface, target?: KeystoneObjectReference): void {
     this.startupPreference = parseDesktopStartup({ version: 1, surface, ...(target ? { target } : {}) });
@@ -1122,10 +1940,24 @@ export class DesktopShellController {
     const route = this.router.open(referenceUrl(ref));
     if (route.kind === 'locked') { this.setNotice('This object is no longer available with the current permissions.'); return undefined; }
     if (route.kind !== 'object') return undefined;
-    const tab = this.tabs.open(tabForReference(ref, { pinned: options.pinned }), options.allowDuplicate ?? false);
+    const allowDuplicate = options.allowDuplicate ?? false;
+    const workspace = this.workspaceManager.current();
+    // Reconcile the ownership map before routing. This repairs a valid
+    // canonical tab that survived while its old window record did not, and
+    // prevents the local TabManager from creating a second object tab.
+    this.windowRegistry.ensureWorkspace(workspace);
+    if (!allowDuplicate) {
+      const owner = this.windowRegistry.ownerOfReference(workspace.id, workspace, ref);
+      if (owner && owner.id !== this.windowId) {
+        void Promise.resolve(this.windowBridge?.focus(owner.id));
+        return workspace.tabs.find(candidate => candidate.object?.kind === ref.kind && candidate.object.id === ref.id);
+      }
+    }
+    const canonical = workspace.tabs.find(candidate => candidate.object?.kind === ref.kind && candidate.object.id === ref.id);
+    const tab = this.tabs.open(canonical ?? tabForReference(ref, { pinned: options.pinned }), allowDuplicate);
     const paneId = options.paneId ?? this.currentPaneId;
     if (!this.panes.leaf(paneId)) this.panes.addTab(this.panes.firstPaneId(), tab.id);
-    else if (this.panes.findTabOwner(tab.id) && this.panes.findTabOwner(tab.id) !== paneId && !(options.allowDuplicate ?? false)) this.panes.moveTab(tab.id, paneId);
+    else if (this.panes.findTabOwner(tab.id) && this.panes.findTabOwner(tab.id) !== paneId && !allowDuplicate) this.panes.moveTab(tab.id, paneId);
     else this.panes.addTab(paneId, tab.id, true);
     this.navigation.push({ tabId: tab.id, ref: tab.object, title: tab.title });
     this.persistAndEmit();
@@ -1165,12 +1997,129 @@ export class DesktopShellController {
   }
 
   selectTab(paneId: string, tabId: string, recordNavigation = true): void { if (this.panes.setActiveTab(paneId, tabId)) { const tab = this.tabs.get(tabId); if (recordNavigation && tab) this.navigation.push({ tabId, ref: tab.object, url: tab.url, title: tab.title }); this.persistAndEmit(); } }
-  closeTab(tabId: string, force = false): void { const tab = this.tabs.get(tabId); if (!tab || (!force && tab.pinned)) return; this.panes.removeTab(tabId); (force ? this.tabs.forceClose(tabId) : this.tabs.close(tabId)); this.browserStates.delete(tabId); this.ensureActivePaneHasTab(); this.persistAndEmit(); }
+  focusTab(tabId: string, recordNavigation = true): void {
+    const paneId = this.panes.findTabOwner(tabId);
+    if (paneId) this.selectTab(paneId, tabId, recordNavigation);
+  }
+  closeTab(tabId: string, force = false): void {
+    const tab = this.tabs.get(tabId);
+    if (!tab || (!force && tab.pinned)) return;
+    this.panes.removeTab(tabId);
+    (force ? this.tabs.forceClose(tabId) : this.tabs.close(tabId));
+    this.browserStates.delete(tabId);
+    this.ensureActivePaneHasTab();
+    this.persistAndEmit();
+    if (!this.isPrimaryWindow && this.tabs.list().length === 0) {
+      this.windowRegistry.remove(this.windowId, false);
+      void Promise.resolve(this.windowBridge?.closeSelf?.());
+    }
+  }
+  closeOtherTabs(keepTabId = this.currentTab?.id): void {
+    if (!keepTabId) return;
+    for (const tab of this.tabs.list()) {
+      if (tab.id === keepTabId || tab.pinned) continue;
+      this.panes.removeTab(tab.id);
+      this.tabs.close(tab.id);
+      this.browserStates.delete(tab.id);
+    }
+    this.ensureActivePaneHasTab();
+    this.persistAndEmit();
+  }
   closeActiveTab(): void { const tab = this.currentTab; if (tab) this.closeTab(tab.id); }
   reopenClosedTab(): void { const tab = this.tabs.reopen(); if (tab) { if (tab.kind === 'browser') this.hydrateBrowserTab(tab); this.panes.addTab(this.currentPaneId, tab.id, true); this.persistAndEmit(); } }
   duplicateTab(tabId = this.currentTab?.id): void { if (!tabId) return; const source = this.tabs.get(tabId); const tab = this.tabs.duplicate(tabId); if (tab) { if (tab.kind === 'browser') { const sessionId = `${source?.browserSessionId ?? 'browser-session'}-copy-${tab.id}`; this.tabs.update(tab.id, { browserSessionId: sessionId, browserActivity: 'IDLE', browserPageRevision: undefined, browserOrigin: undefined, browserDataClass: undefined }); this.browserStates.set(tab.id, { sessionId, activity: 'IDLE' }); } this.panes.addTab(this.currentPaneId, tab.id, true); this.persistAndEmit(); } }
   pinTab(tabId = this.currentTab?.id): void { if (tabId && this.tabs.pin(tabId, !this.tabs.get(tabId)?.pinned)) this.persistAndEmit(); }
   reorderTab(tabId: string, index: number): void { if (this.tabs.reorder(tabId, index)) this.persistAndEmit(); }
+
+  async openTabInNewWindow(tabId = this.currentTab?.id, geometry?: DesktopWindowGeometry): Promise<boolean> {
+    if (!tabId) return false;
+    const tab = this.tabs.get(tabId);
+    if (!tab || !this.windowBridge) { this.setNotice('Native Keystone windows are available in the desktop host.'); return false; }
+    if (this.isPrimaryWindow && this.tabs.list().length <= 1) {
+      this.setNotice('Keep one tab in the main window so Keystone always has a home.');
+      return false;
+    }
+    const workspace = this.workspaceManager.current();
+    const detached = this.windowRegistry.createDetached(workspace.id, tabId, geometry);
+    if (!detached) return false;
+    const taken = this.tabs.take(tabId);
+    if (!taken) {
+      this.windowRegistry.assignTab(workspace.id, tabId, this.windowId);
+      return false;
+    }
+    this.panes.removeTab(tabId);
+    this.ensureActivePaneHasTab();
+    this.persistAndEmit();
+    const opened = await Promise.resolve(this.windowBridge.open({
+      windowId: detached.id,
+      tabId,
+      title: taken.title,
+      ...(geometry?.x !== undefined ? { x: geometry.x } : {}),
+      ...(geometry?.y !== undefined ? { y: geometry.y } : {}),
+      ...(geometry?.width !== undefined ? { width: geometry.width } : {}),
+      ...(geometry?.height !== undefined ? { height: geometry.height } : {}),
+    })).catch(() => false);
+    if (opened) {
+      this.closeEmptySecondaryWindow();
+      return true;
+    }
+    this.windowRegistry.remove(detached.id, false);
+    this.windowRegistry.assignTab(workspace.id, tabId, this.windowId);
+    this.tabs.open(taken, true);
+    this.panes.addTab(this.currentPaneId, tabId, true);
+    this.persistAndEmit();
+    this.setNotice('The native Keystone window could not be opened.');
+    return false;
+  }
+
+  async openReferenceInNewWindow(ref: KeystoneObjectReference, geometry?: DesktopWindowGeometry): Promise<boolean> {
+    const existing = this.tabs.findByReference(ref);
+    const tab = existing ?? this.openReference(ref, { allowDuplicate: true });
+    return tab ? this.openTabInNewWindow(tab.id, geometry) : false;
+  }
+
+  transferTabToWindow(tabId: string, targetWindowId: string): boolean {
+    return this.transferTabToWindowAt(tabId, targetWindowId);
+  }
+
+  transferTabToWindowAt(tabId: string, targetWindowId: string, targetIndex = Number.MAX_SAFE_INTEGER, transactionId?: string): boolean {
+    const tab = this.tabs.get(tabId);
+    if (!tab || targetWindowId === this.windowId) return false;
+    const workspace = this.workspaceManager.current();
+    const committed = this.windowRegistry.transferTabAt(workspace.id, tabId, this.windowId, targetWindowId, targetIndex);
+    if (!committed) return false;
+    this.tabs.take(tabId);
+    this.panes.removeTab(tabId);
+    this.ensureActivePaneHasTab();
+    this.persistAndEmit();
+    void emitDesktopWindowTransfer({ type: 'committed', transactionId: transactionId ?? `context-${now()}-${tabId.slice(0, 24)}`, workspaceId: workspace.id, sourceWindowId: this.windowId, targetWindowId, tabId, targetIndex: committed.targetIndex });
+    this.closeEmptySecondaryWindow();
+    return true;
+  }
+  acceptWindowTransfer(payload: DesktopWindowTransferStart, targetIndex = Number.MAX_SAFE_INTEGER): boolean {
+    if (payload.workspaceId !== this.workspaceManager.current().id || payload.sourceWindowId === this.windowId || payload.tabId !== payload.tab.id) return false;
+    const workspace = this.workspaceManager.current();
+    if (!workspace.tabs.some(tab => tab.id === payload.tabId)) return false;
+    // The source may have committed another action since the drag started.
+    // Re-read the canonical registry immediately before the ownership check.
+    this.windowRegistry.reload();
+    this.windowRegistry.ensureWorkspace(workspace);
+    const committed = this.windowRegistry.transferTabAt(workspace.id, payload.tabId, payload.sourceWindowId, this.windowId, targetIndex);
+    if (!committed) return false;
+    this.refreshFromStorage();
+    return true;
+  }
+  mergeWindowInto(targetWindowId: string): boolean {
+    if (this.isPrimaryWindow || targetWindowId === this.windowId) return false;
+    const workspace = this.workspaceManager.current();
+    if (!this.windowRegistry.transferAllAt(workspace.id, this.windowId, targetWindowId)) return false;
+    this.tabs = new TabManager([], this.tabs.closedTabs);
+    this.panes = new PaneManager(paneTreeForTabs([]));
+    this.persistRecord(this.capture());
+    this.emit();
+    this.closeEmptySecondaryWindow();
+    return true;
+  }
   lockObject(ref: KeystoneObjectReference): void { for (const tab of this.tabs.list()) if (tab.object?.kind === ref.kind && tab.object.id === ref.id) this.tabs.lock(tab.id, true); this.persistAndEmit(); }
   nextTab(direction: 1 | -1): void { const next = this.tabs.next(this.currentTab?.id ?? '', direction); if (next) this.selectTab(this.currentPaneId, next.id); }
 
@@ -1200,12 +2149,46 @@ export class DesktopShellController {
   private activateNavigationEntry(entry: NavigationEntry): void { if (entry.tabId && this.tabs.get(entry.tabId)) { const owner = this.panes.findTabOwner(entry.tabId); if (owner) { this.focusPane(owner); this.selectTab(owner, entry.tabId, false); } return; } if (entry.ref) this.openReference(entry.ref); else if (entry.url) this.openBrowser(entry.url); }
 
   private capture(): WorkspaceRecord {
-    return { id: this.workspaceManager.current().id, name: this.workspaceManager.current().name, tabs: this.tabs.list(), closedTabs: this.tabs.closedTabs, paneTree: this.panes.tree, activePaneId: this.panes.leaf(this.workspaceManager.current().activePaneId) ? this.workspaceManager.current().activePaneId : this.panes.firstPaneId(), chrome: this.chromeState, updatedAt: now() };
+    const workspace = this.workspaceManager.current();
+    const activePaneId = this.panes.leaf(workspace.activePaneId) ? workspace.activePaneId : this.panes.firstPaneId();
+    return { id: workspace.id, name: workspace.name, tabs: this.tabs.list(), closedTabs: this.tabs.closedTabs, paneTree: this.panes.tree, activePaneId, chrome: this.chromeState, updatedAt: now() };
   }
-  private loadRecord(record: WorkspaceRecord): void { this.tabs = new TabManager(record.tabs, record.closedTabs); this.panes = new PaneManager(record.paneTree); this.chrome = JSON.parse(JSON.stringify(record.chrome)) as WorkspaceChromeState; this.browserStates.clear(); for (const tab of record.tabs) if (tab.kind === 'browser') this.hydrateBrowserTab(tab); this.revalidateTabs(); }
+  private loadRecord(record: WorkspaceRecord): void {
+    this.windowRegistry.ensureWorkspace(record);
+    const windowRecord = this.windowRegistry.prepareWindow(this.windowId, record);
+    if (windowRecord) this.loadWindowRecord(record, windowRecord);
+  }
+  private loadWindowRecord(record: WorkspaceRecord, windowRecord: DesktopWindowRecord): void {
+    const visibleIds = new Set(windowRecord.tabIds);
+    const visibleTabs = windowRecord.tabIds.flatMap(tabId => record.tabs.filter(tab => tab.id === tabId));
+    const initialTabs = visibleIds.size === 0 && this.isPrimaryWindow ? [] : visibleTabs;
+    this.tabs = new TabManager(initialTabs, record.closedTabs);
+    const paneTree = this.isPrimaryWindow
+      ? filterPaneTabs(record.paneTree, new Set(initialTabs.map(tab => tab.id)))
+      : windowRecord.paneTree
+        ? filterPaneTabs(windowRecord.paneTree, new Set(initialTabs.map(tab => tab.id)))
+        : paneTreeForTabs(initialTabs);
+    this.panes = new PaneManager(paneTree);
+    for (const tab of initialTabs) if (!this.panes.findTabOwner(tab.id)) this.panes.addTab(this.panes.firstPaneId(), tab.id, false);
+    this.chrome = JSON.parse(JSON.stringify(windowRecord.chrome ?? record.chrome)) as WorkspaceChromeState;
+    this.ownedTabIds = new Set(windowRecord.tabIds);
+    this.browserStates.clear();
+    for (const tab of initialTabs) if (tab.kind === 'browser') this.hydrateBrowserTab(tab);
+    this.revalidateTabs();
+    this.ensureActivePaneHasTab();
+  }
   private hydrateBrowserTab(tab: DesktopTab): void { if (tab.kind !== 'browser') return; this.browserStates.set(tab.id, { sessionId: tab.browserSessionId, activity: tab.browserActivity ?? 'IDLE', page: tab.browserPageRevision !== undefined && tab.url ? { tabId: tab.id, url: tab.url, origin: safeBrowserOrigin(tab.url), title: tab.title, pageRevision: tab.browserPageRevision, dataClass: tab.browserDataClass ?? 'PUBLIC' } : undefined }); }
   private revalidateTabs(): void { for (const tab of this.tabs.list()) { if (!tab.object) continue; const route = this.router.open(referenceUrl(tab.object)); if (route.kind === 'locked') this.tabs.lock(tab.id, true); } }
-  private ensureActivePaneHasTab(): void { for (const pane of this.panes.leaves) if (pane.tabIds.length === 0 && this.tabs.list().length) this.panes.addTab(pane.id, this.tabs.list()[0].id, true); }
+  private ensureActivePaneHasTab(): void {
+    const tabs = this.tabs.list();
+    if (this.isPrimaryWindow && tabs.length === 0) {
+      const home = tabForReference({ kind: 'home', id: 'home', label: 'Home' }, { pinned: true });
+      this.tabs.open(home, false);
+      this.panes = new PaneManager(paneTreeForTabs([home]));
+      return;
+    }
+    for (const pane of this.panes.leaves) if (pane.tabIds.length === 0 && tabs.length) this.panes.addTab(pane.id, tabs[0].id, true);
+  }
   private restoreStartupSurface(): void {
     const preference = this.startupPreference;
     if (preference.surface === 'last-opened') return;
@@ -1226,17 +2209,47 @@ export class DesktopShellController {
     const opened = this.openReference(ref);
     if (!opened && preference.surface !== 'home') this.openReference(home);
   }
-  private persistRecord(record: WorkspaceRecord): void { this.workspaceManager.save(record); }
+  private persistRecord(record: WorkspaceRecord): void {
+    const canonical = this.workspaceManager.current();
+    const visibleTabs = record.tabs;
+    const visibleIds = new Set(visibleTabs.map(tab => tab.id));
+    const otherWindowTabIds = new Set(this.windowRegistry.list(canonical.id).filter(window => window.id !== this.windowId).flatMap(window => window.tabIds));
+    const otherTabs = canonical.tabs.filter(tab => !this.ownedTabIds.has(tab.id) || otherWindowTabIds.has(tab.id));
+    const ordered = this.isPrimaryWindow ? [...visibleTabs, ...otherTabs] : [...otherTabs, ...visibleTabs];
+    const merged = [...new Map(ordered.map(tab => [tab.id, tab])).values()];
+    const saved: WorkspaceRecord = {
+      ...canonical,
+      id: record.id,
+      name: record.name,
+      tabs: merged,
+      closedTabs: this.isPrimaryWindow ? record.closedTabs : canonical.closedTabs,
+      ...(this.isPrimaryWindow ? { paneTree: record.paneTree, activePaneId: record.activePaneId, chrome: record.chrome } : {}),
+      updatedAt: now(),
+    };
+    this.workspaceManager.save(saved);
+    this.windowRegistry.update(this.windowId, {
+      workspaceId: saved.id,
+      tabIds: [...visibleIds],
+      activeTabId: this.currentTab?.id,
+      paneTree: record.paneTree,
+      activePaneId: record.activePaneId,
+      chrome: record.chrome,
+    });
+    this.ownedTabIds = new Set(visibleIds);
+  }
   private persistAndEmit(): void { this.persistRecord(this.capture()); this.emit(); }
+  private closeEmptySecondaryWindow(): void {
+    if (this.isPrimaryWindow || this.tabs.list().length > 0) return;
+    this.windowRegistry.remove(this.windowId, false);
+    void Promise.resolve(this.windowBridge?.closeSelf?.());
+  }
   private emit(): void { for (const listener of this.listeners) listener(); }
 }
 
 function referenceUrl(ref: KeystoneObjectReference): string {
   if (ref.kind === 'graph' && ref.vaultId) return `keystone://vault/${encodeURIComponent(ref.vaultId)}/graph`;
   if (ref.kind === 'canvas' && ref.vaultId) return `keystone://vault/${encodeURIComponent(ref.vaultId)}/canvas/${encodeURIComponent(ref.id)}`;
-  if (ref.kind === 'vault' && ref.vaultId && ref.id !== ref.vaultId) return `keystone://vault/${encodeURIComponent(ref.vaultId)}/note/${encodeURIComponent(ref.id)}`;
-  if (ref.kind === 'publication' && ref.revisionAddress) return `keystone://publication/${encodeURIComponent(ref.id)}/revision/${ref.revisionAddress}`;
-  return `keystone://${ref.kind}/${encodeURIComponent(ref.id)}`;
+  return keystoneLinkForReference(ref);
 }
 
 class MemoryStorage implements DesktopStorage {
@@ -1260,4 +2273,34 @@ export function isPrimaryModifier(event: Pick<KeyboardEvent, 'metaKey' | 'ctrlKe
 export function parseKeystoneLink(input: string): KeystoneObjectReference | undefined {
   const result = new KeystoneLinkRouter().resolve(input);
   return result.kind === 'object' ? result.ref : undefined;
+}
+
+/**
+ * Return the canonical, non-bearer URL for a shell reference.
+ *
+ * Route links intentionally use short, stable names while object links keep
+ * the typed object identity.  The URL never contains payloads, credentials or
+ * permission material, so it is safe to copy between Keystone surfaces.
+ */
+export function keystoneLinkForReference(ref: KeystoneObjectReference): string {
+  const routeAliases: Partial<Record<DesktopObjectKind, string>> = {
+    home: 'home',
+    settings: ref.id === 'search' ? 'search' : ref.id === 'device' ? 'devices' : ref.id === 'settings' ? 'settings' : undefined,
+    music: ref.id === 'music' ? 'music' : undefined,
+    video: ref.id === 'video' ? 'video' : undefined,
+    shorts: ref.id === 'shorts' ? 'shorts' : undefined,
+    file: ref.id === 'files' || ref.id === 'storage' ? 'files' : undefined,
+    document: ref.id === 'documents' ? 'documents' : undefined,
+    tasks: ref.id === 'tasks' ? 'tasks' : undefined,
+    capture: ref.id === 'capture' ? 'capture' : undefined,
+    ai: ref.id === 'ai' ? 'ai' : undefined,
+    network: ref.id === 'network' ? 'network' : undefined,
+  };
+  const route = routeAliases[ref.kind];
+  if (route) return `keystone://${route}`;
+  if (ref.kind === 'tasks') return `keystone://task/${encodeURIComponent(ref.id)}`;
+  if (ref.kind === 'chat') return `keystone://conversation/${encodeURIComponent(ref.id)}`;
+  if (ref.kind === 'vault' && ref.vaultId && ref.id !== ref.vaultId) return `keystone://vault/${encodeURIComponent(ref.vaultId)}/note/${encodeURIComponent(ref.id)}`;
+  if (ref.kind === 'publication' && ref.revisionAddress) return `keystone://publication/${encodeURIComponent(ref.id)}/revision/${ref.revisionAddress}`;
+  return `keystone://${ref.kind}/${encodeURIComponent(ref.id)}`;
 }

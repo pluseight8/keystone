@@ -13,5 +13,5 @@
     "jsx": "react-jsx",
     "noEmit": true
   },
-  "include": ["src/DesktopShell.tsx", "src/desktop-shell-model.ts", "src/desktop-shell-model.test.ts", "src/desktop-calls-runtime.ts", "src/main.tsx", "src/onboarding.tsx", "src/assets.d.ts"]
+    "include": ["src/DesktopShell.tsx", "src/desktop-shell-model.ts", "src/desktop-shell-model.test.ts", "src/desktop-calls-runtime.ts", "src/main.tsx", "src/onboarding.tsx", "src/desktop-host-bridge.ts", "src/desktop-host-bridge.test.ts", "src/assets.d.ts"]
 }

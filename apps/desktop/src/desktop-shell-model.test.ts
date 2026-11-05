@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   DesktopNavigation,
   DesktopShellController,
+  DesktopWindowRegistry,
   KeystoneLinkRouter,
   PaneManager,
   TabManager,
@@ -10,6 +11,11 @@ import {
   defaultActivityBar,
   defaultShellCommands,
   defaultPaneTree,
+  DESKTOP_WINDOW_REGISTRY_KEY,
+  DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY,
+  objectTitle,
+  keystoneLinkForReference,
+  parseKeystoneLink,
   resolveOmniboxInput,
   tabForReference,
   type DesktopStorage,
@@ -52,6 +58,36 @@ describe('desktop shell tabs and panes', () => {
 });
 
 describe('desktop shell persistence and routing', () => {
+  it('starts clean before the first render and is idempotent across repeated initialization', () => {
+    const storage = new TestStorage();
+    const restored = new DesktopShellController({ storage });
+    const music = restored.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    restored.openReference({ kind: 'tasks', id: 'tasks', label: 'Tasks' });
+    expect(music).toBeTruthy();
+    const cleanFirst = new DesktopShellController({ storage, startupMode: 'clean' });
+    const cleanSecond = new DesktopShellController({ storage, startupMode: 'clean' });
+    cleanFirst.resetWindowAndTabLayout({ preserveTabs: false });
+    cleanSecond.resetWindowAndTabLayout({ preserveTabs: false });
+    expect(cleanSecond.getSnapshot().workspace.tabs.map(tab => tab.object?.id)).toEqual(['home']);
+    expect(cleanSecond.listWindows()).toHaveLength(1);
+    expect(cleanSecond.listWindows()[0]?.primary).toBe(true);
+  });
+
+  it.each([
+    ['legacy version', { version: 1, primaryWindowId: 'main', windows: [{ id: 'main', workspaceId: 'workspace-1', tabIds: ['tab-home'], primary: true }] }],
+    ['duplicate tab ownership', { version: 2, primaryWindowId: 'main', windows: [{ id: 'main', workspaceId: 'workspace-1', tabIds: ['tab-home'], primary: true }, { id: 'window-1', workspaceId: 'workspace-1', tabIds: ['tab-home'], primary: false }] }],
+    ['empty secondary', { version: 2, primaryWindowId: 'main', windows: [{ id: 'main', workspaceId: 'workspace-1', tabIds: [], primary: true }, { id: 'window-1', workspaceId: 'workspace-1', tabIds: [], primary: false }] }],
+    ['impossible geometry', { version: 2, primaryWindowId: 'main', windows: [{ id: 'main', workspaceId: 'workspace-1', tabIds: [], primary: true, geometry: { width: 1, height: 1 } }] }],
+  ])('quarantines %s instead of partially recovering it', (_name, fixture) => {
+    const storage = new TestStorage();
+    storage.setItem(DESKTOP_WINDOW_REGISTRY_KEY, JSON.stringify(fixture));
+    const registry = new DesktopWindowRegistry(storage);
+    expect(registry.list()).toEqual([]);
+    const quarantine = JSON.parse(storage.getItem(DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY) ?? '{}') as { version?: number; raw?: string };
+    expect(quarantine.version).toBe(1);
+    expect(quarantine.raw).toContain('workspace-1');
+  });
+
   it('restores a workspace and recovers from corrupted state', () => {
     const storage = new TestStorage();
     const manager = new WorkspaceManager(storage);
@@ -62,6 +98,23 @@ describe('desktop shell persistence and routing', () => {
     expect(restored.tabs.some(tab => tab.object?.id === 'plan')).toBe(true);
     storage.setItem('keystone.desktop.workspaces.v1', '{not-json');
     expect(new WorkspaceManager(storage).current().tabs.length).toBeGreaterThan(0);
+  });
+
+  it('migrates stale session presentation without touching canonical object references', () => {
+    const storage = new TestStorage();
+    const initial = new DesktopShellController({ storage });
+    const workspace = initial.getSnapshot().workspace;
+    const music = tabForReference({ kind: 'music', id: 'music', label: 'Music' });
+    const duplicateMusic = tabForReference({ kind: 'music', id: 'music', label: 'Music copy' });
+    const staleCapture = tabForReference({ kind: 'capture', id: 'capture', label: 'Quick Capture' });
+    const stale = { ...workspace, tabs: [workspace.tabs[0], music, duplicateMusic, staleCapture, staleCapture], paneTree: { type: 'leaf' as const, id: 'stale-pane', tabIds: [workspace.tabs[0].id, music.id, duplicateMusic.id, staleCapture.id] } };
+    storage.setItem('keystone.desktop.workspaces.v1', JSON.stringify({ version: 1, currentId: workspace.id, workspaces: [stale] }));
+
+    const migrated = new WorkspaceManager(storage).current();
+    expect(migrated.tabs.map(tab => tab.object?.kind)).toEqual(['home', 'music']);
+    expect(migrated.tabs.filter(tab => tab.object?.kind === 'music' && tab.object.id === 'music')).toHaveLength(1);
+    expect(migrated.tabs.some(tab => tab.object?.kind === 'capture' && tab.object.id === 'capture')).toBe(false);
+    expect(migrated.tabs.some(tab => tab.object?.kind === 'home' && tab.object.id === 'home')).toBe(true);
   });
 
   it('does not persist URL credentials or secret parameters', () => {
@@ -83,6 +136,14 @@ describe('desktop shell persistence and routing', () => {
     expect(resolveOmniboxInput('what changed today?').type).toBe('agent-query');
     expect(resolveOmniboxInput('https://example.test').type).toBe('web');
     expect(resolveOmniboxInput('keystone://chat/bob').type).toBe('object');
+    expect(parseKeystoneLink('keystone://home')).toMatchObject({ kind: 'home', id: 'home' });
+    expect(parseKeystoneLink('keystone://search')).toMatchObject({ kind: 'settings', id: 'search' });
+    expect(parseKeystoneLink('keystone://task/task-1')).toMatchObject({ kind: 'tasks', id: 'task-1' });
+    expect(parseKeystoneLink('keystone://conversation/chat-1')).toMatchObject({ kind: 'chat', id: 'chat-1' });
+    expect(keystoneLinkForReference({ kind: 'home', id: 'home' })).toBe('keystone://home');
+    expect(keystoneLinkForReference({ kind: 'tasks', id: 'task-1' })).toBe('keystone://task/task-1');
+    expect(keystoneLinkForReference({ kind: 'chat', id: 'chat-1' })).toBe('keystone://conversation/chat-1');
+    expect(parseKeystoneLink('javascript:alert(1)')).toBeUndefined();
     expect(denied.open('keystone://publication/pub-1/revision/sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa').ref).toMatchObject({ kind: 'publication', id: 'pub-1', revisionAddress: 'sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
     expect(resolveOmniboxInput('vault: security').type).toBe('search');
     expect(denied.open('keystone://vault/vault-a/note/note-a').ref).toMatchObject({ kind: 'vault', id: 'note-a', vaultId: 'vault-a' });
@@ -95,6 +156,12 @@ describe('desktop shell persistence and routing', () => {
     expect(defaultShellCommands('en').filter(command => command.id === 'compose-mail')).toHaveLength(1);
     expect(defaultActivityBar().find(item => item.id === 'mail')?.kind).toBe('mail');
     expect(defaultActivityBar().find(item => item.id === 'capture')?.kind).toBe('capture');
+    expect(defaultActivityBar().find(item => item.id === 'capture')?.icon).toBe('capture');
+    expect(defaultActivityBar().find(item => item.id === 'tasks')?.icon).toBe('task');
+    expect(defaultActivityBar().filter(item => item.visible).map(item => item.id)).toEqual(expect.arrayContaining(['home', 'search', 'music', 'video', 'capture', 'tasks', 'document', 'settings']));
+    expect(defaultActivityBar().filter(item => item.visible).map(item => item.id)).not.toEqual(expect.arrayContaining(['shorts', 'ai', 'network', 'device']));
+    expect(defaultShellCommands('en').map(command => command.id)).toEqual(expect.arrayContaining(['open-music', 'open-video', 'open-shorts', 'open-ai', 'open-connectivity']));
+    expect(objectTitle({ kind: 'network', id: 'network' })).toBe('Connectivity');
   });
 
   it('supports navigation back/forward without duplicating entries', () => {
@@ -129,6 +196,49 @@ describe('desktop shell integrations', () => {
     shell.switchWorkspace(workspace.id);
     expect(shell.getSnapshot().workspace.name).not.toBe('Planning');
     expect(shell.getSnapshot().workspace.tabs.some(tab => tab.object?.id === 'bob')).toBe(true);
+  });
+
+  it('resets window and tab presentation without deleting owner content', () => {
+    const storage = new TestStorage();
+    const shell = new DesktopShellController({ storage, windowBridge: { open: () => true, focus: () => undefined, close: () => undefined, closeSelf: () => undefined } });
+    const music = shell.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    shell.openReference({ kind: 'tasks', id: 'tasks', label: 'Tasks' });
+    shell.splitPane('vertical');
+    shell.toggleAgentPanel(true);
+    expect(shell.listWindows()).toHaveLength(1);
+    expect(shell.resetWindowAndTabLayout()).toBe(true);
+    expect(shell.listWindows()).toHaveLength(1);
+    expect(shell.getSnapshot().workspace.tabs.map(tab => tab.object?.id)).toEqual(['home', 'music', 'tasks']);
+    expect(shell.getSnapshot().workspace.paneTree.type).toBe('leaf');
+    expect(shell.getSnapshot().workspace.chrome.contextSidebarOpen).toBe(false);
+    expect(shell.getSnapshot().workspace.chrome.agentPanelOpen).toBe(false);
+    const restarted = new DesktopShellController({ storage });
+    expect(restarted.getSnapshot().workspace.tabs.some(tab => tab.object?.id === music?.object?.id)).toBe(true);
+    expect(restarted.listWindows()).toHaveLength(1);
+  });
+
+  it('can apply a fresh-tab session policy while retaining closed references for explicit reopen', () => {
+    const storage = new TestStorage();
+    const shell = new DesktopShellController({ storage });
+    const music = shell.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    expect(music).toBeTruthy();
+    shell.resetWindowAndTabLayout({ preserveTabs: false });
+    expect(shell.getSnapshot().workspace.tabs.map(tab => tab.object?.id)).toEqual(['home']);
+    expect(shell.getSnapshot().workspace.closedTabs.some(tab => tab.object?.id === 'music')).toBe(true);
+    expect(new DesktopShellController({ storage }).getSnapshot().workspace.tabs.map(tab => tab.object?.id)).toEqual(['home']);
+  });
+
+  it('closes only unpinned tabs when the tab context menu requests other tabs', () => {
+    const shell = new DesktopShellController({ storage: new TestStorage() });
+    const home = shell.currentTab!;
+    const first = shell.openReference({ kind: 'tasks', id: 'first', label: 'First' }, { allowDuplicate: true });
+    const second = shell.openReference({ kind: 'document', id: 'second', label: 'Second' }, { allowDuplicate: true });
+    shell.pinTab(first!.id);
+    shell.closeOtherTabs(second!.id);
+    const tabs = shell.getSnapshot().workspace.tabs;
+    expect(tabs.some(tab => tab.id === second!.id)).toBe(true);
+    expect(tabs.some(tab => tab.id === first!.id)).toBe(true);
+    expect(tabs.some(tab => tab.id === home.id)).toBe(true);
   });
 
   it('covers the desktop integration journey and survives a fresh controller', () => {
@@ -196,5 +306,97 @@ describe('desktop shell integrations', () => {
     const restarted = new DesktopShellController({ storage, canOpen: reference => reference.id !== 'revoked-board' });
     expect(restarted.currentTab?.object?.kind).toBe('home');
     expect(restarted.startupSurface().surface).toBe('workspace');
+  });
+});
+
+describe('cross-window tab ownership', () => {
+  it('redocks at the requested insertion index and restores one owner after restart', async () => {
+    const storage = new TestStorage();
+    const bridge = { open: () => true, focus: () => undefined, closeSelf: () => undefined };
+    const primary = new DesktopShellController({ storage, windowBridge: bridge });
+    const tasks = primary.openReference({ kind: 'tasks', id: 'tasks', label: 'Tasks' });
+    const music = primary.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    expect(tasks && music).toBeTruthy();
+    expect(await primary.openTabInNewWindow(music!.id)).toBe(true);
+    const detached = primary.listWindows().find(window => !window.primary);
+    expect(detached).toBeTruthy();
+    const child = new DesktopShellController({ storage, windowId: detached!.id, detachedTabId: music!.id, windowBridge: bridge });
+    expect(child.getSnapshot().workspace.tabs.map(tab => tab.id)).toEqual([music!.id]);
+
+    expect(child.transferTabToWindowAt(music!.id, primary.windowId, 1, 'physical-redock')).toBe(true);
+    const registry = new DesktopWindowRegistry(storage);
+    expect(registry.ownerOf(primary.getSnapshot().workspace.id, music!.id)?.id).toBe(primary.windowId);
+    expect(registry.list(primary.getSnapshot().workspace.id).flatMap(window => window.tabIds).filter(tabId => tabId === music!.id)).toHaveLength(1);
+    expect(registry.list(primary.getSnapshot().workspace.id).some(window => window.id === detached!.id)).toBe(false);
+
+    const restarted = new DesktopShellController({ storage, windowId: primary.windowId });
+    expect(restarted.getSnapshot().workspace.tabs.map(tab => tab.id)).toEqual([primary.getSnapshot().workspace.tabs[0]?.id, music!.id, tasks!.id]);
+  });
+
+  it('closes a stale secondary controller after another window accepts its tab', async () => {
+    const storage = new TestStorage();
+    const closeCalls: string[] = [];
+    const bridge = { open: () => true, focus: () => undefined, closeSelf: () => { closeCalls.push('closed'); } };
+    const primary = new DesktopShellController({ storage, windowBridge: bridge });
+    const music = primary.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    expect(music).toBeTruthy();
+    expect(await primary.openTabInNewWindow(music!.id)).toBe(true);
+    const detached = primary.listWindows().find(window => !window.primary);
+    expect(detached).toBeTruthy();
+    const child = new DesktopShellController({ storage, windowId: detached!.id, detachedTabId: music!.id, windowBridge: bridge });
+    expect(child.currentTab?.id).toBe(music!.id);
+
+    expect(primary.acceptWindowTransfer({
+      type: 'start',
+      transactionId: 'physical-redock-refresh',
+      workspaceId: primary.getSnapshot().workspace.id,
+      sourceWindowId: child.windowId,
+      tabId: music!.id,
+      sourceIndex: 0,
+      tab: child.currentTab!,
+    }, 1)).toBe(true);
+    child.refreshFromStorage();
+    expect(child.getSnapshot().workspace.tabs).toHaveLength(0);
+    expect(closeCalls).toContain('closed');
+    expect(new DesktopWindowRegistry(storage).get(detached!.id)).toBeUndefined();
+  });
+
+  it('keeps an unregistered secondary isolated until its registry record arrives', () => {
+    const storage = new TestStorage();
+    const closed: string[] = [];
+    const primary = new DesktopShellController({ storage });
+    primary.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    const child = new DesktopShellController({
+      storage,
+      windowId: 'window-arriving-late',
+      windowBridge: { open: () => true, focus: () => undefined, closeSelf: () => { closed.push('secondary'); } },
+    });
+
+    expect(child.windowId).toBe('window-arriving-late');
+    expect(child.isPrimaryWindow).toBe(false);
+    expect(child.getSnapshot().workspace.tabs).toHaveLength(0);
+
+    child.refreshFromStorage();
+    expect(child.getSnapshot().workspace.tabs).toHaveLength(0);
+    expect(closed).toEqual(['secondary']);
+  });
+
+  it('rejects a stale transfer and merges a secondary window without duplicate ownership', () => {
+    const storage = new TestStorage();
+    const shell = new DesktopShellController({ storage });
+    const first = shell.openReference({ kind: 'music', id: 'music', label: 'Music' });
+    const second = shell.openReference({ kind: 'video', id: 'video', label: 'Video' });
+    expect(first && second).toBeTruthy();
+    const registry = new DesktopWindowRegistry(storage);
+    const detached = registry.createDetached(shell.getSnapshot().workspace.id, first!.id);
+    expect(detached).toBeTruthy();
+    expect(registry.transferTabAt(shell.getSnapshot().workspace.id, first!.id, detached!.id, 'main', 1)).toBeTruthy();
+    expect(registry.transferTabAt(shell.getSnapshot().workspace.id, first!.id, detached!.id, 'main', 1)).toBeUndefined();
+    const secondWindow = registry.createDetached(shell.getSnapshot().workspace.id, second!.id);
+    expect(secondWindow).toBeTruthy();
+    expect(registry.transferAllAt(shell.getSnapshot().workspace.id, secondWindow!.id, 'main')).toBe(true);
+    const owned = registry.list(shell.getSnapshot().workspace.id).flatMap(window => window.tabIds);
+    expect(owned.filter(tabId => tabId === second!.id)).toHaveLength(1);
+    expect(registry.get(secondWindow!.id)).toBeTruthy();
   });
 });

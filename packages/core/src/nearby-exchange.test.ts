@@ -41,9 +41,19 @@ describe('R0P85 NearbyExchangeService', () => {
       expect(incoming).toMatchObject({ offerId: offer.offerId, direction: 'INCOMING', objectType: 'text', status: 'OFFERED' });
       expect((await bob.transfersList()).find(value => value.offerId === offer.offerId)?.status).toBe('OFFERED');
       await bob.acceptOffer(offer.offerId);
-      await pause();
-      expect((await bob.transfersList()).find(value => value.offerId === offer.offerId)).toMatchObject({ status: 'RECEIVED', objectType: 'text', progress: 1 });
-      expect((await alice.transfersList()).find(value => value.offerId === offer.offerId)).toMatchObject({ status: 'RECEIVED' });
+      let received = (await bob.transfersList()).find(value => value.offerId === offer.offerId);
+      const deadline = Date.now() + 2_000;
+      while (received?.status !== 'RECEIVED' && Date.now() < deadline) {
+        await pause(20);
+        received = (await bob.transfersList()).find(value => value.offerId === offer.offerId);
+      }
+      expect(received).toMatchObject({ status: 'RECEIVED', objectType: 'text', progress: 1 });
+      let senderTransfer = (await alice.transfersList()).find(value => value.offerId === offer.offerId);
+      while (senderTransfer?.status !== 'RECEIVED' && Date.now() < deadline) {
+        await pause(20);
+        senderTransfer = (await alice.transfersList()).find(value => value.offerId === offer.offerId);
+      }
+      expect(senderTransfer).toMatchObject({ status: 'RECEIVED' });
       expect((await alice.endpoints())[0]?.socialState).toBe('ANONYMOUS');
       expect((await bob.endpoints())[0]?.socialState).toBe('ANONYMOUS');
     } finally { await alice.close(); await bob.close(); }

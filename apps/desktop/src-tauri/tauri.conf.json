@@ -14,21 +14,26 @@
       {
         "label": "main",
         "title": "Keystone",
-        "width": 760,
-        "height": 420,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
         "center": true,
-        "visible": false,
-        "transparent": true,
-        "decorations": false,
-        "resizable": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "shadow": false
+        "visible": true,
+        "transparent": false,
+        "decorations": true,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "shadow": true
       }
     ],
     "withGlobalTauri": false,
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: ws://127.0.0.1:*; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+      "csp": "default-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:*; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {
