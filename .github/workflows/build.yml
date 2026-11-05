@@ -43,7 +43,9 @@ jobs:
         with: { workspaces: apps/desktop/src-tauri -> target }
       # release:check runs `cargo check` for the Tauri host, which links WebKitGTK through pkg-config.
       - name: Linux WebKit dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        # A stalled mirror hung this step for 20+ minutes; fail fast with a log instead.
+        timeout-minutes: 10
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --frozen-lockfile
       - run: pnpm release:check
 
@@ -75,7 +77,9 @@ jobs:
         with: { workspaces: apps/desktop/src-tauri -> target }
       - name: Linux WebKit dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        # A stalled mirror hung this step for 20+ minutes; fail fast with a log instead.
+        timeout-minutes: 10
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
       - run: pnpm install --frozen-lockfile
       - name: Generate updater configuration for a tagged release
         if: startsWith(github.ref, 'refs/tags/v')

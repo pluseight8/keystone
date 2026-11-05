@@ -5,6 +5,7 @@ import { ContactEnvelopeSecurity } from './messaging.js';
 import { InMemoryEncryptedSocialStateStore } from './storage.js';
 import { InMemorySharedSpaceStateStore, PersistentSharedSpaceStateStore, SharedSpaceError, SharedSpaceService } from './spaces.js';
 import { ControlledNetwork, ControlledTransport, settle } from '../testing/distributed-harness.js';
+import { eventuallyNearby } from '../testing/nearby-exchange-fixture.js';
 
 type Peer = { keys: DeviceSessionKeys; transport: ControlledTransport; service: SharedSpaceService; security: ContactEnvelopeSecurity };
 
@@ -38,9 +39,12 @@ describe('SharedSpace', () => {
   it('encrypts private spaces, rotates keys on removal, and denies old members', async () => {
     const { values } = await peers(['alice', 'bob']); const alice = values.alice!.service; const bob = values.bob!.service;
     const space = await alice.createSpace({ title: 'Private Trip', description: 'not public', visibility: 'private', members: [{ identityId: values.bob!.keys.nodeId, role: 'editor' }] });
-    await alice.publish(space.id); await settle(); const document = await alice.createDocument(space.id, { title: 'Secret', body: 'ciphertext only' }); await settle();
+    await alice.publish(space.id); await settle(); const document = await alice.createDocument(space.id, { title: 'Secret', body: 'ciphertext only' });
+    // Delivery includes encryption; poll instead of a fixed 50 ms settle, which flaked under CI load.
+    await eventuallyNearby(async () => { try { return bob.listDocuments(space.id)[0]?.body; } catch { return undefined; } }, body => body === 'ciphertext only');
     expect(bob.listDocuments(space.id)[0]?.body).toBe('ciphertext only'); expect(bob.getSpace(space.id)?.title).toBe('Private Trip');
-    await alice.removeMember(space.id, values.bob!.keys.nodeId); await settle();
+    await alice.removeMember(space.id, values.bob!.keys.nodeId);
+    await eventuallyNearby(async () => { try { bob.listDocuments(space.id); return false; } catch (error) { return error instanceof SharedSpaceError; } }, denied => denied);
     expect(() => bob.listDocuments(space.id)).toThrow(SharedSpaceError);
     await expect(bob.updateDocument(space.id, document.id, { body: 'forged' })).rejects.toMatchObject({ code: 'NOT_AUTHORIZED' });
     await Promise.all(Object.values(values).map(peer => peer.service.close()));

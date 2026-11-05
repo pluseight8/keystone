@@ -15,6 +15,8 @@ type Response = { ok: boolean; result?: any; error?: string };
 const roots: string[] = [];
 const peers: ChildProcess[] = [];
 const peerLogs = new Map<string, string>();
+// The live process per role: a restart must not overlap the previous instance (same identity and state directory).
+const peerByRole = new Map<string, ChildProcess>();
 let shutdownRequested = false;
 let cleanupInstalled = false;
 
@@ -646,8 +648,15 @@ async function startPeer(role: Role, configPath: string, options: { directory?: 
   const restoreSecretEnv = 'KEYSTONE_NETWORK_RESTORE_' + 'SECRET';
   const started = Date.now();
   installInterruptCleanup();
+  const previous = peerByRole.get(role);
+  if (previous && !childExited(previous)) {
+    // `stop` answers before the old process has closed its transport and state; two instances of one
+    // identity would both announce its topic and write the same files.
+    await Promise.race([waitExit(previous), pause(15_000)]);
+    if (!childExited(previous)) throw new Error(`${role} restarted while the previous process was still running`);
+  }
   const child = spawn(process.execPath, [vitest, 'run', 'src/testing/network-peer.test.ts', '--pool=forks', '--poolOptions.forks.singleFork=true'], { cwd: coreRoot, detached: process.platform !== 'win32', env: { ...process.env, KEYSTONE_NETWORK_TIMELINE: process.env.KEYSTONE_NETWORK_TIMELINE, KEYSTONE_NETWORK_CONFIG: configPath, KEYSTONE_NETWORK_ROLE: role, KEYSTONE_NETWORK_DIRECTORY: directory, ...(options.restoreFile ? { KEYSTONE_NETWORK_RESTORE_FILE: options.restoreFile } : {}), ...(options.restoreSecret ? { [restoreSecretEnv]: options.restoreSecret } : {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
-  peers.push(child); let output = ''; peerLogs.set(role, output); child.stdout?.on('data', value => { output += value; peerLogs.set(role, output); process.env.KEYSTONE_NETWORK_TIMELINE === '1' && process.stderr.write(`[${role}] ${String(value)}`); }); child.stderr?.on('data', value => { output += value; peerLogs.set(role, output); process.env.KEYSTONE_NETWORK_TIMELINE === '1' && process.stderr.write(`[${role}] ${String(value)}`); });
+  peers.push(child); peerByRole.set(role, child); let output = ''; peerLogs.set(role, output); child.stdout?.on('data', value => { output += value; peerLogs.set(role, output); process.env.KEYSTONE_NETWORK_TIMELINE === '1' && process.stderr.write(`[${role}] ${String(value)}`); }); child.stderr?.on('data', value => { output += value; peerLogs.set(role, output); process.env.KEYSTONE_NETWORK_TIMELINE === '1' && process.stderr.write(`[${role}] ${String(value)}`); });
   await eventually(async () => !!(await readJson(join(dirname(configPath), role, 'ready.json'))), 30_000, () => output);
   if (process.env.KEYSTONE_NETWORK_TIMELINE === '1') console.error(`[R0P67-TIMELINE] ${new Date().toISOString()} harness.startPeer role=${role} durationMs=${Date.now() - started}`);
   return child;
