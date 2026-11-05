@@ -56,6 +56,17 @@ Timeouts and route observations remain honest. A local outbox may continue
 working while a route is unavailable, and retry uses bounded backoff. An
 already applied operation is deduplicated instead of being executed again.
 
+`FabricTransport` implements step 5 for every application envelope: the
+destination answers with a signed `keystone.delivery.ack` naming the envelope
+id. Until that arrives, the sender resends the same envelope on a bounded
+schedule (2, 4, 8 and 16 seconds by default, never past its expiry); the
+receiver's envelope-id deduplication keeps a resend from becoming a second
+operation. Only the destination can clear a pending envelope. This covers
+frames a provider accepted but the network lost, for example when Hyperswarm
+replaces a duplicate connection after both peers restart. The receipt means
+the envelope arrived, not that the application accepted its content, and a
+lost first copy can still arrive after a later envelope.
+
 ## Delivery profiles
 
 Profiles describe requirements, not technologies:

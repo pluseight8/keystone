@@ -731,7 +731,15 @@ export interface FabricTransportOptions {
   readonly applicationSecurity: EnvelopeSecurity;
   readonly defaultRequirement?: DeliveryRequirement;
   readonly requirementForEnvelope?: (envelope: Envelope) => DeliveryRequirement;
+  /** Delays before resending an envelope the destination has not acknowledged.
+   * An empty list disables destination acknowledgements. */
+  readonly retransmitDelaysMs?: readonly number[];
 }
+
+/** Destination receipt for application envelopes (delivery level 5 in docs/connectivity.md). */
+export const FABRIC_DELIVERY_ACK_TYPE = 'keystone.delivery.ack';
+const DEFAULT_RETRANSMIT_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000, 16_000];
+const MAX_UNACKNOWLEDGED_ENVELOPES = 1_024;
 
 export function deliveryProfileForEnvelope(envelope: Pick<Envelope, 'type'>): DeliveryRequirement {
   const type = envelope.type.toLowerCase();
@@ -761,6 +769,7 @@ export function deliveryProfileForEnvelope(envelope: Pick<Envelope, 'type'>): De
 export class FabricTransport implements Transport {
   private readonly handlers = new Set<(envelope: Envelope) => void | Promise<void>>();
   private readonly connected = new Set<NodeId>();
+  private readonly unacknowledged = new Map<string, { readonly peer: NodeId; readonly envelope: Envelope; attempt: number; timer?: ReturnType<typeof setTimeout> }>();
   private readonly unsubscribe: () => void;
   private closed = false;
   constructor(private readonly options: FabricTransportOptions) {
@@ -798,6 +807,11 @@ export class FabricTransport implements Transport {
     const envelope = maybeEnvelope ?? peerOrEnvelope as Envelope; const peer = maybeEnvelope ? peerOrEnvelope as NodeId : envelope.recipient;
     if (envelope.recipient !== peer) throw new ConnectivityError('POLICY_DENIED', 'Fabric recipient does not match application envelope');
     if (this.closed) throw new ConnectivityError('SESSION_FAILED', 'Fabric transport is closed');
+    await this.deliverEnvelope(peer, envelope, envelope.id);
+    if (envelope.type !== FABRIC_DELIVERY_ACK_TYPE) this.awaitAcknowledgement(peer, envelope);
+  }
+
+  private async deliverEnvelope(peer: NodeId, envelope: Envelope, requestId: string): Promise<void> {
     const serialized = JSON.stringify(envelope); if (!serialized) throw new ConnectivityError('POLICY_DENIED', 'Application envelope is not serializable');
     const protectedEnvelope = await createOpaqueDeliveryEnvelope({ id: envelope.id, destination: peer, ciphertext: encodeOpaqueBytes(utf8(serialized)), replayNonce: envelope.nonce, expiresAt: envelope.expiresAt, requirement: this.requirementFor(envelope) });
     // The application envelope id is the logical operation/replay key.  A
@@ -805,13 +819,53 @@ export class FabricTransport implements Transport {
     // deduplication and the service's R0P58 nonce/object guards.
     let result: DeliveryResult;
     try {
-      result = await this.options.fabric.deliver({ id: envelope.id, destination: peer, envelope: protectedEnvelope, requirement: this.requirementFor(envelope) });
+      result = await this.options.fabric.deliver({ id: requestId, destination: peer, envelope: protectedEnvelope, requirement: this.requirementFor(envelope) });
     } catch (error) {
       this.connected.delete(peer);
       throw error;
     }
     if (!result.ok) { this.connected.delete(peer); throw new ConnectivityError(result.failure?.code ?? 'DELIVERY_UNCONFIRMED', result.failure?.message ?? 'Fabric delivery failed'); }
     this.connected.add(peer);
+  }
+
+  /**
+   * A provider accepting a frame is not proof the destination got it: a frame
+   * written to a socket that is being replaced (e.g. Hyperswarm dropping a
+   * duplicate connection after both peers restart) is lost silently. Resend
+   * the same envelope until the destination acknowledges it, it expires, or
+   * the bounded schedule ends. The receiver's envelope-id deduplication keeps
+   * a resend from becoming a second operation.
+   */
+  private awaitAcknowledgement(peer: NodeId, envelope: Envelope): void {
+    const delays = this.options.retransmitDelaysMs ?? DEFAULT_RETRANSMIT_DELAYS_MS;
+    if (!delays.length || this.closed) return;
+    if (this.unacknowledged.size >= MAX_UNACKNOWLEDGED_ENVELOPES) { const oldest = this.unacknowledged.keys().next().value as string | undefined; if (oldest) this.forgetAcknowledgement(oldest); }
+    this.forgetAcknowledgement(envelope.id);
+    const entry: { readonly peer: NodeId; readonly envelope: Envelope; attempt: number; timer?: ReturnType<typeof setTimeout> } = { peer, envelope, attempt: 0 };
+    this.unacknowledged.set(envelope.id, entry);
+    const schedule = (): void => {
+      const delay = delays[entry.attempt];
+      if (delay === undefined || this.closed) { this.unacknowledged.delete(envelope.id); return; }
+      entry.timer = setTimeout(() => {
+        if (this.unacknowledged.get(envelope.id) !== entry) return;
+        if (Date.parse(envelope.expiresAt) <= Date.now()) { this.unacknowledged.delete(envelope.id); return; }
+        entry.attempt += 1;
+        void this.deliverEnvelope(peer, envelope, `${envelope.id}#resend-${entry.attempt}`).catch(() => undefined).finally(() => { if (this.unacknowledged.get(envelope.id) === entry) schedule(); });
+      }, delay);
+      (entry.timer as { unref?: () => void }).unref?.();
+    };
+    schedule();
+  }
+
+  private forgetAcknowledgement(id: string): void { const entry = this.unacknowledged.get(id); if (entry?.timer) clearTimeout(entry.timer); this.unacknowledged.delete(id); }
+
+  /** Number of sent envelopes still waiting for a destination receipt (diagnostics and tests). */
+  get unacknowledgedCount(): number { return this.unacknowledged.size; }
+
+  private async acknowledge(envelope: Envelope): Promise<void> {
+    const unsigned = { version: 1 as const, type: FABRIC_DELIVERY_ACK_TYPE, id: crypto.randomUUID(), sender: this.options.localNodeId, recipient: envelope.sender, nonce: crypto.randomUUID(), expiresAt: new Date(Date.now() + 60_000).toISOString(), body: { ids: [envelope.id] } };
+    const ack: Envelope = { ...unsigned, signature: await this.options.applicationSecurity.sign(unsigned) };
+    await this.deliverEnvelope(envelope.sender, ack, ack.id);
   }
   on(event: 'message', handler: (envelope: Envelope) => void | Promise<void>): () => void { if (event !== 'message') throw new Error(`Unsupported event: ${event}`); this.handlers.add(handler); return () => this.handlers.delete(handler); }
   onMessage(handler: (envelope: Envelope) => void | Promise<void>): () => void { return this.on('message', handler); }
@@ -839,9 +893,19 @@ export class FabricTransport implements Transport {
     return live;
   }
   async reconnect(peer: NodeId): Promise<void> { this.connected.delete(peer); await this.connect(peer); }
-  async close(): Promise<void> { this.closed = true; this.connected.clear(); this.unsubscribe(); await this.options.fabric.stop(); }
+  async close(): Promise<void> { this.closed = true; this.connected.clear(); for (const id of [...this.unacknowledged.keys()]) this.forgetAcknowledgement(id); this.unsubscribe(); await this.options.fabric.stop(); }
   private requirementFor(envelope: Envelope | undefined): DeliveryRequirement { return envelope ? this.options.requirementForEnvelope?.(envelope) ?? this.options.defaultRequirement ?? deliveryProfileForEnvelope(envelope) : this.options.defaultRequirement ?? { profile: 'INTERACTIVE' }; }
-  private async receive(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<void> { if (protectedEnvelope.destination !== this.options.localNodeId) return; let envelope: Envelope; try { const bytes = base64ToBytes(protectedEnvelope.ciphertext); envelope = parseBoundedJson<Envelope>(bytes, { maxDepth: 32, maxCollectionItems: 4_096, maxStringBytes: 1 * 1024 * 1024, maxNodes: 32_768 }); validateProtocolEnvelope(envelope); } catch { return; } if (envelope.recipient !== this.options.localNodeId || envelope.id !== protectedEnvelope.id || envelope.nonce !== protectedEnvelope.replayNonce) return; if (this.options.applicationSecurity && !(await this.options.applicationSecurity.verify(envelope))) return; for (const handler of this.handlers) await handler(envelope); }
+  private async receive(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<void> { if (protectedEnvelope.destination !== this.options.localNodeId) return; let envelope: Envelope; try { const bytes = base64ToBytes(protectedEnvelope.ciphertext); envelope = parseBoundedJson<Envelope>(bytes, { maxDepth: 32, maxCollectionItems: 4_096, maxStringBytes: 1 * 1024 * 1024, maxNodes: 32_768 }); validateProtocolEnvelope(envelope); } catch { return; } if (envelope.recipient !== this.options.localNodeId || envelope.id !== protectedEnvelope.id || envelope.nonce !== protectedEnvelope.replayNonce) return; if (this.options.applicationSecurity && !(await this.options.applicationSecurity.verify(envelope))) return;
+    if (envelope.type === FABRIC_DELIVERY_ACK_TYPE) {
+      // Only the destination of an envelope can confirm it; the ack is signed and verified like any envelope.
+      const ids = (envelope.body as { ids?: unknown } | undefined)?.ids;
+      if (Array.isArray(ids)) for (const id of ids.slice(0, 64)) if (typeof id === 'string' && this.unacknowledged.get(id)?.peer === envelope.sender) this.forgetAcknowledgement(id);
+      return;
+    }
+    // A handler failure is an application decision about the content; the envelope itself still arrived.
+    try { for (const handler of this.handlers) await handler(envelope); }
+    finally { if ((this.options.retransmitDelaysMs ?? DEFAULT_RETRANSMIT_DELAYS_MS).length) void this.acknowledge(envelope).catch(() => undefined); }
+  }
 }
 
 /** Simple provider factory useful to hosts and plugin adapters. */
