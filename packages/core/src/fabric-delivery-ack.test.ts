@@ -43,6 +43,21 @@ describe('FabricTransport destination acknowledgements', () => {
     await alice.close(); await bob.close();
   });
 
+  it('acknowledges again when the first acknowledgement was lost, without running the handler twice', async () => {
+    const aliceProvider = new ControlledTransportProvider('alice-provider'); const bobProvider = new LossyProvider('bob-provider', 1);
+    aliceProvider.connectPeer('bob', bobProvider); bobProvider.connectPeer('alice', aliceProvider);
+    // One quick resend, then a long gap: only a real re-acknowledgement can clear the entry within the wait.
+    const alice = node('alice', aliceProvider, [30, 10_000]); const bob = node('bob', bobProvider, [30, 60, 120]);
+    await alice.start(); await bob.start();
+    const received: Envelope[] = []; bob.onMessage(value => { received.push(value); });
+    await alice.send('bob', envelope('alice', 'bob'));
+    await until(() => received.length === 1);
+    expect(alice.unacknowledgedCount).toBe(1); // Bob's first ack was dropped
+    await until(() => alice.unacknowledgedCount === 0);
+    expect(received).toHaveLength(1);
+    await alice.close(); await bob.close();
+  });
+
   it('stops resending once the destination acknowledges', async () => {
     const aliceProvider = new ControlledTransportProvider('alice-provider'); const bobProvider = new ControlledTransportProvider('bob-provider');
     aliceProvider.connectPeer('bob', bobProvider); bobProvider.connectPeer('alice', aliceProvider);

@@ -586,6 +586,7 @@ export class ConnectivityFabric {
   private readonly providers = new Map<TransportProviderId, TransportProvider>();
   private readonly subscriptions = new Set<(event: ConnectivityEvent) => void>();
   private readonly envelopeSubscriptions = new Set<(envelope: OpaqueDeliveryEnvelope, providerId?: TransportProviderId) => void | Promise<void>>();
+  private readonly duplicateSubscriptions = new Set<(envelope: OpaqueDeliveryEnvelope) => void | Promise<void>>();
   private readonly providerUnsubscribers = new Map<TransportProviderId, () => void>();
   private readonly reassembler = new OpaqueFragmentReassembler();
   private readonly seen = new Map<string, number>();
@@ -605,6 +606,8 @@ export class ConnectivityFabric {
   providersList(): readonly TransportProvider[] { return [...this.providers.values()]; }
   subscribe(listener: (event: ConnectivityEvent) => void): () => void { this.subscriptions.add(listener); return () => this.subscriptions.delete(listener); }
   onOpaqueEnvelope(listener: (envelope: OpaqueDeliveryEnvelope, providerId?: TransportProviderId) => void | Promise<void>): () => void { this.envelopeSubscriptions.add(listener); return () => this.envelopeSubscriptions.delete(listener); }
+  /** Envelopes dropped by receive-side deduplication; never delivered to applications. */
+  onDuplicateOpaqueEnvelope(listener: (envelope: OpaqueDeliveryEnvelope) => void | Promise<void>): () => void { this.duplicateSubscriptions.add(listener); return () => this.duplicateSubscriptions.delete(listener); }
   eventHistory(): readonly ConnectivityEvent[] { return this.events.map(event => structuredClone(event)); }
   snapshotConfiguration(): ConnectivityFabricSnapshot { return { version: 1, providers: this.providersList().map(provider => ({ id: provider.id, type: provider.type, enabled: provider.health().availability !== 'UNSUPPORTED' })) }; }
   async start(): Promise<void> { if (this.running) return; for (const provider of this.providers.values()) { await provider.start(); this.providerUnsubscribers.set(provider.id, provider.receiveOpaqueFrame((frame, session) => this.receive(frame, provider.id, session))); } this.running = true; }
@@ -700,7 +703,7 @@ export class ConnectivityFabric {
   snapshot(): ConnectivityStateSnapshot {
     const available = this.providersList().filter(provider => { try { const availability = provider.health().availability; return availability === 'AVAILABLE' || availability === 'DEGRADED'; } catch { return false; } }); const ids = available.map(provider => provider.id); const gateway = available.some(provider => provider.type === 'GatewayMeshTransport'); const directIds = available.filter(provider => provider.type !== 'GatewayMeshTransport' && !safeCapabilities(provider).includes('STORE_FORWARD_FUTURE')).map(provider => provider.id); const internet = available.some(provider => provider.type === 'InternetTransport'); const local = available.some(provider => provider.type === 'LocalNetworkTransport'); const mesh = available.some(provider => safeCapabilities(provider).includes('MESH')); const nearby = available.some(provider => provider.type === 'BluetoothTransport' || provider.type === 'WiFiDirectTransport' || mesh); const delayed = available.some(provider => safeCapabilities(provider).includes('STORE_FORWARD_FUTURE')); let state: ConnectivityState = 'DEVICE_ONLY'; if (internet) state = 'GLOBAL_NETWORK'; else if (local) state = 'LOCAL_NETWORK'; else if (gateway) state = 'RELAYED_GLOBAL'; else if (mesh) state = 'NEARBY_MESH'; else if (nearby) state = 'NEARBY'; else if (delayed) state = 'DELAY_TOLERANT'; else if (ids.length) state = 'RESTRICTED_NETWORK'; return { state, reachability: directIds.length ? 'DIRECT' : gateway ? 'RELAYED' : delayed ? 'EVENTUALLY' : 'UNAVAILABLE', internetAvailable: internet, localNetworkAvailable: local, nearbyAvailable: nearby, availableProviders: ids, observedAt: nowIso() };
   }
-  private async receive(frame: OpaqueFrame, providerId: TransportProviderId, session?: TransportSession): Promise<void> { let envelope: OpaqueDeliveryEnvelope | undefined; try { envelope = isOpaqueEnvelope(frame) ? frame : await this.reassembler.add(frame); if (envelope) { validateOpaqueDeliveryEnvelope(envelope); await verifyOpaqueIntegrity(envelope); } } catch { this.emit({ type: 'resource_pressure', at: nowIso(), providerId, sessionId: session?.id, metadata: { rejected: true } }); return; } if (!envelope || Date.parse(envelope.expiresAt) <= this.now()) return; const seenKey = seenKeyForEnvelope(envelope); const seenAt = this.seen.get(seenKey); if (seenAt !== undefined) return; this.rememberSeen(seenKey); for (const listener of this.envelopeSubscriptions) await listener(envelope, providerId); this.emit({ type: 'delivery_state', at: nowIso(), providerId, sessionId: session?.id, state: 'RECEIVED' }); }
+  private async receive(frame: OpaqueFrame, providerId: TransportProviderId, session?: TransportSession): Promise<void> { let envelope: OpaqueDeliveryEnvelope | undefined; try { envelope = isOpaqueEnvelope(frame) ? frame : await this.reassembler.add(frame); if (envelope) { validateOpaqueDeliveryEnvelope(envelope); await verifyOpaqueIntegrity(envelope); } } catch { this.emit({ type: 'resource_pressure', at: nowIso(), providerId, sessionId: session?.id, metadata: { rejected: true } }); return; } if (!envelope || Date.parse(envelope.expiresAt) <= this.now()) return; const seenKey = seenKeyForEnvelope(envelope); const seenAt = this.seen.get(seenKey); if (seenAt !== undefined) { for (const listener of this.duplicateSubscriptions) await listener(envelope); return; } this.rememberSeen(seenKey); for (const listener of this.envelopeSubscriptions) await listener(envelope, providerId); this.emit({ type: 'delivery_state', at: nowIso(), providerId, sessionId: session?.id, state: 'RECEIVED' }); }
   private rememberSeen(key: string): void { this.sweepSeen(); if (!this.seen.has(key) && this.seen.size >= MAX_SEEN_ENVELOPES) { const oldest = this.seen.keys().next().value as string | undefined; if (oldest) this.seen.delete(oldest); } this.seen.set(key, this.now()); }
   private sweepSeen(): void { const cutoff = this.now() - 7 * 24 * 60 * 60_000; for (const [id, at] of this.seen) if (at < cutoff) this.seen.delete(id); }
   private emit(event: ConnectivityEvent): void { this.events.push(event); if (this.events.length > this.options.maxEvents) this.events.shift(); for (const listener of this.subscriptions) listener(event); }
@@ -740,6 +743,7 @@ export interface FabricTransportOptions {
 export const FABRIC_DELIVERY_ACK_TYPE = 'keystone.delivery.ack';
 const DEFAULT_RETRANSMIT_DELAYS_MS: readonly number[] = [2_000, 4_000, 8_000, 16_000];
 const MAX_UNACKNOWLEDGED_ENVELOPES = 1_024;
+const MAX_REACKNOWLEDGEMENTS = 4;
 
 export function deliveryProfileForEnvelope(envelope: Pick<Envelope, 'type'>): DeliveryRequirement {
   const type = envelope.type.toLowerCase();
@@ -770,11 +774,13 @@ export class FabricTransport implements Transport {
   private readonly handlers = new Set<(envelope: Envelope) => void | Promise<void>>();
   private readonly connected = new Set<NodeId>();
   private readonly unacknowledged = new Map<string, { readonly peer: NodeId; readonly envelope: Envelope; attempt: number; timer?: ReturnType<typeof setTimeout> }>();
+  private readonly reacknowledged = new Map<string, number>();
   private readonly unsubscribe: () => void;
   private closed = false;
   constructor(private readonly options: FabricTransportOptions) {
     if (!options.applicationSecurity) throw new ConnectivityError('POLICY_DENIED', 'FabricTransport requires application envelope security');
     const unsubscribeEnvelope = options.fabric.onOpaqueEnvelope((protectedEnvelope) => this.receive(protectedEnvelope));
+    const unsubscribeDuplicate = options.fabric.onDuplicateOpaqueEnvelope((protectedEnvelope) => this.receiveDuplicate(protectedEnvelope));
     // Provider removal is an unambiguous lifecycle signal.  Drop all
     // historical hints rather than trying to associate a provider event with
     // a peer (the cache is deliberately aggregate); a later live-state query
@@ -782,7 +788,7 @@ export class FabricTransport implements Transport {
     const unsubscribeFabric = options.fabric.subscribe(event => {
       if (event.type === 'provider_unavailable') this.connected.clear();
     });
-    this.unsubscribe = () => { unsubscribeEnvelope(); unsubscribeFabric(); };
+    this.unsubscribe = () => { unsubscribeEnvelope(); unsubscribeDuplicate(); unsubscribeFabric(); };
   }
   /** The compatibility facade is intentionally branded for architecture
    * checks and diagnostics.  Application services should receive this
@@ -895,7 +901,24 @@ export class FabricTransport implements Transport {
   async reconnect(peer: NodeId): Promise<void> { this.connected.delete(peer); await this.connect(peer); }
   async close(): Promise<void> { this.closed = true; this.connected.clear(); for (const id of [...this.unacknowledged.keys()]) this.forgetAcknowledgement(id); this.unsubscribe(); await this.options.fabric.stop(); }
   private requirementFor(envelope: Envelope | undefined): DeliveryRequirement { return envelope ? this.options.requirementForEnvelope?.(envelope) ?? this.options.defaultRequirement ?? deliveryProfileForEnvelope(envelope) : this.options.defaultRequirement ?? { profile: 'INTERACTIVE' }; }
-  private async receive(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<void> { if (protectedEnvelope.destination !== this.options.localNodeId) return; let envelope: Envelope; try { const bytes = base64ToBytes(protectedEnvelope.ciphertext); envelope = parseBoundedJson<Envelope>(bytes, { maxDepth: 32, maxCollectionItems: 4_096, maxStringBytes: 1 * 1024 * 1024, maxNodes: 32_768 }); validateProtocolEnvelope(envelope); } catch { return; } if (envelope.recipient !== this.options.localNodeId || envelope.id !== protectedEnvelope.id || envelope.nonce !== protectedEnvelope.replayNonce) return; if (this.options.applicationSecurity && !(await this.options.applicationSecurity.verify(envelope))) return;
+  /** Parse, bind and verify an incoming application envelope; undefined when it must be ignored. */
+  private async decode(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<Envelope | undefined> { if (protectedEnvelope.destination !== this.options.localNodeId) return undefined; let envelope: Envelope; try { const bytes = base64ToBytes(protectedEnvelope.ciphertext); envelope = parseBoundedJson<Envelope>(bytes, { maxDepth: 32, maxCollectionItems: 4_096, maxStringBytes: 1 * 1024 * 1024, maxNodes: 32_768 }); validateProtocolEnvelope(envelope); } catch { return undefined; } if (envelope.recipient !== this.options.localNodeId || envelope.id !== protectedEnvelope.id || envelope.nonce !== protectedEnvelope.replayNonce) return undefined; if (this.options.applicationSecurity && !(await this.options.applicationSecurity.verify(envelope))) return undefined; return envelope; }
+
+  /**
+   * The first acknowledgement can be lost too. A resend is then dropped by
+   * Fabric deduplication before it reaches the application, so confirm it
+   * again here (bounded per envelope) without running any handler twice.
+   */
+  private async receiveDuplicate(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<void> {
+    if (!(this.options.retransmitDelaysMs ?? DEFAULT_RETRANSMIT_DELAYS_MS).length) return;
+    const envelope = await this.decode(protectedEnvelope); if (!envelope || envelope.type === FABRIC_DELIVERY_ACK_TYPE) return;
+    const count = (this.reacknowledged.get(envelope.id) ?? 0) + 1; if (count > MAX_REACKNOWLEDGEMENTS) return;
+    if (!this.reacknowledged.has(envelope.id) && this.reacknowledged.size >= MAX_UNACKNOWLEDGED_ENVELOPES) { const oldest = this.reacknowledged.keys().next().value as string | undefined; if (oldest) this.reacknowledged.delete(oldest); }
+    this.reacknowledged.set(envelope.id, count);
+    await this.acknowledge(envelope).catch(() => undefined);
+  }
+
+  private async receive(protectedEnvelope: OpaqueDeliveryEnvelope): Promise<void> { const envelope = await this.decode(protectedEnvelope); if (!envelope) return;
     if (envelope.type === FABRIC_DELIVERY_ACK_TYPE) {
       // Only the destination of an envelope can confirm it; the ack is signed and verified like any envelope.
       const ids = (envelope.body as { ids?: unknown } | undefined)?.ids;
