@@ -1,7 +1,0 @@
-/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/form_urlencoded-e08093ea8be9a271.d: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/src/lib.rs
-
-/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libform_urlencoded-e08093ea8be9a271.rlib: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/src/lib.rs
-
-/var/home/pluseight/development/keystone/apps/desktop/src-tauri/target/release/deps/libform_urlencoded-e08093ea8be9a271.rmeta: /home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/src/lib.rs
-
-/home/pluseight/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/form_urlencoded-1.2.2/src/lib.rs:

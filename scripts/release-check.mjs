@@ -44,12 +44,45 @@ export function findSecret(text, file, allowlist = []) {
   return patterns.find((pattern) => pattern.test(text)) || null;
 }
 
+/**
+ * Pick the primary error from a failed command's output. Tools such as cargo
+ * end with a generic line ("build failed, waiting for other jobs"), so the
+ * first error line and its context are what explain the failure.
+ */
+export function failureSummary(output, { contextLines = 40 } = {}) {
+  const lines = output.replace(/\r/g, '').split('\n');
+  // Specific failures (a failing test, a compiler error) beat wrapper noise such as pnpm's ERR_PNPM_* lines.
+  // `pnpm -r` prefixes lines with "<package> <script>: ", so markers are matched after optional text.
+  const primary = lines.findIndex((line) => /(?:^|\s)(?:FAIL\s+\S|×\s|error(?:\[[A-Z0-9]+\])?:)/.test(line));
+  const first = primary >= 0 ? primary : lines.findIndex((line) => /(?:^|\s)(?:ERR!|ERR_|Error:)/.test(line));
+  const start = first >= 0 ? first : Math.max(0, lines.length - contextLines);
+  const excerpt = lines.slice(start, start + contextLines).join('\n').trim();
+  const headline = (first >= 0 ? lines[first] : lines.filter((line) => line.trim()).at(-1) ?? '').trim();
+  return { headline, excerpt };
+}
+
 function command(name, args, label) {
-  const result = spawnSync(name, args, { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+  const result = spawnSync(name, args, { cwd: root, encoding: 'utf8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
   if (result.error) return record(Status.FAIL, label, result.error.message);
   if (result.status === 0) return record(Status.PASS, label);
-  const detail = (result.stderr || result.stdout || `exit ${result.status}`).trim().split('\n').at(-1);
-  record(Status.FAIL, label, detail);
+  const { headline, excerpt } = failureSummary(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  record(Status.FAIL, label, headline || `exit ${result.status}`);
+  // Keep the evidence in the CI log instead of only the last line.
+  console.log(process.env.GITHUB_ACTIONS ? `::group::${label} output` : `--- ${label} output ---`);
+  console.log(excerpt);
+  console.log(process.env.GITHUB_ACTIONS ? '::endgroup::' : `--- end ${label} output ---`);
+}
+
+// The Expo native Android project is ignored for prebuild output but its committed sources are intentional.
+const TRACKED_IGNORED_ALLOWLIST = ['apps/mobile/android/'];
+
+export function unexpectedTrackedArtifacts(files, allowlist = TRACKED_IGNORED_ALLOWLIST) {
+  return files.filter((file) => file && !allowlist.some((prefix) => file.startsWith(prefix)));
+}
+
+function trackedIgnoredFiles() {
+  const listed = spawnSync('git', ['ls-files', '-ci', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return listed.status === 0 ? unexpectedTrackedArtifacts(listed.stdout.split('\n')) : [];
 }
 
 function json(path) {
@@ -84,8 +117,10 @@ function configChecks() {
   if (eas?.cli?.version && chromium?.manifest_version === 3 && firefox?.manifest_version === 3) record(Status.PASS, 'Mobile and extension metadata');
   else record(Status.FAIL, 'Mobile and extension metadata', 'invalid EAS or extension manifest');
   const ignoredArtifacts = ['dist', 'coverage', 'apps/mobile/android', 'apps/mobile/ios', 'apps/desktop/src-tauri/target', '*.apk', '*.dmg', '*.msi'];
-  if (ignoredArtifacts.every((entry) => gitignore.includes(entry))) record(Status.PASS, 'Generated artifact policy');
-  else record(Status.FAIL, 'Generated artifact policy', 'missing build artifact ignore rule');
+  const trackedArtifacts = trackedIgnoredFiles();
+  if (!ignoredArtifacts.every((entry) => gitignore.includes(entry))) record(Status.FAIL, 'Generated artifact policy', 'missing build artifact ignore rule');
+  else if (trackedArtifacts.length) record(Status.FAIL, 'Generated artifact policy', `${trackedArtifacts.length} ignored build artifacts are still tracked, e.g. ${trackedArtifacts.slice(0, 3).join(', ')}`);
+  else record(Status.PASS, 'Generated artifact policy');
 }
 
 function flatpakChecks() {
