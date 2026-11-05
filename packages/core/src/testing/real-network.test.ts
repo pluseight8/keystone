@@ -132,7 +132,7 @@ describe('real Hyperswarm network validation', () => {
       const negotiationId = negotiation.result.negotiationId as string;
       const proposal = await command(root, 'alice', { action: 'negotiationPropose', negotiationId });
       await command(root, 'alice', { action: 'negotiationFlush', peer: 'charlie' });
-      await eventually(async () => (await command(root, 'charlie', { action: 'negotiationRead', negotiationId })).result.responses.length > 0, 20_000);
+      await eventually(async () => (await command(root, 'charlie', { action: 'negotiationRead', negotiationId })).result.responses.length > 0, 20_000, () => [...peerLogs.entries()].map(([name, log]) => `${name}: ${log.slice(-8_000)}`).join('\n'));
       const wire = await command(root, 'alice', { action: 'negotiationWire' }); expect(wire.result.serialized).not.toContain('private schedule'); expect(wire.result.serialized).not.toContain('LOCAL_PRIVATE_CONSTRAINT');
       await startPeer('bob', configPath); await command(root, 'alice', { action: 'negotiationFlush', peer: 'bob' });
       await eventually(async () => { const read = (await command(root, 'bob', { action: 'negotiationRead', negotiationId })).result; return read.proposals.some((item: { id: string }) => item.id === proposal.result.proposalId) && read.responses.length > 0; }, 20_000, () => [...peerLogs.entries()].map(([name, log]) => `${name}: ${log.slice(-8_000)}`).join('\n'));
@@ -660,7 +660,8 @@ async function commandMaybe(root: string, role: Role, input: Omit<Command, 'id'>
   const id = crypto.randomUUID(), directory = join(root, role); await atomicWrite(join(directory, 'command.json'), { id, ...input });
   return eventually(async () => readJson<Response>(join(directory, `response-${id}.json`)), 30_000);
 }
-async function eventually<T>(condition: () => Promise<T | false | undefined>, timeout = 12_000, detail?: () => string): Promise<T> { const end = Date.now() + timeout; while (Date.now() < end) { const value = await condition(); if (value) return value; await pause(50); } throw new Error(`Timed out after ${timeout}ms${detail ? `: ${detail()}` : ''}`); }
+// A condition that throws (e.g. "Track not received" before replication lands) means "not yet"; keep polling and report the last error on timeout.
+async function eventually<T>(condition: () => Promise<T | false | undefined>, timeout = 12_000, detail?: () => string): Promise<T> { const end = Date.now() + timeout; let lastError: unknown; while (Date.now() < end) { try { const value = await condition(); if (value) return value; } catch (error) { lastError = error; } await pause(50); } throw new Error(`Timed out after ${timeout}ms${lastError ? ` (last error: ${lastError instanceof Error ? lastError.message : String(lastError)})` : ''}${detail ? `: ${detail()}` : ''}`); }
 async function freeUdpPort(): Promise<number> { const socket = createSocket('udp4'); await new Promise<void>((resolve, reject) => { socket.once('error', reject); socket.bind(0, '127.0.0.1', () => resolve()); }); const address = socket.address(); socket.close(); return typeof address === 'string' ? 0 : address.port; }
 async function readJson<T>(path: string): Promise<T | undefined> { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch (error: any) { if (error?.code === 'ENOENT' || error instanceof SyntaxError) return undefined; throw error; } }
 async function atomicWrite(path: string, value: unknown): Promise<void> { const temporary = `${path}.${crypto.randomUUID()}.tmp`; await writeFile(temporary, JSON.stringify(value), { mode: 0o600 }); await rename(temporary, path); }

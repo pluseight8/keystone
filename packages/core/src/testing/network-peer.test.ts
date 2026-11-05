@@ -1016,9 +1016,27 @@ class NetworkContentBridge {
   provider(peer: string, interruptAt?: number, failAlways = false): ContentProvider { let interrupted = false; return { id: `production-hyperswarm-${peer}`, getChunk: async (contentId, index, signal) => { if (signal?.aborted) throw new DOMException('Download cancelled', 'AbortError'); if (index === interruptAt && (failAlways || !interrupted)) { interrupted = true; throw new Error('simulated receiver interruption'); } return this.request(peer, contentId, index); } }; }
   async play(peer: string, track: Awaited<ReturnType<MusicService['tracks']>>[number], manifestInput: unknown) { const manifest = manifestInput as ContentManifest; if (track.payload.audioUri !== `keystone://content/${manifest.contentId}`) throw new Error('Track audio reference does not match manifest'); const request = this.request.bind(this); return new StreamingPlaybackSource(this.cache, { async manifest(id) { return id === manifest.contentId ? manifest : undefined; }, async providers() { return [{ id: 'production-hyperswarm-test-bridge', getChunk: (id, index) => request(peer, id, index) }]; } }).open(track); }
   async playVideo(peer: string, video: Awaited<ReturnType<VideoService['videos']>>[number], manifestInput: unknown) { const manifest = manifestInput as ContentManifest; if (video.payload.videoUri !== `keystone://content/${manifest.contentId}`) throw new Error('Video media reference does not match manifest'); const request = this.request.bind(this); return new VideoPlaybackSource(this.cache, { async manifest(id) { return id === manifest.contentId ? manifest : undefined; }, async providers() { return [{ id: 'production-hyperswarm-test-bridge', getChunk: (id, index) => request(peer, id, index) }]; } }).open(video); }
-  private async request(peer: string, contentId: string, index: number): Promise<Uint8Array> {
-    const requestId = crypto.randomUUID(); const envelope = await this.envelope(peer, 'test.content.request', { requestId, contentId, index });
-    const answer = new Promise<Uint8Array>((resolve, reject) => this.waiting.set(requestId, { resolve, reject })); await this.transport.connect(peer); await this.transport.send(peer, envelope); return answer;
+  /**
+   * A request or response can be lost while a peer restarts (the old
+   * connection is still considered live). Like DistributedContentService, a
+   * request times out instead of waiting forever; the bridge then resends it a
+   * bounded number of times so the transfer layer sees a real failure only
+   * when the provider is actually unreachable.
+   */
+  private async request(peer: string, contentId: string, index: number, attempts = 4, timeoutMs = 5_000): Promise<Uint8Array> {
+    let lastError: Error = new Error('Content request failed');
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const requestId = crypto.randomUUID(); const envelope = await this.envelope(peer, 'test.content.request', { requestId, contentId, index });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const answer = new Promise<Uint8Array>((resolve, reject) => {
+        this.waiting.set(requestId, { resolve, reject });
+        timer = setTimeout(() => { this.waiting.delete(requestId); reject(new Error(`Content chunk ${index} request timed out`)); }, timeoutMs);
+      });
+      try { await this.transport.connect(peer); await this.transport.send(peer, envelope); return await answer; }
+      catch (error) { this.waiting.delete(requestId); lastError = error instanceof Error ? error : new Error(String(error)); }
+      finally { clearTimeout(timer); }
+    }
+    throw lastError;
   }
   private async receive(envelope: Envelope): Promise<void> {
     if (!envelope.type.startsWith('test.content.') || envelope.recipient !== this.local.nodeId || Date.parse(envelope.expiresAt) <= Date.now() || !(await this.security.verify(envelope))) return;
