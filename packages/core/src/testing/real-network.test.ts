@@ -293,6 +293,8 @@ describe('real Hyperswarm network validation', () => {
       await eventually(async () => (await command(root, 'alice', { action: 'communityPhase24Read', communityId: phaseCommunityId })).result.audit.some((entry: { action: string; target?: string }) => entry.action === 'ban' && !!entry.target));
       const charlieAdmin = await commandMaybe(root, 'charlie', { action: 'communityPhase24Moderate', peer: 'alice', target: 'bob', communityId: phaseCommunityId, text: 'ban', messageId: 'spoof' }); expect(charlieAdmin.ok).toBe(false);
       for (const eventId of phaseEvents.slice(0, 4)) await command(root, 'alice', { action: 'communityPhase24Relay', peer: 'mallory', communityId: phaseCommunityId, messageId: eventId });
+      // Mallory can only act on the community after Alice's relayed events have arrived.
+      await eventually(async () => (await command(root, 'mallory', { action: 'communityPhase24Read', communityId: phaseCommunityId })).result?.communityId === phaseCommunityId, 20_000);
       await command(root, 'mallory', { action: 'communityPhase24SpoofRole', peer: 'alice', communityId: phaseCommunityId });
       const aliceState = await command(root, 'alice', { action: 'communityPhase24Read', communityId: phaseCommunityId }); expect(aliceState.result.roles).toHaveLength(1);
       await command(root, 'alice', { action: 'communityPhase24Replay', peer: 'mallory' }); await pause(250); expect((await command(root, 'mallory', { action: 'communityPhase24Read', communityId: phaseCommunityId })).result.roles).toHaveLength(1);
