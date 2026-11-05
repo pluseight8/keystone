@@ -10,9 +10,10 @@ class MailboxNetwork {
   readonly endpoints = new Map<string, MailboxTransport>();
   readonly online = new Set<string>();
   readonly history: Envelope[] = [];
+  failNextDeliveries = 0;
   register(endpoint: MailboxTransport): void { this.endpoints.set(endpoint.nodeId, endpoint); this.online.add(endpoint.nodeId); }
   setOnline(nodeId: string, online: boolean): void { if (online) this.online.add(nodeId); else this.online.delete(nodeId); }
-  deliver(from: string, to: string, envelope: Envelope): void { if (!this.online.has(from) || !this.online.has(to)) throw new Error('peer offline'); this.history.push(structuredClone(envelope)); this.endpoints.get(to)?.deliver(structuredClone(envelope)); }
+  deliver(from: string, to: string, envelope: Envelope): void { if (!this.online.has(from) || !this.online.has(to)) throw new Error('peer offline'); if (this.failNextDeliveries > 0) { this.failNextDeliveries--; throw new Error('transient send failure'); } this.history.push(structuredClone(envelope)); this.endpoints.get(to)?.deliver(structuredClone(envelope)); }
 }
 
 class MailboxTransport implements Transport {
@@ -52,6 +53,43 @@ describe('Phase 39 asynchronous agent social protocol', () => {
     await expect(alice.createTask({ recipient: bobContact.agent, taskType: 'availability', prompt: 'secret', explicitContext: [shared('PRIVATE' as never)] })).rejects.toBeInstanceOf(AgentSocialError);
     expect((await alice.snapshot()).audit.some(value => value.event === 'task.sent')).toBe(true); void malloryContact;
     alice.close(); bobRestarted.close();
+  });
+
+  it('retries an undelivered envelope on its backoff schedule without another flush call', async () => {
+    const aliceKeys = await (await IdentityManager.generate()).sessionKeys('alice'); const bobKeys = await (await IdentityManager.generate()).sessionKeys('bob'); const network = new MailboxNetwork();
+    const alice = await makeMailbox('alice', aliceKeys, network, [contact(bobKeys, 'bob-agent')]); const bob = await makeMailbox('bob', bobKeys, network, [contact(aliceKeys, 'alice-agent')]);
+    network.setOnline(bobKeys.nodeId, false);
+    const task = await alice.createTask({ recipient: { agentId: 'bob-agent', identityId: bobKeys.nodeId }, taskType: 'availability', prompt: 'Are you free tomorrow?', explicitContext: [shared()] });
+    await alice.flush(bobKeys.nodeId);
+    expect((await alice.snapshot()).outbox.length).toBe(1);
+    network.setOnline(bobKeys.nodeId, true);
+    // First retry is due one second after the failed attempt; nobody calls flush() again.
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline && !(await bob.listInbox()).some(value => value.taskId === task.taskId)) await new Promise(resolve => setTimeout(resolve, 50));
+    expect((await bob.listInbox()).some(value => value.taskId === task.taskId)).toBe(true);
+    expect((await alice.snapshot()).outbox.length).toBe(0);
+    alice.close(); bob.close();
+  });
+
+  it('keeps per-peer FIFO order when an earlier envelope fails and a later one could be sent', async () => {
+    const aliceKeys = await (await IdentityManager.generate()).sessionKeys('alice'); const bobKeys = await (await IdentityManager.generate()).sessionKeys('bob'); const network = new MailboxNetwork();
+    const alice = await makeMailbox('alice', aliceKeys, network, [contact(bobKeys, 'bob-agent')]); const bob = await makeMailbox('bob', bobKeys, network, [contact(aliceKeys, 'alice-agent')]);
+    network.setOnline(bobKeys.nodeId, false);
+    const recipient = { agentId: 'bob-agent', identityId: bobKeys.nodeId };
+    const first = await alice.createTask({ recipient, taskType: 'availability', prompt: 'first', explicitContext: [shared()] });
+    const second = await alice.createTask({ recipient, taskType: 'availability', prompt: 'second', explicitContext: [shared()] });
+    await alice.flush(bobKeys.nodeId); // settle background sends while Bob is still offline
+    network.setOnline(bobKeys.nodeId, true); network.failNextDeliveries = 1;
+    // The first envelope fails transiently; the second must not overtake it.
+    await alice.flush(bobKeys.nodeId);
+    expect(network.history.filter(value => value.recipient === bobKeys.nodeId).length).toBe(0);
+    await alice.flush(bobKeys.nodeId);
+    const delivered = network.history.filter(value => value.recipient === bobKeys.nodeId).length;
+    expect(delivered).toBe(2);
+    const deadline = Date.now() + 2_000;
+    while (Date.now() < deadline && (await bob.listInbox()).length < 2) await new Promise(resolve => setTimeout(resolve, 20));
+    expect((await bob.listInbox()).map(value => value.taskId)).toEqual([first.taskId, second.taskId]);
+    alice.close(); bob.close();
   });
 
   it('rejects forged/replayed senders, capability escalation, and private room context', async () => {

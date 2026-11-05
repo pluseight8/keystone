@@ -325,6 +325,9 @@ export class AgentMailbox {
   private readyPromise: Promise<void>;
   private writes: Promise<void> = Promise.resolve();
   private flushPromise?: Promise<void>;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private receiveQueue: Promise<void> = Promise.resolve();
+  private closed = false;
   private readonly executing = new Set<string>();
   private readonly negotiationHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
   private readonly agentProfileHandlers = new Set<(peer: NodeId, payload: unknown) => void | Promise<void>>();
@@ -341,13 +344,14 @@ export class AgentMailbox {
     this.executor = options.executor; this.onApprovalRequired = options.onApprovalRequired; this.onTask = options.onTask; this.protectedSurfaces = options.protectedSurfaces ?? new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()));
     for (const contact of options.contacts ?? []) this.contacts.set(contact.agent.identityId, normalizeContact(contact));
     this.policy = normalizePolicy({ ...DEFAULT_POLICY, ...options.policy });
-    this.unsubscribe = this.transport.onMessage(envelope => { void this.receive(envelope).catch(error => this.rejectIncoming(envelope, error)); });
-    this.readyPromise = this.hydrate();
+    // Process envelopes in arrival order: concurrent decrypt/verify let a proposal overtake the session it belongs to.
+    this.unsubscribe = this.transport.onMessage(envelope => { this.receiveQueue = this.receiveQueue.then(() => this.receive(envelope)).catch(error => this.rejectIncoming(envelope, error)); });
+    this.readyPromise = this.hydrate().then(() => this.scheduleRetry());
   }
 
   get localAgentRef(): AgentRef { return { ...this.localAgent }; }
   async ready(): Promise<void> { await this.readyPromise; }
-  close(): void { this.unsubscribe(); }
+  close(): void { this.closed = true; if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = undefined; this.unsubscribe(); }
   /** Register a bounded, encrypted negotiation channel on this authenticated mailbox. */
   onNegotiationMessage(handler: (peer: NodeId, payload: unknown) => void | Promise<void>): () => void { this.negotiationHandlers.add(handler); return () => this.negotiationHandlers.delete(handler); }
   /** Register the owner-signed AgentProfile channel on the authenticated mailbox. */
@@ -427,22 +431,42 @@ export class AgentMailbox {
 
   async sendTask(input: Parameters<AgentMailbox['createTask']>[0]): Promise<AgentTaskRequest> { return this.createTask(input); }
 
-  async flush(peer?: NodeId): Promise<void> {
+  async flush(peer?: NodeId, options: { readonly dueOnly?: boolean } = {}): Promise<void> {
     await this.ready();
     // Serialize flush callers from the moment they enqueue work.  The old
     // check-then-await sequence allowed concurrent callers to observe the same
     // promise, wake together, and overwrite `flushPromise`; in-flight session
     // and proposal envelopes could then overtake each other on reconnect.
     const previous = this.flushPromise ?? Promise.resolve();
-    const run = previous.catch(() => undefined).then(() => this.flushNow(peer));
+    const run = previous.catch(() => undefined).then(() => this.flushNow(peer, options.dueOnly === true));
     this.flushPromise = run;
     try { await run; } finally { if (this.flushPromise === run) this.flushPromise = undefined; }
   }
-  private async flushNow(peer?: NodeId): Promise<void> {
+  private async flushNow(peer?: NodeId, dueOnly = false): Promise<void> {
+    const now = this.now();
+    // Envelopes to one peer stay FIFO: once an item is not sent (failed, or not yet due),
+    // later items for that peer wait, so a proposal cannot overtake its session.
+    const blocked = new Set<NodeId>();
     for (const item of [...this.outbox.values()].filter(value => !peer || value.peer === peer)) {
+      if (blocked.has(item.peer)) continue;
+      if (dueOnly && item.nextAttemptAt > now) { blocked.add(item.peer); continue; }
       try { await this.transport.connect(item.peer); await this.transport.send(item.peer, item.envelope); this.outbox.delete(item.id); await this.persist(); }
-      catch { this.outbox.set(item.id, { ...item, attempts: item.attempts + 1, nextAttemptAt: this.now() + retryDelay(item.attempts) }); await this.persist(); }
+      catch { blocked.add(item.peer); this.outbox.set(item.id, { ...item, attempts: item.attempts + 1, nextAttemptAt: this.now() + retryDelay(item.attempts) }); await this.persist(); }
     }
+    this.scheduleRetry();
+  }
+
+  /**
+   * Undelivered envelopes are retried on their backoff schedule. Without this
+   * an item whose single flush failed (peer reconnecting, route not ready)
+   * stayed in the outbox until something else happened to call flush().
+   */
+  private scheduleRetry(): void {
+    if (this.closed || this.retryTimer || this.outbox.size === 0) return;
+    const next = Math.min(...[...this.outbox.values()].map(item => item.nextAttemptAt));
+    // Background retries touch only due items, so an offline peer's backoff does not delay explicit flushes to others.
+    this.retryTimer = setTimeout(() => { this.retryTimer = undefined; void this.flush(undefined, { dueOnly: true }).catch(() => undefined); }, Math.max(250, next - this.now()));
+    (this.retryTimer as { unref?: () => void }).unref?.();
   }
 
   async acceptTask(taskId: string): Promise<AgentTaskResponse> { await this.ready(); const task = this.requireTask(taskId); if (task.recipient.identityId !== this.local.nodeId) throw new AgentSocialError('UNAUTHORIZED', 'Only the recipient can accept a task'); if (task.status !== 'pending' && task.status !== 'queued') throw new AgentSocialError('DUPLICATE', 'Task is no longer pending'); this.assertTaskUsable(task); this.assertCanAccept(task); return this.executeTask(task); }
