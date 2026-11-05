@@ -12,11 +12,20 @@ security-sensitive operations, never a reason to fall back to a local key,
 environment variable, JSON file or test store. Secret Service availability is
 not evidence of a hardware secure enclave.
 
-## Known gap: Desktop identity keys
+## Desktop identity keys
 
-The rule above describes the `native-host` adapter. The Tauri Desktop host does
-not use it yet: `desktop_identity_*` commands keep device identity seeds in
-`identity-keys.json` in the app-data directory, protected only by `0600` file
-permissions (created owner-only and flushed before an atomic rename). Any
-process running as the same user can read them. Moving these seeds to Secret
-Service is an open security task, not current behavior.
+The Tauri Desktop host stores device identity seeds in the same Secret Service
+through `secret-tool` (`service=keystone-desktop-identity`, one item per
+device). Seeds travel over stdin only, never command-line arguments or logs.
+
+- A new identity on Linux fails closed when no Secret Service answers a
+  store/lookup probe; there is no silent fallback to a file.
+- Seeds from the older owner-only `identity-keys.json` file are migrated on
+  first use. A seed leaves the file only after the Secret Service returned the
+  identical value, so an interrupted migration resumes on the next access.
+  If the two copies differ, both are kept and the operation fails instead of
+  choosing one.
+- An existing file seed stays usable while no Secret Service is reachable, so
+  the owner is not locked out of an existing identity.
+- macOS and Windows still use the `0600` file until Keychain / Credential
+  Manager are integrated; any process running as the same user can read it.

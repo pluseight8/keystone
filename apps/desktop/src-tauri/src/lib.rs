@@ -15,7 +15,9 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use url::Url;
+mod identity_store;
 mod knowledge;
+use identity_store::{IdentityStore, SecretTool};
 use knowledge::KnowledgeState;
 
 fn window_toggle_shortcut() -> Shortcut {
@@ -182,9 +184,6 @@ fn close_keystone_window(app: AppHandle, window_id: String) -> Result<(), String
 #[serde(rename_all = "camelCase")]
 struct IdentityProvisionPayload { device_id: String, private_key: Vec<u8> }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
-struct IdentityKeyStore { version: u8, keys: HashMap<String, String> }
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct IdentitySignPayload { device_id: String, message: String }
@@ -304,40 +303,19 @@ fn identity_store_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(directory.join("identity-keys.json"))
 }
 
-fn read_identity_store(app: &AppHandle) -> Result<IdentityKeyStore, String> {
-    let path = identity_store_path(app)?;
-    if !path.exists() { return Ok(IdentityKeyStore { version: 1, keys: HashMap::new() }); }
-    let raw = fs::read(path).map_err(|error| error.to_string())?;
-    let value = serde_json::from_slice::<IdentityKeyStore>(&raw).map_err(|_| "Desktop identity store is invalid".to_string())?;
-    if value.version != 1 { return Err("Unsupported desktop identity store version".into()); }
-    Ok(value)
-}
+static IDENTITY_STORE: std::sync::OnceLock<Mutex<IdentityStore<SecretTool>>> = std::sync::OnceLock::new();
 
-fn write_identity_store(app: &AppHandle, value: &IdentityKeyStore) -> Result<(), String> {
+/// Serializes identity access so concurrent commands cannot interleave a migration.
+fn with_identity_store<T>(app: &AppHandle, operation: impl FnOnce(&IdentityStore<SecretTool>) -> Result<T, String>) -> Result<T, String> {
     let path = identity_store_path(app)?;
-    let temporary = path.with_extension("json.tmp");
-    let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    // Create the file owner-only from the start: writing first and chmod-ing
-    // afterwards briefly exposed the private seeds under the default umask.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // A stale temporary file from an earlier crash keeps its old mode; reset it.
-        file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
-    }
-    file.write_all(&bytes).map_err(|error| error.to_string())?;
-    // Flush to disk before the rename so a crash cannot replace the key store with an empty file.
-    file.sync_all().map_err(|error| error.to_string())?;
-    drop(file);
-    fs::rename(temporary, path).map_err(|error| error.to_string())
+    let store = IDENTITY_STORE.get_or_init(|| Mutex::new(IdentityStore {
+        legacy_path: path,
+        backend: SecretTool::new("keystone-desktop-identity"),
+        // Linux has a Secret Service; other platforms keep the owner-only file until their keystore is integrated.
+        require_secure: cfg!(target_os = "linux"),
+    }));
+    let guard = store.lock().map_err(|_| "Desktop identity store is unavailable".to_string())?;
+    operation(&guard)
 }
 
 fn key_pair_from_seed(seed: &[u8]) -> Result<Ed25519KeyPair, String> {
@@ -350,37 +328,32 @@ fn desktop_identity_provision(app: AppHandle, payload: IdentityProvisionPayload)
     validate_device_id(&payload.device_id)?;
     if payload.private_key.len() != 64 { return Err("Desktop identity private key has an invalid size".into()); }
     let _pair = key_pair_from_seed(&payload.private_key[..32])?;
-    let mut store = read_identity_store(&app)?;
-    // The private seed is placed in the app-data store only after the key pair
-    // has been validated. It is never returned to the renderer.
-    store.keys.insert(payload.device_id, STANDARD.encode(&payload.private_key[..32]));
-    write_identity_store(&app, &store)
+    // The private seed is stored only after the key pair has been validated. It is never returned to the renderer.
+    with_identity_store(&app, |store| store.provision(&payload.device_id, &payload.private_key[..32]))
 }
 
 #[tauri::command]
 fn desktop_identity_status(app: AppHandle, device_id: String) -> Result<bool, String> {
     validate_device_id(&device_id)?;
-    Ok(read_identity_store(&app)?.keys.get(&device_id).map(|value| STANDARD.decode(value).ok().and_then(|seed| key_pair_from_seed(&seed).ok()).is_some()).unwrap_or(false))
+    let seed = with_identity_store(&app, |store| store.seed(&device_id))?;
+    Ok(seed.map(|value| STANDARD.decode(value).ok().and_then(|seed| key_pair_from_seed(&seed).ok()).is_some()).unwrap_or(false))
 }
 
 #[tauri::command]
 fn desktop_identity_remove(app: AppHandle, device_id: String) -> Result<(), String> {
     validate_device_id(&device_id)?;
-    let mut store = read_identity_store(&app)?;
-    store.keys.remove(&device_id);
-    write_identity_store(&app, &store)
+    with_identity_store(&app, |store| store.remove(&device_id))
 }
 
 #[tauri::command]
 fn desktop_identity_sign(app: AppHandle, payload: IdentitySignPayload) -> Result<String, String> {
     validate_device_id(&payload.device_id)?;
     if payload.message.len() > 4 * 1024 * 1024 { return Err("Signing payload is too large".into()); }
-    let store = read_identity_store(&app)?;
-    let encoded = store.keys.get(&payload.device_id).ok_or("Desktop identity key is unavailable")?;
+    let encoded = with_identity_store(&app, |store| store.seed(&payload.device_id))?.ok_or("Desktop identity key is unavailable")?;
     let seed = STANDARD.decode(encoded).map_err(|_| "Desktop identity key is invalid")?;
     let pair = key_pair_from_seed(&seed)?;
     // Core identity metadata uses URL-safe, unpadded base64 for public keys
-    // and signatures. Keep the on-disk seed encoding private/internal, but
+    // and signatures. Keep the stored seed encoding private/internal, but
     // return the protocol-compatible representation at the typed boundary.
     Ok(URL_SAFE_NO_PAD.encode(pair.sign(payload.message.as_bytes()).as_ref()))
 }
