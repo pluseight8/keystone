@@ -257,6 +257,8 @@ export interface TransportSecurityBoundary {
 
 export interface TransportProvider {
   readonly id: TransportProviderId;
+  /** Drop any live session to `destination` so the next delivery opens a fresh one. */
+  resetPeer?(destination: string): void;
   readonly type: TransportProviderType;
   readonly security: TransportSecurityBoundary;
   readonly mtu: TransportMTU;
@@ -490,6 +492,7 @@ export class HyperswarmTransportProvider extends BaseTransportProvider {
   async start(): Promise<void> { await (this.transport as Transport & { start?: () => Promise<void> }).start?.(); await super.start(); }
   async stop(): Promise<void> { this.unsubscribe(); await super.stop(); if (this.options.ownsTransport) await this.transport.close(); }
   isPeerConnected(destination: string): boolean { return this.transport.isPeerConnected?.(destination) ?? false; }
+  resetPeer(destination: string): void { (this.transport as Transport & { disconnect?: (peer: string) => void }).disconnect?.(destination); }
   async discoverDirectReachability(destination: string): Promise<readonly TransportEndpoint[]> {
     if (!destination) return [];
     const failedUntil = this.failedRoutes.get(destination);
@@ -856,6 +859,9 @@ export class FabricTransport implements Transport {
         if (this.unacknowledged.get(envelope.id) !== entry) return;
         if (Date.parse(envelope.expiresAt) <= Date.now()) { this.unacknowledged.delete(envelope.id); return; }
         entry.attempt += 1;
+        // A second unacknowledged resend points at a connection the destination no longer reads
+        // (seen after peer restarts); dial again instead of writing into it.
+        if (entry.attempt >= 2) for (const provider of this.options.fabric.providersList()) provider.resetPeer?.(peer);
         void this.deliverEnvelope(peer, envelope, `${envelope.id}#resend-${entry.attempt}`).catch(() => undefined).finally(() => { if (this.unacknowledged.get(envelope.id) === entry) schedule(); });
       }, delay);
       (entry.timer as { unref?: () => void }).unref?.();

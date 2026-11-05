@@ -6,6 +6,7 @@ const security = { sign: async (_: Omit<Envelope, 'signature'>) => 'test-signatu
 
 /** Accepts the first `drops` frames like a socket that is being replaced, without delivering them. */
 class LossyProvider extends ControlledTransportProvider {
+  resetPeer?: (destination: string) => void;
   constructor(id: string, private drops: number) { super(id); }
   override async sendOpaqueFrame(session: TransportSession, frame: OpaqueFrame): Promise<void> {
     if (this.drops > 0) { this.drops -= 1; return; }
@@ -56,6 +57,18 @@ describe('FabricTransport destination acknowledgements', () => {
     await until(() => alice.unacknowledgedCount === 0);
     expect(received).toHaveLength(1);
     await alice.close(); await bob.close();
+  });
+
+  it('drops the connection before resending again when resends stay unacknowledged', async () => {
+    const aliceProvider = new LossyProvider('alice-provider', 100); const resets: string[] = []; aliceProvider.resetPeer = destination => { resets.push(destination); };
+    aliceProvider.connectPeer('bob', new ControlledTransportProvider('bob-sink'));
+    const alice = node('alice', aliceProvider, [20, 20, 20]); await alice.start();
+    await alice.send('bob', envelope('alice', 'bob'));
+    await until(() => resets.length >= 1);
+    expect(resets[0]).toBe('bob');
+    await until(() => alice.unacknowledgedCount === 0);
+    expect(resets).toHaveLength(2); // second and third resend, not the first
+    await alice.close();
   });
 
   it('stops resending once the destination acknowledges', async () => {
