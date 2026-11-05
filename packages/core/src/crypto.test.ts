@@ -7,6 +7,11 @@ describe('protocol crypto vectors', () => {
     expect(canonicalJson(vector)).toBe('{"a":{"x":1,"y":null},"z":[3,{"alpha":"keystone","beta":false}]}');
   });
 
+  it('orders keys independently of the OS locale', () => {
+    // Under a Lithuanian default collation `y` sorts like `i`, so an unpinned sort puts `byKind` first.
+    expect(canonicalJson({ byKind: 1, busy: 2 })).toBe('{"busy":2,"byKind":1}');
+  });
+
   it('keeps the v1 BLAKE2b-256 action-hash vector stable', async () => {
     expect(await new SodiumCryptoProvider().hash('keystone-protocol-vector-v1')).toBe('qsLdmG5p8eQS37eIS2iJ_grZoNbD-zJgjusETKQHcrE');
   });
