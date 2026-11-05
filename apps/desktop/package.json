@@ -7,7 +7,7 @@
     "tauri": "tauri",
     "build": "vite build",
     "lint": "tsc --noEmit",
-    "test": "vitest run src/desktop-shell-model.test.ts src/desktop-preferences.test.ts src/desktop-settings.test.ts src/desktop-actions.test.ts src/desktop-local-runtime.test.ts src/desktop-ai-runtime.test.ts src/desktop-ai-conversations.test.ts src/desktop-discovery-runtime.test.ts src/desktop-network-runtime.test.ts src/tauri-csp.test.ts src/desktop-host-bridge.test.ts src/desktop-window-runtime.test.ts",
+    "test": "vitest run src/desktop-format.test.ts src/desktop-shell-model.test.ts src/desktop-preferences.test.ts src/desktop-settings.test.ts src/desktop-actions.test.ts src/desktop-local-runtime.test.ts src/desktop-ai-runtime.test.ts src/desktop-ai-conversations.test.ts src/desktop-discovery-runtime.test.ts src/desktop-network-runtime.test.ts src/tauri-csp.test.ts src/desktop-host-bridge.test.ts src/desktop-window-runtime.test.ts",
     "check": "cargo check --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
