@@ -11,3 +11,12 @@ deletes the keyring item. A missing/failed keyring is a hard failure for
 security-sensitive operations, never a reason to fall back to a local key,
 environment variable, JSON file or test store. Secret Service availability is
 not evidence of a hardware secure enclave.
+
+## Known gap: Desktop identity keys
+
+The rule above describes the `native-host` adapter. The Tauri Desktop host does
+not use it yet: `desktop_identity_*` commands keep device identity seeds in
+`identity-keys.json` in the app-data directory, protected only by `0600` file
+permissions (created owner-only and flushed before an atomic rename). Any
+process running as the same user can read them. Moving these seeds to Secret
+Service is an open security task, not current behavior.

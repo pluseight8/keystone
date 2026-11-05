@@ -317,12 +317,26 @@ fn write_identity_store(app: &AppHandle, value: &IdentityKeyStore) -> Result<(),
     let path = identity_store_path(app)?;
     let temporary = path.with_extension("json.tmp");
     let bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Create the file owner-only from the start: writing first and chmod-ing
+    // afterwards briefly exposed the private seeds under the default umask.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
+        // A stale temporary file from an earlier crash keeps its old mode; reset it.
+        file.set_permissions(fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())?;
     }
+    file.write_all(&bytes).map_err(|error| error.to_string())?;
+    // Flush to disk before the rename so a crash cannot replace the key store with an empty file.
+    file.sync_all().map_err(|error| error.to_string())?;
+    drop(file);
     fs::rename(temporary, path).map_err(|error| error.to_string())
 }
 
