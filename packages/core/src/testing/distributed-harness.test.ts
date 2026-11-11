@@ -9,6 +9,7 @@ import { VideoPlaybackSource } from '../social/video.js';
 import { buildShortFeed } from '../social/shorts.js';
 import { LocalDiscoveryIndex } from '../social/discovery.js';
 import { DistributedHarness, settle } from './distributed-harness.js';
+import { eventuallyNearby } from './nearby-exchange-fixture.js';
 import { FileTransferManager, type FileProviderDirectory } from '../social/files.js';
 import { createUnifiedContextSources, UnifiedContextResolver } from '../ai/context.js';
 
@@ -366,7 +367,9 @@ describe('distributed harness: production protocol services over a controlled tr
     const network = await harness(['alice', 'bob', 'charlie', 'mallory']); const alice = network.node('alice'), bob = network.node('bob'), charlie = network.node('charlie'), mallory = network.node('mallory');
     const community = await alice.privateCommunities.createCommunity({ name: 'Private operators', visibility: 'private' });
     const channel = await alice.communities.createChannel(community.id, { name: 'encrypted', kind: 'text' });
-    const invite = await alice.privateCommunityReplication.invite(bob.keys.nodeId, community.id); await settle();
+    const invite = await alice.privateCommunityReplication.invite(bob.keys.nodeId, community.id);
+    // The invite is decrypted asynchronously; a fixed 50 ms settle failed in CI run 42104195630.
+    await eventuallyNearby(async () => (await bob.privateCommunities.state(community.id))?.epoch, epoch => epoch === 2);
     expect((await bob.privateCommunities.state(community.id))?.epoch).toBe(2);
     const first = await alice.privateCommunities.postMessage(community.id, channel.payload.channelId, 'encrypted before Charlie'); await alice.privateCommunityReplication.broadcastEvent(first); await settle();
     expect((await bob.communities.messages(community.id, channel.payload.channelId)).map(value => value.payload.text)).toContain('encrypted before Charlie');
