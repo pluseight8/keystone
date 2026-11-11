@@ -149,6 +149,18 @@ describe('R0P82 Maps/Places privacy architecture', () => {
     bob.close();
     alice.close();
   });
+
+  it('shares a Place between node ids that start with "-" or "_", as base64url public keys can', async () => {
+    const delivery = new PairDelivery('-alice', '_bob');
+    const security = new TestEnvelopeSecurity();
+    let received: unknown;
+    const bob = new PlaceSharingService({ identityId: '_bob', delivery: delivery.bob, security, cipher: new TestPlaceCipher('_bob', '-alice'), onPlace: reference => { received = reference; } });
+    const alice = new PlaceSharingService({ identityId: '-alice', delivery: delivery.alice, security, cipher: new TestPlaceCipher('-alice', '_bob') });
+    await alice.sharePlace('_bob', place('private-meeting'), 'PRIVATE');
+    expect(received).toMatchObject({ placeId: 'private-meeting', kind: 'PLACE' });
+    bob.close();
+    alice.close();
+  });
 });
 
 class InMemoryLocationStateStorageForTest {
@@ -172,8 +184,8 @@ class PairDelivery {
   readonly alice: Endpoint;
   readonly bob: Endpoint;
   lastBody?: unknown;
-  constructor() {
-    const connect = async (peer: string) => { if (!['alice', 'bob'].includes(peer)) throw new Error('peer'); };
+  constructor(alice = 'alice', bob = 'bob') {
+    const connect = async (peer: string) => { if (![alice, bob].includes(peer)) throw new Error('peer'); };
     this.alice = new Endpoint(connect, envelope => this.bob.dispatch(envelope), body => { this.lastBody = body; });
     this.bob = new Endpoint(connect, envelope => this.alice.dispatch(envelope), body => { this.lastBody = body; });
   }

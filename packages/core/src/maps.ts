@@ -1215,7 +1215,7 @@ export class PlaceSharingService {
   private closed = false;
 
   constructor(options: PlaceSharingServiceOptions) {
-    if (!safeId(options.identityId, 512)) throw new MapsError('INVALID_ARGUMENT', 'Place sharing identity is invalid');
+    if (!safeIdentity(options.identityId)) throw new MapsError('INVALID_ARGUMENT', 'Place sharing identity is invalid');
     this.identityId = options.identityId;
     this.delivery = options.delivery;
     this.security = options.security;
@@ -1228,7 +1228,7 @@ export class PlaceSharingService {
 
   async sharePlace(peer: NodeId, place: Place | PlaceReference, visibility: 'PUBLIC' | 'PRIVATE' = 'PRIVATE'): Promise<string> {
     if (this.closed) throw new MapsError('UNAVAILABLE', 'Place sharing service is closed');
-    if (!safeId(peer, 512) || peer === this.identityId) throw new MapsError('INVALID_ARGUMENT', 'Place share recipient is invalid');
+    if (!safeIdentity(peer) || peer === this.identityId) throw new MapsError('INVALID_ARGUMENT', 'Place share recipient is invalid');
     const reference = 'snapshot' in place ? createPlaceReference(validatePlace(place.snapshot)) : createPlaceReference(validatePlace(place));
     const payload: PlaceSharePayload = { version: 1, kind: 'PLACE', reference, visibility };
     if (visibility === 'PRIVATE' && !this.cipher) throw new MapsError('NOT_AUTHORIZED', 'Private place sharing requires an application cipher');
@@ -1656,6 +1656,8 @@ function withinBounds(point: GeoCoordinate, bounds: GeoBounds): boolean { return
 function estimateBytes(value: unknown): number { try { return new TextEncoder().encode(JSON.stringify(value)).byteLength; } catch { return Number.MAX_SAFE_INTEGER; } }
 function cloneNavigation(value: MutableNavigationSession): NavigationSession { return { version: 1, id: value.id, route: structuredClone(value.route), state: value.state, mode: value.mode, startedAt: value.startedAt, ...(value.endedAt ? { endedAt: value.endedAt } : {}), currentStepIndex: value.currentStepIndex, progressRatio: value.progressRatio, rerouteCount: value.rerouteCount, ...(value.lastFix ? { lastFix: structuredClone(value.lastFix) } : {}), ignoredStaleFixes: value.ignoredStaleFixes }; }
 function safeId(value: unknown, max: number): value is string { return typeof value === 'string' && value.length > 0 && value.length <= max && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value); }
+// A node id is a base64url public key and may start with '-' or '_', which safeId rejects.
+function safeIdentity(value: unknown): value is string { return typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/.test(value); }
 function safeText(value: unknown, max: number): value is string { return typeof value === 'string' && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value); }
 function boundedText(value: unknown, max: number, required = false): string { if (typeof value !== 'string' || value.length > max || (required && !value.trim()) || /[\u0000-\u001f\u007f]/.test(value)) throw new MapsError('INVALID_ARGUMENT', 'Text value is invalid'); return value.trim(); }
 function boundedInt(value: unknown, minimum: number, maximum: number): number { if (typeof value !== 'number' || !Number.isSafeInteger(value)) return Math.max(minimum, Math.min(maximum, Math.floor(minimum))); return Math.max(minimum, Math.min(maximum, value)); }
@@ -1714,7 +1716,7 @@ function isPrivateHost(hostname: string): boolean {
 }
 
 function isPlaceCiphertext(value: unknown): value is PlaceCiphertext { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const candidate = value as Record<string, unknown>; return candidate.version === 1 && candidate.algorithm === 'APPLICATION_E2E' && typeof candidate.nonce === 'string' && typeof candidate.ciphertext === 'string' && candidate.nonce.length <= 512 && candidate.ciphertext.length <= 8 * 1024 * 1024; }
-function parsePlaceShareWire(value: unknown): PlaceShareWire | undefined { if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined; const candidate = value as Record<string, unknown>; if (candidate.version !== 1 || candidate.kind !== 'PLACE_SHARE' || !safeId(candidate.shareId, 256) || !safeId(candidate.sender, 512) || !safeId(candidate.recipient, 512) || !['PUBLIC', 'PRIVATE'].includes(candidate.visibility as string) || typeof candidate.encrypted !== 'boolean' || typeof candidate.issuedAt !== 'string' || typeof candidate.expiresAt !== 'string' || !Number.isFinite(Date.parse(candidate.issuedAt)) || !Number.isFinite(Date.parse(candidate.expiresAt))) return undefined; if (candidate.encrypted && !isPlaceCiphertext(candidate.ciphertext)) return undefined; if (!candidate.encrypted && !candidate.payload) return undefined; return candidate as unknown as PlaceShareWire; }
+function parsePlaceShareWire(value: unknown): PlaceShareWire | undefined { if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined; const candidate = value as Record<string, unknown>; if (candidate.version !== 1 || candidate.kind !== 'PLACE_SHARE' || !safeId(candidate.shareId, 256) || !safeIdentity(candidate.sender) || !safeIdentity(candidate.recipient) || !['PUBLIC', 'PRIVATE'].includes(candidate.visibility as string) || typeof candidate.encrypted !== 'boolean' || typeof candidate.issuedAt !== 'string' || typeof candidate.expiresAt !== 'string' || !Number.isFinite(Date.parse(candidate.issuedAt)) || !Number.isFinite(Date.parse(candidate.expiresAt))) return undefined; if (candidate.encrypted && !isPlaceCiphertext(candidate.ciphertext)) return undefined; if (!candidate.encrypted && !candidate.payload) return undefined; return candidate as unknown as PlaceShareWire; }
 function parsePlaceSharePayload(value: unknown): PlaceSharePayload { if (!value || typeof value !== 'object' || Array.isArray(value)) throw new MapsError('INVALID_ARGUMENT', 'Place share payload is invalid'); const candidate = value as Record<string, unknown>; if (candidate.version !== 1 || candidate.kind !== 'PLACE' || !['PUBLIC', 'PRIVATE'].includes(candidate.visibility as string) || !candidate.reference) throw new MapsError('INVALID_ARGUMENT', 'Place share payload is invalid'); const reference = candidate.reference as Record<string, unknown>; if (reference.version !== 1 || reference.kind !== 'PLACE' || !safeId(reference.placeId, 256) || typeof reference.uri !== 'string' || !reference.uri.startsWith('keystone://place/')) throw new MapsError('INVALID_ARGUMENT', 'Place reference is invalid'); const snapshot = validatePlace(reference.snapshot); if (snapshot.placeId !== reference.placeId) throw new MapsError('INTEGRITY', 'Place reference identity mismatch'); return { version: 1, kind: 'PLACE', visibility: candidate.visibility as 'PUBLIC' | 'PRIVATE', reference: { version: 1, kind: 'PLACE', placeId: reference.placeId, uri: reference.uri, snapshot: placeSnapshot(snapshot) } }; }
 function containsLocationDisclosure(value: unknown, depth = 0, insidePortableCoordinates = false): boolean {
   if (depth > 8 || value === null || value === undefined) return false;
