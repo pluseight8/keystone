@@ -31,7 +31,7 @@ export type {
 export { IdentityManager } from './identity.js';
 export type { DevicePublicIdentity, IdentityManagerOptions } from './identity.js';
 export type { NodeId } from './types.js';
-export { canonicalJson, SodiumCryptoProvider } from './crypto.js';
+export { canonicalJson, signCanonical, verifyCanonical, SodiumCryptoProvider } from './crypto.js';
 export type { CryptoProvider, SodiumKeyPair } from './crypto.js';
 export { SecretHandle, SecretAccessError } from './security/secrets.js';
 export type {

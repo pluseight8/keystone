@@ -3,7 +3,7 @@ export * from './types.js';
 // primitives, not part of the generic application entrypoint.  Keep only the
 // deterministic public canonicalization helper here; production signing uses
 // Identity/DeviceSigningCapability and a SecureSecretHost.
-export { canonicalJson } from './crypto.js';
+export { canonicalJson, canonicalJsonV2, canonicalSigned, signCanonical, verifyCanonical, CANONICAL_V2_SIGNATURE_PREFIX } from './crypto.js';
 export * from './consent.js';
 export * from './transport.js';
 export * from './connectivity.js';

@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, KeystoneDeliveryInterface, UnsignedEnvelope } from '../connectivity.js';
 import {
@@ -362,7 +362,7 @@ export class PublicationService {
       visibility: current.visibility,
       updatedAt: iso(this.now()),
     };
-    const pointer = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const pointer = { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     const nextRecord: PublicationRecord = { ...record, status: 'UNPUBLISHED', updatedAt: unsigned.updatedAt, latestPointer: pointer };
     this.state = { ...this.state, pointers: { ...this.state.pointers, [publicationId]: pointer }, records: { ...this.state.records, [publicationId]: nextRecord } };
     await this.persist();
@@ -571,7 +571,7 @@ export class PublicationService {
     };
     const revisionAddress = await revisionContentAddress(unsignedBase);
     const unsigned = { ...unsignedBase, revisionAddress };
-    const revision: PublicationRevision = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const revision: PublicationRevision = { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     const pointerUnsigned = {
       version: PUBLICATION_VERSION,
       protocol: PUBLICATION_PROTOCOL as typeof PUBLICATION_PROTOCOL,
@@ -584,7 +584,7 @@ export class PublicationService {
       visibility,
       updatedAt: revision.publishedAt,
     };
-    const pointer: PublicationPointer = { ...pointerUnsigned, signature: await this.crypto.sign(canonicalJson(pointerUnsigned), this.local.privateKey) };
+    const pointer: PublicationPointer = { ...pointerUnsigned, signature: await signCanonical(pointerUnsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     if (!(await this.surfaceEligible(revision))) throw new PublicationError('POLICY_DENIED', 'Publication failed mandatory SafetySurfaceGate');
     const nextRecord: PublicationRecord = {
       publicationId,
@@ -639,11 +639,11 @@ export class PublicationService {
     if (!manifest.success) return false;
     const expectedContentId = `sha256-${await sha256(new TextEncoder().encode(canonicalJson(value.content)))}`;
     if (manifest.data.contentId !== expectedContentId || manifest.data.contentPolicy !== contentPolicyFor(value.visibility)) return false;
-    return this.crypto.verify(canonicalJson(stripSignature(value)), value.signature, value.publisherIdentity);
+    return verifyCanonical(stripSignature(value), value.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, value.publisherIdentity));
   }
   private async verifyPointer(value: PublicationPointer): Promise<boolean> {
     if (!parsePublicationPointer(value)) return false;
-    return this.crypto.verify(canonicalJson(stripSignature(value)), value.signature, value.publisherIdentity);
+    return verifyCanonical(stripSignature(value), value.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, value.publisherIdentity));
   }
   private resolveLatestLocal(publicationId: string): PublicationRevision | undefined { const pointer = this.state.pointers[publicationId]; return pointer?.revisionAddress ? this.state.revisions[pointer.revisionAddress] : undefined; }
   private async hydrate(): Promise<void> {

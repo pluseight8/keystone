@@ -1,5 +1,5 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
-import { protocolSignedPayload } from '../security/protocol-security.js';
+import { CANONICAL_V2_SIGNATURE_PREFIX, canonicalJsonV2, canonicalSigned, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
+import { protocolSignedValue } from '../security/protocol-security.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
 import type { KeystoneDeliveryInterface } from '../connectivity.js';
@@ -280,7 +280,7 @@ export class DirectMessageService {
   private async publishToPeers(peers: readonly NodeId[], payload: MessagePayload, revision: Pick<MessageObject, 'supersedes' | 'updatedAt' | 'deleted'> = {}, references: MessageObject['references'] = []): Promise<MessageObject> {
     for (const peer of peers) if (await this.storage.isBlocked(peer)) throw new Error('Cannot send to a blocked identity'); const createdAt = new Date(this.now()).toISOString();
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'message' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt, visibility: 'private' as const, references, payload, ...revision };
-    const message: MessageObject = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const message: MessageObject = { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     const conversation = await this.storage.getConversation(payload.conversationId);
     const surface = conversation?.kind === 'group' ? 'GROUP_CHAT' as const : 'DIRECT_CHAT' as const;
     if (!await this.messageEligible(message, surface, conversation?.kind === 'group' ? 'GROUP_SHARED' : 'DIRECT_SHARED')) throw new Error('Message failed mandatory SafetySurfaceGate');
@@ -348,12 +348,12 @@ export class DirectMessageService {
     await this.storage.markSeen(envelope.nonce);
     if (envelope.type === 'social.conversation_event') {
       let event: ConversationEventObject; try { event = conversationEventObjectSchema.parse(payload.event); } catch { this.abuse?.malformed(envelope.sender); return; }
-      if (event.author !== envelope.sender || !(await this.crypto.verify(canonicalJson(unsignedObject(event)), event.signature, this.contact(envelope.sender).signingPublicKey)) || !(await this.conversationEventEligible(event))) { this.abuse?.malformed(envelope.sender); return; }
+      if (event.author !== envelope.sender || !(await verifyCanonical(unsignedObject(event), event.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, this.contact(envelope.sender).signingPublicKey))) || !(await this.conversationEventEligible(event))) { this.abuse?.malformed(envelope.sender); return; }
       if (await this.storage.hasSeenObject(event.id)) return; await this.storage.markSeenObject(event.id); this.emit({ kind: 'conversation', peer: envelope.sender, conversationId: event.payload.conversationId, conversation: event }); return;
     }
     if (envelope.type === 'social.message') {
       let message: MessageObject; try { message = messageObjectSchema.parse(payload.message); } catch { this.abuse?.malformed(envelope.sender); return; }
-      if (message.author !== envelope.sender || !(await this.crypto.verify(canonicalJson(unsignedObject(message)), message.signature, this.contact(envelope.sender).signingPublicKey))) { this.abuse?.malformed(envelope.sender); return; }
+      if (message.author !== envelope.sender || !(await verifyCanonical(unsignedObject(message), message.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, this.contact(envelope.sender).signingPublicKey)))) { this.abuse?.malformed(envelope.sender); return; }
       if (this.conversationPolicy && !(await this.conversationPolicy(message.payload.conversationId, envelope.sender))) return;
       const conversation = await this.storage.getConversation(message.payload.conversationId);
       // An authenticated message is not enough to infer that an unknown
@@ -431,8 +431,8 @@ export class SodiumDirectMessageCipher implements DirectMessageCipher {
 export class ContactEnvelopeSecurity implements EnvelopeSecurity {
   private readonly ready = import('libsodium-wrappers').then(async ({ default: sodium }) => { await sodium.ready; return sodium; }); private readonly keys = new Map<NodeId, string>();
   constructor(private readonly local: DeviceSessionKeys, contacts: readonly SocialContact[]) { this.keys.set(local.nodeId, local.publicKey); contacts.forEach(contact => this.keys.set(contact.nodeId, contact.signingPublicKey)); }
-  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another identity'); const s = await this.ready; return s.to_base64(s.crypto_sign_detached(s.from_string(protocolSignedPayload(envelope.type, envelope)), s.from_base64(this.local.privateKey, s.base64_variants.URLSAFE_NO_PADDING)), s.base64_variants.URLSAFE_NO_PADDING); }
-  async verify(envelope: Envelope): Promise<boolean> { const key = this.keys.get(envelope.sender); if (!key || !envelope.signature) return false; const s = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; return s.crypto_sign_verify_detached(s.from_base64(envelope.signature, s.base64_variants.URLSAFE_NO_PADDING), s.from_string(protocolSignedPayload(envelope.type, unsigned)), s.from_base64(key, s.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
+  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another identity'); const s = await this.ready; return CANONICAL_V2_SIGNATURE_PREFIX + s.to_base64(s.crypto_sign_detached(s.from_string(canonicalJsonV2(protocolSignedValue(envelope.type, envelope))), s.from_base64(this.local.privateKey, s.base64_variants.URLSAFE_NO_PADDING)), s.base64_variants.URLSAFE_NO_PADDING); }
+  async verify(envelope: Envelope): Promise<boolean> { const key = this.keys.get(envelope.sender); if (!key || !envelope.signature) return false; const s = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; const signed = canonicalSigned(protocolSignedValue(envelope.type, unsigned), envelope.signature); return s.crypto_sign_verify_detached(s.from_base64(signed.signature, s.base64_variants.URLSAFE_NO_PADDING), s.from_string(signed.bytes), s.from_base64(key, s.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
 }
 export async function directConversationId(a: NodeId, b: NodeId): Promise<string> { const material = `keystone:direct-conversation:v1:${[a, b].sort().join(':')}`; const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material)); return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''); }
 /** Deterministic group identity: membership, not a mutable title, defines the conversation. */

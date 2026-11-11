@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { type CryptoProvider, signCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { NodeId } from '../types.js';
 import {
@@ -155,7 +155,7 @@ export class GroupConversationService {
   }
   private async event(payload: Omit<ConversationEventObject['payload'], 'logicalClock'>): Promise<ConversationEventObject> {
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'conversation_event' as const, id: crypto.randomUUID(), author: this.local.nodeId, createdAt: new Date(this.now()).toISOString(), visibility: 'private' as const, references: [{ id: payload.conversationId, type: 'conversation' as const }], payload: { ...payload, logicalClock: await this.storage.nextLogicalClock(payload.conversationId) } };
-    const event = conversationEventObjectSchema.parse({ ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) }); if (!(await this.eligible(event))) throw new Error('Group conversation event failed mandatory SafetySurfaceGate'); return event;
+    const event = conversationEventObjectSchema.parse({ ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) }); if (!(await this.eligible(event))) throw new Error('Group conversation event failed mandatory SafetySurfaceGate'); return event;
   }
   private async broadcast(event: ConversationEventObject, recipients: readonly NodeId[]): Promise<void> { await this.messages.sendConversationEvent(uniqueMembers(recipients), event); }
   private async saveState(current: DirectConversation, members: readonly NodeId[], adminIds: readonly NodeId[]): Promise<DirectConversation> { const next = { ...current, participants: [...members], members: [...members], adminIds: [...adminIds], revision: (current.revision ?? 0) + 1 }; if (!(await this.eligible(next))) throw new Error('Group conversation failed mandatory SafetySurfaceGate'); await this.storage.saveConversation(next); return next; }

@@ -1,4 +1,4 @@
-import { canonicalJson } from '../crypto.js';
+import { canonicalJson, verifyCanonical } from '../crypto.js';
 
 /**
  * Protocol security is deliberately independent from product examples.  A
@@ -259,9 +259,12 @@ export type ProtocolSecurityErrorCode = 'INVALID_MESSAGE' | 'INVALID_SIGNATURE' 
 export class ProtocolSecurityError extends Error { constructor(readonly code: ProtocolSecurityErrorCode, message = 'Protocol message rejected') { super(message); this.name = 'ProtocolSecurityError'; } }
 
 export function protocolSignatureDomain(objectType: string, version = 1): string { if (!/^[A-Za-z0-9._:-]{1,128}$/.test(objectType)) throw new ProtocolSecurityError('INVALID_MESSAGE', 'Invalid signature domain'); return `keystone:protocol:${objectType}:v${version}`; }
-export function protocolSignedPayload(domain: string, value: unknown): string { const resolved = domain.startsWith('keystone:protocol:') ? domain : protocolSignatureDomain(domain); return canonicalJson({ domain: resolved, payload: value }); }
+/** The domain-separated value a protocol signature covers; serialize it with the canonical JSON version the signature names. */
+export function protocolSignedValue(domain: string, value: unknown): { readonly domain: string; readonly payload: unknown } { return { domain: domain.startsWith('keystone:protocol:') ? domain : protocolSignatureDomain(domain), payload: value }; }
+/** Canonical JSON v1 bytes of `protocolSignedValue`, as covered by unmarked signatures. */
+export function protocolSignedPayload(domain: string, value: unknown): string { return canonicalJson(protocolSignedValue(domain, value)); }
 export function unsignedProtocolObject<T extends { readonly signature?: string }>(value: T): Omit<T, 'signature'> { const { signature: _signature, ...unsigned } = value; return unsigned; }
-export async function verifyProtocolObject<T extends { readonly signature?: string }>(value: T, domain: string, verify: (payload: string, signature: string) => Promise<boolean> | boolean): Promise<boolean> { return Boolean(value.signature && await verify(protocolSignedPayload(domain, unsignedProtocolObject(value)), value.signature)); }
+export async function verifyProtocolObject<T extends { readonly signature?: string }>(value: T, domain: string, verify: (payload: string, signature: string) => Promise<boolean> | boolean): Promise<boolean> { return verifyCanonical(protocolSignedValue(domain, unsignedProtocolObject(value)), value.signature, verify); }
 
 export interface ReplayKey { readonly sender: string; readonly nonce?: string; readonly messageId?: string; readonly objectType?: string; readonly protocolEpoch?: number; }
 export interface ReplayWindowOptions { readonly maxEntries?: number; readonly windowMs?: number; readonly now?: () => number; }

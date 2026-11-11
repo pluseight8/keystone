@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
 import type { KeystoneDeliveryInterface } from '../connectivity.js';
@@ -21,7 +21,7 @@ export class FileReplicationService {
   constructor(private readonly transport: KeystoneDeliveryInterface, private readonly files: FileService, private readonly crypto: CryptoProvider, private readonly security: EnvelopeSecurity, private readonly local: DeviceSessionKeys, private readonly now: () => number = () => Date.now(), private readonly options: FileReplicationOptions = {}, private readonly protectedSurfaces = new MandatorySafetySurfaceRegistry(new SafetySurfaceGate(new SafetyRuntime()))) { this.unsubscribe = transport.onMessage(envelope => { void this.receive(envelope); }); }
   close(): void { this.unsubscribe(); }
   async publish(peer: NodeId, file: FileObject): Promise<void> {
-    const parsed = fileObjectSchema.parse(file); if (!(await this.crypto.verify(canonicalJson(unsignedObject(parsed)), parsed.signature, parsed.author))) throw new Error('Invalid signed FileObject');
+    const parsed = fileObjectSchema.parse(file); if (!(await verifyCanonical(unsignedObject(parsed), parsed.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, parsed.author)))) throw new Error('Invalid signed FileObject');
     if (!(await this.eligible(parsed))) throw new Error('FileObject failed mandatory SafetySurfaceGate');
     const encoded = canonicalJson(parsed); if (new TextEncoder().encode(encoded).byteLength > MAX_OBJECT_BYTES) throw new Error('FileObject exceeds protocol limit');
     const unsigned: UnsignedEnvelope = { version: 1, type: TYPE, id: crypto.randomUUID(), sender: this.local.nodeId, recipient: peer, nonce: crypto.randomUUID(), expiresAt: new Date(this.now() + MAX_LIFETIME_MS).toISOString(), body: { file: parsed } };

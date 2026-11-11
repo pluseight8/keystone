@@ -6,19 +6,7 @@
  * persistence boundary that lets those services work before a richer native
  * host is connected.
  */
-import {
-  AISettingsService,
-  CaptureService,
-  canonicalJson,
-  ContentCacheFolderContentStore,
-  DocumentService,
-  IdentityManager,
-  PersistentDiscoveryStorage,
-  SharedFolderService,
-  TaskService,
-  UnifiedDiscoveryService,
-  sha256,
-} from '@keystone/core';
+import { AISettingsService, CaptureService, ContentCacheFolderContentStore, DocumentService, IdentityManager, PersistentDiscoveryStorage, SharedFolderService, TaskService, UnifiedDiscoveryService, sha256, signCanonical, verifyCanonical } from '@keystone/core';
 import { SodiumCryptoProvider } from '../../../packages/core/src/browser.js';
 import type {
   DocumentFileRef,
@@ -424,8 +412,8 @@ export async function bootstrapDesktopLocalRuntime(profile = readProfile()): Pro
       content: new ContentCacheFolderContentStore(media.cache),
       stateStore: new DesktopIndexedDbStateStore(`${FILES_STATE_KEY}:${profile.ownerIdentityId}`),
       signer: {
-        sign: payload => folderSigner.sign(canonicalJson(payload)),
-        verify: (payload, signature, signer) => folderCrypto.verify(canonicalJson(payload), signature, signer),
+        sign: payload => signCanonical(payload, canonicalBytes => folderSigner.sign(canonicalBytes)),
+        verify: (payload, signature, signer) => verifyCanonical(payload, signature, (canonicalBytes, rawSignature) => folderCrypto.verify(canonicalBytes, rawSignature, signer)),
       },
       requireSignedChanges: true,
     });

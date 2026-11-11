@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
 import type { KeystoneDeliveryInterface } from '../connectivity.js';
@@ -296,7 +296,7 @@ export class PrivateCommunityService {
 
   async acceptInvite(bootstrap: PrivateCommunityInviteBootstrap): Promise<PrivateCommunityJoinRequest> {
     if (!isInviteBootstrap(bootstrap) || bootstrap.recipient !== this.local.nodeId) throw new Error('Invalid private community invite');
-    if (!(await this.crypto.verify(canonicalJson(unsignedInvite(bootstrap)), bootstrap.signature, bootstrap.owner))) throw new Error('Private invite signature rejected');
+    if (!(await verifyCanonical(unsignedInvite(bootstrap), bootstrap.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, bootstrap.owner)))) throw new Error('Private invite signature rejected');
     const ownerPeer = this.peers.get(bootstrap.owner);
     if (!ownerPeer || ownerPeer.encryptionPublicKey !== bootstrap.ownerEncryptionPublicKey || bootstrap.community.author !== bootstrap.owner) throw new Error('Private invite owner key mismatch');
     communityObjectSchema.parse(bootstrap.community); communityInviteObjectSchema.parse(bootstrap.invite);
@@ -314,7 +314,7 @@ export class PrivateCommunityService {
 
   private async acceptJoinUnlocked(request: PrivateCommunityJoinRequest): Promise<readonly PrivateCommunityKeyUpdate[]> {
     if (!isJoinRequest(request)) throw new Error('Invalid private join request');
-    if (!(await this.crypto.verify(canonicalJson(unsignedJoin(request)), request.signature, request.requester))) throw new Error('Private join signature rejected');
+    if (!(await verifyCanonical(unsignedJoin(request), request.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, request.requester)))) throw new Error('Private join signature rejected');
     if (this.local.nodeId !== (await this.requireState(request.communityId)).owner) throw new Error('Only the owner can accept private joins');
     const state = await this.requireState(request.communityId);
     if (state.members.some(member => member.nodeId === request.requester)) throw new Error('Private join request already accepted');
@@ -419,7 +419,7 @@ export class PrivateCommunityService {
 
   async applyKeyUpdate(update: PrivateCommunityKeyUpdate): Promise<PrivateCommunityState> {
     if (!isKeyUpdate(update) || update.recipient !== this.local.nodeId) throw new Error('Invalid private key update');
-    if (!(await this.crypto.verify(canonicalJson(unsignedKeyUpdate(update)), update.signature, update.actor))) throw new Error('Private key update signature rejected');
+    if (!(await verifyCanonical(unsignedKeyUpdate(update), update.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, update.actor)))) throw new Error('Private key update signature rejected');
     const existing = await this.storage.get(update.communityId);
     if (existing) {
       if (update.previousEpoch !== existing.epoch || update.epoch !== existing.epoch + 1) throw new Error('Private epoch replay or gap rejected');
@@ -457,7 +457,7 @@ export class PrivateCommunityService {
 
   async applyRevocationNotice(notice: PrivateCommunityRevocationNotice): Promise<PrivateCommunityState> {
     if (!isRevocationNotice(notice) || notice.recipient !== this.local.nodeId) throw new Error('Invalid private revocation notice');
-    if (!(await this.crypto.verify(canonicalJson(unsignedRevocation(notice)), notice.signature, notice.actor))) throw new Error('Private revocation signature rejected');
+    if (!(await verifyCanonical(unsignedRevocation(notice), notice.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, notice.actor)))) throw new Error('Private revocation signature rejected');
     const state = await this.requireState(notice.communityId);
     if (state.owner !== notice.actor || notice.epoch !== state.epoch + 1 || state.revokedDevices.includes(this.local.nodeId)) throw new Error('Private revocation epoch rejected');
     if (notice.membershipEvent.type !== 'community_member' || notice.membershipEvent.payload.member !== this.local.nodeId || !['kick', 'ban'].includes(notice.membershipEvent.payload.action)) throw new Error('Private revocation target rejected');
@@ -508,7 +508,7 @@ export class PrivateCommunityService {
   private async bootstrapEvents(communityId: string, invite?: CommunityInviteObject): Promise<readonly CommunityEvent[]> { const events = (await this.communities.events(communityId)).filter(event => event.type === 'community' || event.type === 'role' || event.type === 'channel' || event.type === 'community_category'); const latestCommunity = events.filter(event => event.type === 'community').at(-1); const result: CommunityEvent[] = events.filter(event => event !== latestCommunity); if (latestCommunity) result.unshift(latestCommunity); if (invite) result.push(invite); if (result.length > MAX_BOOTSTRAP_EVENTS) throw new Error('Private community bootstrap is too large'); return result; }
   private requirePeerKey(nodeId: NodeId): PrivateCommunityMemberKey { const peer = this.peers.get(nodeId); if (!peer) throw new Error('Unknown private member device'); return { nodeId, encryptionPublicKey: peer.encryptionPublicKey }; }
   private async serialized<T>(operation: () => Promise<T>): Promise<T> { const next = this.mutation.then(operation); this.mutation = next.then(() => undefined, () => undefined); return next; }
-  private sign(value: object): Promise<string> { return this.crypto.sign(canonicalJson(value), this.local.privateKey); }
+  private sign(value: object): Promise<string> { return signCanonical(value, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)); }
   private date(): string { return new Date(this.now()).toISOString(); }
 }
 

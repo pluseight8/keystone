@@ -1,7 +1,7 @@
 import type { NodeId, Role } from './types.js';
-import { protocolSignedPayload } from './security/protocol-security.js';
+import { protocolSignedValue } from './security/protocol-security.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from './transport.js';
-import { canonicalJson } from './crypto.js';
+import { CANONICAL_V2_SIGNATURE_PREFIX, canonicalJsonV2, canonicalSigned } from './crypto.js';
 import { DeviceKeyHandle, DeviceSigningCapability, IdentitySigningCapability, LegacySecretCompatibilityBoundary, SecretAccessError, SecretCapabilityService, SecretHandle, signingDomainFor, type SecretCreateInput, type SecretReference, type SecureSecretHost, type SecureSigningHost, type SigningDomain } from './security/secrets.js';
 
 /** @deprecated Import/restore compatibility data only; never application data. */
@@ -163,10 +163,10 @@ class IdentityManagerSigningHost implements SecureSigningHost {
     const operation = domain === 'KEYSTONE_IDENTITY_PROFILE' ? 'SIGN_IDENTITY_OBJECT' : domain === 'KEYSTONE_OWNER_INTENT' ? 'SIGN_OWNER_INTENT' : 'SIGN_PROTOCOL_ENVELOPE';
     capability.consume(operation, handle, { callerId: capability.grant.callerId, ...(capability.grant.target ? { target: capability.grant.target } : {}) });
     const sodium = await this.ready;
-    const signature = sodium.crypto_sign_detached(sodium.from_string(canonicalJson({ domain, payload })), sodium.from_base64(this.privateKey, sodium.base64_variants.URLSAFE_NO_PADDING));
-    return sodium.to_base64(signature, sodium.base64_variants.URLSAFE_NO_PADDING);
+    const signature = sodium.crypto_sign_detached(sodium.from_string(canonicalJsonV2({ domain, payload })), sodium.from_base64(this.privateKey, sodium.base64_variants.URLSAFE_NO_PADDING));
+    return CANONICAL_V2_SIGNATURE_PREFIX + sodium.to_base64(signature, sodium.base64_variants.URLSAFE_NO_PADDING);
   }
-  async verify(domain: SigningDomain, payload: unknown, signature: string, publicKey: string): Promise<boolean> { const sodium = await this.ready; try { return sodium.crypto_sign_verify_detached(sodium.from_base64(signature, sodium.base64_variants.URLSAFE_NO_PADDING), sodium.from_string(canonicalJson({ domain, payload })), sodium.from_base64(publicKey, sodium.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
+  async verify(domain: SigningDomain, payload: unknown, signature: string, publicKey: string): Promise<boolean> { const sodium = await this.ready; try { const signed = canonicalSigned({ domain, payload }, signature); return sodium.crypto_sign_verify_detached(sodium.from_base64(signed.signature, sodium.base64_variants.URLSAFE_NO_PADDING), sodium.from_string(signed.bytes), sodium.from_base64(publicKey, sodium.base64_variants.URLSAFE_NO_PADDING)); } catch { return false; } }
 }
 
 /** EnvelopeSecurity adapter for production callers.  It accepts only public
@@ -199,8 +199,8 @@ export class SelfEnvelopeSecurity implements EnvelopeSecurity {
    * typed IdentitySigningCapability. */
   constructor(private readonly local: DeviceSessionKeys, trustedPeers: Readonly<Record<NodeId, string>> = {}, private readonly signer?: IdentitySigningCapability, boundary?: LegacySecretCompatibilityBoundary) { requireLegacyBoundary(boundary); Object.entries(trustedPeers).forEach(([id, key]) => this.trusted.set(id, key)); this.trusted.set(local.nodeId, local.publicKey); }
   trust(peer: Pick<DeviceSessionKeys, 'nodeId' | 'publicKey'>): void { this.trusted.set(peer.nodeId, peer.publicKey); }
-  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another device'); if (this.signer) { const domain: SigningDomain = envelope.type.includes('message') ? 'KEYSTONE_MESSAGE' : envelope.type.includes('owner') ? 'KEYSTONE_OWNER_INTENT' : 'KEYSTONE_PROTOCOL_ENVELOPE'; return this.signer.signProtocolEnvelope(domain, envelope); } const sodium = await this.ready; return encode(sodium.crypto_sign_detached(sodium.from_string(protocolSignedPayload(envelope.type, envelope)), sodium.from_base64(this.local.privateKey, sodium.base64_variants.URLSAFE_NO_PADDING))); }
-  async verify(envelope: Envelope): Promise<boolean> { const key = this.trusted.get(envelope.sender); if (!key || !envelope.signature) return false; const sodium = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; const signature = sodium.from_base64(envelope.signature, sodium.base64_variants.URLSAFE_NO_PADDING); const publicKey = sodium.from_base64(key, sodium.base64_variants.URLSAFE_NO_PADDING); if (sodium.crypto_sign_verify_detached(signature, sodium.from_string(protocolSignedPayload(envelope.type, unsigned)), publicKey)) return true; const domain = envelope.type.includes('message') ? 'KEYSTONE_MESSAGE' : envelope.type.includes('owner') ? 'KEYSTONE_OWNER_INTENT' : 'KEYSTONE_PROTOCOL_ENVELOPE'; return sodium.crypto_sign_verify_detached(signature, sodium.from_string(canonicalJson({ domain, payload: unsigned })), publicKey); } catch { return false; } }
+  async sign(envelope: UnsignedEnvelope): Promise<string> { if (envelope.sender !== this.local.nodeId) throw new Error('Cannot sign for another device'); if (this.signer) { const domain: SigningDomain = envelope.type.includes('message') ? 'KEYSTONE_MESSAGE' : envelope.type.includes('owner') ? 'KEYSTONE_OWNER_INTENT' : 'KEYSTONE_PROTOCOL_ENVELOPE'; return this.signer.signProtocolEnvelope(domain, envelope); } const sodium = await this.ready; return CANONICAL_V2_SIGNATURE_PREFIX + encode(sodium.crypto_sign_detached(sodium.from_string(canonicalJsonV2(protocolSignedValue(envelope.type, envelope))), sodium.from_base64(this.local.privateKey, sodium.base64_variants.URLSAFE_NO_PADDING))); }
+  async verify(envelope: Envelope): Promise<boolean> { const key = this.trusted.get(envelope.sender); if (!key || !envelope.signature) return false; const sodium = await this.ready; try { const { signature: _signature, ...unsigned } = envelope; const signed = canonicalSigned(protocolSignedValue(envelope.type, unsigned), envelope.signature); const signature = sodium.from_base64(signed.signature, sodium.base64_variants.URLSAFE_NO_PADDING); const publicKey = sodium.from_base64(key, sodium.base64_variants.URLSAFE_NO_PADDING); if (sodium.crypto_sign_verify_detached(signature, sodium.from_string(signed.bytes), publicKey)) return true; const domain = envelope.type.includes('message') ? 'KEYSTONE_MESSAGE' : envelope.type.includes('owner') ? 'KEYSTONE_OWNER_INTENT' : 'KEYSTONE_PROTOCOL_ENVELOPE'; return sodium.crypto_sign_verify_detached(signature, sodium.from_string(canonicalSigned({ domain, payload: unsigned }, envelope.signature).bytes), publicKey); } catch { return false; } }
 }
 
 function createLegacySessionKeys(input: { deviceId: string; nodeId: string; publicKey: string; privateKey: string; encryptionPublicKey: string; encryptionPrivateKey: string }): DeviceSessionKeys {

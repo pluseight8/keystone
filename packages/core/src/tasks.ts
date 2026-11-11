@@ -7,7 +7,7 @@
  * typed Chronos host boundary.
  */
 import * as Y from 'yjs';
-import { canonicalJson } from './crypto.js';
+import { canonicalJson, signCanonical, verifyCanonical } from './crypto.js';
 import type { NodeId } from './types.js';
 import type {
   CollaborationService,
@@ -1192,7 +1192,7 @@ export class TaskService {
     this.assertOpen();
     const value = validateReplicationEvent(event);
     if (this.seenEvents.has(value.id)) return false;
-    if (this.signer?.verify && (!value.signature || !(await this.signer.verify(canonicalJson(unsignedReplication(value)), value.signature, value.actor)))) throw new TaskError('NOT_AUTHORIZED', 'Task replication signature is invalid');
+    if (this.signer?.verify && (!value.signature || !(await verifyCanonical(unsignedReplication(value), value.signature, (canonicalBytes, rawSignature) => this.signer!.verify!(canonicalBytes, rawSignature, value.actor))))) throw new TaskError('NOT_AUTHORIZED', 'Task replication signature is invalid');
     if (value.operation === 'list.invite') {
       const list = this.requireList(value.listId, true);
       if (value.actor !== list.ownerIdentityId || value.targetId === '') throw new TaskError('NOT_AUTHORIZED', 'Only the list owner can invite members');
@@ -1404,7 +1404,7 @@ export class TaskService {
   private async publishInvitation(invitation: TaskListInvitation, recipients?: readonly NodeId[]): Promise<void> { const list = this.requireList(invitation.listId, true); await this.publish({ version: 1, protocol: TASKS_PROTOCOL, id: randomId('task-event'), listId: list.id, operation: 'list.invite', targetId: invitation.id, epoch: list.epoch, revision: list.revision, actor: this.identityId, payload: clone(invitation), createdAt: isoNow(this.now) }, recipients); }
   private async publishAcceptance(invitation: TaskListInvitation): Promise<void> { const list = this.requireList(invitation.listId, true); await this.publish({ version: 1, protocol: TASKS_PROTOCOL, id: randomId('task-event'), listId: list.id, operation: 'list.accept', targetId: invitation.id, epoch: list.epoch, revision: list.revision, actor: this.identityId, payload: clone(invitation), createdAt: isoNow(this.now) }); }
   private async publishTask(task: Task, operation: 'task.upsert' | 'task.delete'): Promise<void> { const list = this.requireList(task.listId, true); await this.publish({ version: 1, protocol: TASKS_PROTOCOL, id: randomId('task-event'), listId: list.id, operation, targetId: task.id, epoch: list.epoch, revision: task.revision, actor: this.identityId, payload: clone(task), createdAt: isoNow(this.now) }); }
-  private async publish(input: Omit<TaskReplicationEvent, 'signature'>, recipients?: readonly NodeId[]): Promise<void> { if (!this.replication) return; const event = this.signer ? { ...input, signature: await this.signer.sign(canonicalJson(input), input.actor) } : input; try { await this.replication.publish(event, recipients ?? this.recipients(input.listId)); } catch { /* local-first state remains usable while peers are offline */ } }
+  private async publish(input: Omit<TaskReplicationEvent, 'signature'>, recipients?: readonly NodeId[]): Promise<void> { if (!this.replication) return; const event = this.signer ? { ...input, signature: await signCanonical(input, canonicalBytes => this.signer!.sign(canonicalBytes, input.actor)) } : input; try { await this.replication.publish(event, recipients ?? this.recipients(input.listId)); } catch { /* local-first state remains usable while peers are offline */ } }
   private recipients(listId: TaskListId): readonly NodeId[] {
     const members = (this.lists.get(listId)?.members ?? []).filter(member => member.identityId !== this.identityId && !member.removedAt).map(member => member.identityId);
     return [...new Set([...members, ...this.ownerDeviceRecipients])].slice(0, 64);

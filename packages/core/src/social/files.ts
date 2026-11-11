@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { NodeId } from '../types.js';
 import {
@@ -121,7 +121,7 @@ export class FileService {
     const fileId = await deterministicFileId(payloadWithoutId, visibility);
     const payload: FilePayload = { ...payloadWithoutId, fileId };
     const unsigned = { version: KEYSTONE_OBJECT_VERSION as 1, type: 'file_object' as const, id: fileId, author: this.local.nodeId, createdAt: new Date(this.now()).toISOString(), visibility, references: input.communityId ? [{ id: input.communityId, type: 'community' as const }] : [], payload };
-    const file = fileObjectSchema.parse({ ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) });
+    const file = fileObjectSchema.parse({ ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) });
     if (visibility !== 'private' && !(await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: visibility === 'public' ? 'PUBLIC' : visibility === 'community' ? 'COMMUNITY' : 'DIRECT_SHARED', sourceType: 'file', verified: true, authorized: true, sharing: true }))) throw new Error('File failed mandatory SafetySurfaceGate');
     const saved = await this.storage.save(file);
     if (!saved) { const existing = await this.storage.get(fileId); if (existing) { await this.storagePolicy?.register(existing, { userOwned: true }); return { file: existing, manifest }; } }
@@ -148,7 +148,7 @@ export class FileService {
     const parsed = fileObjectSchema.safeParse(value); if (!parsed.success) return undefined;
     const file = parsed.data;
     if (file.payload.fileId !== file.id || file.payload.uploader !== file.author || `sha256-${file.payload.contentId.replace(/^sha256-/, '')}` !== file.payload.contentId) return undefined;
-    if (!(await this.crypto.verify(canonicalJson(unsignedObject(file)), file.signature, file.author))) return undefined;
+    if (!(await verifyCanonical(unsignedObject(file), file.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, file.author)))) return undefined;
     if (file.visibility !== 'private' && !await this.protectedSurfaces.evaluate('FILES', { objectId: file.id, value: file, content: file.payload, text: JSON.stringify(file.payload), domain: file.visibility === 'public' ? 'PUBLIC' : 'COMMUNITY', sourceType: 'file', verified: true, authorized: true, sharing: true })) return undefined;
     await this.storage.save(file); return file;
   }

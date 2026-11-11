@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { NodeId } from '../types.js';
 import {
@@ -148,7 +148,7 @@ export class CommunityService {
   async ingest(value: unknown): Promise<CommunityEvent | undefined> {
     const candidate = value && typeof value === 'object' ? value as { type?: unknown } : undefined; if (!candidate) return undefined;
     const parsed = candidate.type === 'community' ? communityObjectSchema.safeParse(value) : candidate.type === 'role' ? roleObjectSchema.safeParse(value) : candidate.type === 'channel' ? channelObjectSchema.safeParse(value) : candidate.type === 'community_category' ? communityCategoryObjectSchema.safeParse(value) : candidate.type === 'community_member' ? communityMemberObjectSchema.safeParse(value) : candidate.type === 'community_message' ? communityMessageObjectSchema.safeParse(value) : candidate.type === 'community_moderation' ? communityModerationObjectSchema.safeParse(value) : candidate.type === 'community_invite' ? communityInviteObjectSchema.safeParse(value) : candidate.type === 'community_report' ? communityReportObjectSchema.safeParse(value) : undefined;
-    if (!parsed?.success || !(await this.crypto.verify(canonicalJson(unsignedObject(parsed.data)), parsed.data.signature, parsed.data.author))) return undefined;
+    if (!parsed?.success || !(await verifyCanonical(unsignedObject(parsed.data), parsed.data.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, parsed.data.author)))) return undefined;
     const event = parsed.data as CommunityEvent;
     if (event.type === 'community') {
       const existing = (await this.storage.events(event.payload.communityId)).filter(value => value.type === 'community').sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -207,7 +207,7 @@ export class CommunityService {
   private async assertMessage(communityId: string, channelId: string, messageId: string): Promise<CommunityMessageObject> { const message = (await this.messages(communityId, channelId)).find(value => value.payload.messageId === messageId || value.id === messageId); if (!message) throw new Error('Unknown community message'); return message; }
   private async safeEvents(communityId: string): Promise<readonly CommunityEvent[]> { const values = await this.storage.events(communityId); return (await Promise.all(values.map(async value => await this.eventEligible(value) ? value : undefined))).filter((value): value is CommunityEvent => !!value); }
   private async eventEligible(event: CommunityEvent): Promise<boolean> { const domain = event.visibility === 'public' ? 'PUBLIC' as const : 'COMMUNITY' as const; return (await this.protectedSurfaces.evaluate('COMMUNITIES', { objectId: event.id, value: event, content: event.payload, text: JSON.stringify(event.payload), domain, sourceType: 'community', verified: true, authorized: true, sharing: true })) !== undefined; }
-  private sign(value: object): Promise<string> { return this.crypto.sign(canonicalJson(value), this.local.privateKey); }
+  private sign(value: object): Promise<string> { return signCanonical(value, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)); }
   private date(): string { this.lastCreatedAt = Math.max(this.now(), this.lastCreatedAt + 1); return new Date(this.lastCreatedAt).toISOString(); }
 }
 

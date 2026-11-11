@@ -39,11 +39,42 @@ it in separate processes under `C`, `ru`, `lt`, `da`, `et` and `tr` locales.
 - Strings are not Unicode-normalized; lone surrogates are escaped as by
   `JSON.stringify`.
 
-## Planned canonical JSON v2
+## Canonical JSON v2
 
-v2 should follow RFC 8785 (JSON Canonicalization Scheme): UTF-16 code-unit key
-order, `undefined` properties omitted, and an error for non-JSON values. It
-changes signed bytes, so it needs an explicit marker on signed objects and a
-transition period in which verifiers accept a v1 signature only for objects
-without the marker. The serializer change and the marker must ship together
-with cross-version vectors.
+`canonicalJsonV2` in `packages/core/src/crypto.ts` follows RFC 8785 (JSON
+Canonicalization Scheme): keys in UTF-16 code-unit order, `undefined`
+properties omitted (as JSON transport omits them), and a `TypeError` for values
+JSON cannot carry (`undefined` in an array, non-finite numbers, `bigint`,
+functions, symbols, non-plain objects such as `Date`, `Map` or typed arrays,
+and lone surrogates). Vectors live in `canonical-v2.test.ts`.
+
+**The marker.** A signature made over v2 bytes starts with `c2.`; the rest is
+the unchanged base64url Ed25519 signature. `signCanonical` produces it and
+`verifyCanonical` / `canonicalSigned` pick the bytes from it:
+
+- `c2.` present: verify against v2 bytes;
+- no marker: verify against v1 bytes, so objects signed and stored before v2
+  stay valid. v1 is never used to create a new signature.
+
+The marker sits outside the signed bytes. Moving it does not help an attacker:
+a v2 signature checked as v1 (or the reverse) only verifies when both
+serializations are byte-identical, which means the same JSON value. A value v2
+cannot represent is rejected by the verifier and is an error for the signer.
+
+**What uses v2.** Every signature Core creates: transport envelopes and the
+domain-separated identity signatures, social objects, messages, communities,
+spaces, publications, calendar, tasks, vaults, shared folders, device mesh,
+delay-tolerant parcel manifests, agent protocols, and the desktop host signer.
+
+**What stays on v1, deliberately.** Anything that is an identifier or bound
+data rather than a signature: action hashes, content ids, integrity digests,
+fingerprints, AEAD associated data and comparisons. These values are already
+stored or shared, so changing their bytes would orphan them; they keep the v1
+properties above. Contact replication signatures keep their own v1 serializer
+(`contacts.ts`), which already omits `undefined`. Moving any of these needs its
+own versioned identifier, not a serializer swap.
+
+**Compatibility.** A build without v2 rejects a `c2.` signature (it is not
+valid base64url), so it fails closed instead of misreading it; mixed
+deployments must update verifiers before signers. There is no cut-off date for
+unmarked signatures yet: stored v1 objects have no re-signing path.

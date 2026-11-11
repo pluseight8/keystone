@@ -10,7 +10,8 @@ import { SodiumCryptoProvider } from '../../../packages/core/src/browser.js';
 import {
   SecretAccessError,
   SecretHandle,
-  canonicalJson,
+  signCanonical,
+  verifyCanonical,
   type SecretCapability,
   type SecretCreateInput,
   type SecretReference,
@@ -184,11 +185,11 @@ export class TauriSecureSecretHost implements SecureSecretHost {
     handle.assertUsable('SIGN');
     const operation = domain === 'KEYSTONE_IDENTITY_PROFILE' ? 'SIGN_IDENTITY_OBJECT' : domain === 'KEYSTONE_OWNER_INTENT' ? 'SIGN_OWNER_INTENT' : 'SIGN_PROTOCOL_ENVELOPE';
     capability.consume(operation, handle, { callerId: capability.grant.callerId, ...(capability.grant.target ? { target: capability.grant.target } : {}) });
-    return signDesktopPayload(this.deviceId, canonicalJson({ domain, payload }));
+    return signCanonical({ domain, payload }, bytes => signDesktopPayload(this.deviceId, bytes));
   }
 
   async verify(domain: SigningDomain, payload: unknown, signature: string, publicKey: string): Promise<boolean> {
-    return new SodiumCryptoProvider().verify(canonicalJson({ domain, payload }), signature, publicKey);
+    return verifyCanonical({ domain, payload }, signature, (bytes, raw) => new SodiumCryptoProvider().verify(bytes, raw, publicKey));
   }
 
   async derive(): Promise<never> { throw new SecretAccessError('Desktop identity derivation is not exposed to the renderer'); }

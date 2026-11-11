@@ -27,7 +27,7 @@ import {
   type TransportSecurityBoundary,
   type TransportSession,
 } from './connectivity.js';
-import { canonicalJson, SodiumCryptoProvider, type CryptoProvider } from './crypto.js';
+import { SodiumCryptoProvider, type CryptoProvider, signCanonical, verifyCanonical } from './crypto.js';
 import { createOpaqueDeliveryEnvelope, decodeOpaqueBytes, fragmentOpaqueEnvelope, OpaqueFragmentReassembler } from './connectivity.js';
 import type { AnonymousNeighborSessionSource } from './mesh-routing.js';
 
@@ -177,7 +177,7 @@ export function validateDelayTolerantParcel(value: unknown, now = Date.now(), li
   if (item.version !== VERSION || !validId(item.id) || !validDigest(item.destinationDigest) || !validDigest(item.acknowledgementDigest) || typeof item.createdAt !== 'string' || typeof item.expiresAt !== 'string' || typeof item.ciphertext !== 'string' || !item.ciphertext || typeof item.ciphertextIntegrity !== 'string' || typeof item.manifestPublicKey !== 'string' || typeof item.manifestSignature !== 'string' || !validProfile(item.resourceClass) || (item.payloadKind !== 'DELIVERY' && item.payloadKind !== 'RECEIPT') || item.copyBudget !== 1 || item.remainingCopyBudget !== 1 || !Number.isSafeInteger(item.hopBudget) || (item.hopBudget as number) < 0 || (item.hopBudget as number) > 64 || !item.requirement || typeof item.requirement !== 'object') throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel fields are invalid');
   const created = Date.parse(item.createdAt); const expires = Date.parse(item.expiresAt); if (!Number.isFinite(created) || !Number.isFinite(expires) || expires <= created || expires <= now || expires - created > MAX_LIFETIME_MS) throw new ConnectivityError('TIMEOUT', 'Delay-tolerant parcel lifetime is invalid or expired');
   const maxParcel = limits.maxParcelBytes ?? 256 * 1024; if (bytesLength(item.ciphertext as string) > maxParcel) throw new ConnectivityError('RESOURCE_LIMIT', 'Delay-tolerant parcel exceeds size limit');
-  if (!/^[A-Za-z0-9_-]+$/.test(item.ciphertext as string) || !/^sha256:[A-Za-z0-9_-]+$/.test(item.ciphertextIntegrity as string) || !/^[A-Za-z0-9_-]+$/.test(item.manifestPublicKey as string) || !/^[A-Za-z0-9_-]+$/.test(item.manifestSignature as string)) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel encoding is invalid');
+  if (!/^[A-Za-z0-9_-]+$/.test(item.ciphertext as string) || !/^sha256:[A-Za-z0-9_-]+$/.test(item.ciphertextIntegrity as string) || !/^[A-Za-z0-9_-]+$/.test(item.manifestPublicKey as string) || !/^(?:c2\.)?[A-Za-z0-9_-]+$/.test(item.manifestSignature as string)) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel encoding is invalid');
   const requirement = item.requirement as Record<string, unknown>; if (typeof requirement.profile !== 'string' || !['CONTROL', 'INTERACTIVE', 'EVENTUAL', 'BACKGROUND', 'BULK', 'BEST_EFFORT'].includes(requirement.profile)) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel requirement is invalid');
 }
 
@@ -421,7 +421,7 @@ export class DelayTolerantTransportProvider implements TransportProvider {
     try {
       validateDelayTolerantParcel(parcel, this.now(), this.store.limitsSnapshot());
       if (`sha256:${await digest(parcel.ciphertext)}` !== parcel.ciphertextIntegrity) return false;
-      if (!(await this.crypto.verify(canonicalJson(unsignedParcel(parcel)), parcel.manifestSignature, parcel.manifestPublicKey))) return false;
+      if (!(await verifyCanonical(unsignedParcel(parcel), parcel.manifestSignature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, parcel.manifestPublicKey)))) return false;
       const localSecret = this.destinationSecrets.get(`@local:${parcel.destinationDigest}`); if (!localSecret) return false;
       const before = this.receiptStatus.get(parcel.id); await this.handleParcel(parcel); return this.receiptStatus.get(parcel.id) === 'CONFIRMED' || before === 'CONFIRMED';
     } catch { return false; }
@@ -491,7 +491,7 @@ export class DelayTolerantTransportProvider implements TransportProvider {
   private async maintenance(): Promise<void> { if (!this.running) return; const at = this.now(); await this.store.sweep(at); for (const session of [...this.sessions.values()]) if ((this.sessionLastUsed.get(session.id) ?? at) + ENCOUNTER_IDLE_MS <= at) await this.close(session); await this.exchangeAll(); }
   private async createSignedParcel(input: { id: string; destinationDigest: string; acknowledgementDigest: string; createdAt: number; expiresAt: number; hopBudget: number; copyBudget: 1; resourceClass: DelayTolerantResourceClass; payloadKind: 'DELIVERY' | 'RECEIPT'; ciphertext: string; requirement: DeliveryRequirement }): Promise<DelayTolerantParcel> {
     const ephemeral = await this.crypto.generateIdentity(); const base = { version: VERSION, id: input.id, destinationDigest: input.destinationDigest, acknowledgementDigest: input.acknowledgementDigest, createdAt: iso(input.createdAt), expiresAt: iso(input.expiresAt), hopBudget: input.hopBudget, copyBudget: input.copyBudget, remainingCopyBudget: input.copyBudget, resourceClass: input.resourceClass, payloadKind: input.payloadKind, ciphertext: input.ciphertext, ciphertextIntegrity: `sha256:${await digest(input.ciphertext)}`, manifestPublicKey: ephemeral.publicKey, requirement: { profile: input.requirement.profile, ...(input.requirement.allowMetered === undefined ? {} : { allowMetered: input.requirement.allowMetered }), ...(input.requirement.allowHighEnergy === undefined ? {} : { allowHighEnergy: input.requirement.allowHighEnergy }) } } satisfies Omit<DelayTolerantParcel, 'manifestSignature'>;
-    const manifestSignature = await this.crypto.sign(canonicalJson(base), ephemeral.privateKey); const parcel = { ...base, manifestSignature }; validateDelayTolerantParcel(parcel, this.now(), this.store.limitsSnapshot()); return parcel;
+    const manifestSignature = await signCanonical(base, canonicalBytes => this.crypto.sign(canonicalBytes, ephemeral.privateKey)); const parcel = { ...base, manifestSignature }; validateDelayTolerantParcel(parcel, this.now(), this.store.limitsSnapshot()); return parcel;
   }
   private async receiveWire(frame: DelayTolerantWireFrame, session?: TransportSession): Promise<void> {
     if (!session || frame.version !== VERSION) return;
@@ -521,7 +521,7 @@ export class DelayTolerantTransportProvider implements TransportProvider {
   }
   private async handleRequest(frame: Extract<DelayTolerantWireFrame, { kind: 'dtn.request' }>, session: TransportSession): Promise<void> { if (frame.ids.length > this.limits.maxParcelsPerEncounter) return; const entries = await this.store.listEligible(this.now(), this.limits.maxInventoryEntries); const wanted = new Set(frame.ids.filter(validId)); let sent = 0; let bytes = 0; for (const entry of entries) { if (!wanted.has(entry.parcel.id) || this.transferLocks.has(entry.parcel.id) || sent >= this.limits.maxParcelsPerEncounter || this.activeTransfers >= this.limits.maxConcurrentTransfers || entry.attempts >= this.limits.maxTransferAttempts) continue; const size = bytesLength(entry.parcel.ciphertext); if (bytes + size > this.limits.maxBytesPerEncounter) break; this.transferLocks.add(entry.parcel.id); this.activeTransfers += 1; await this.store.markTransferAttempt(entry.parcel.id); try { await this.send(session, { version: VERSION, kind: 'dtn.parcel', nonce: randomToken(), parcel: entry.parcel }); sent += 1; bytes += size; } finally { this.activeTransfers = Math.max(0, this.activeTransfers - 1); this.transferLocks.delete(entry.parcel.id); } } }
   private async handleParcel(parcel: DelayTolerantParcel, session?: TransportSession): Promise<void> {
-    validateDelayTolerantParcel(parcel, this.now(), this.store.limitsSnapshot()); if (`sha256:${await digest(parcel.ciphertext)}` !== parcel.ciphertextIntegrity) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel ciphertext integrity failed'); if (!(await this.crypto.verify(canonicalJson(unsignedParcel(parcel)), parcel.manifestSignature, parcel.manifestPublicKey))) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel manifest signature is invalid');
+    validateDelayTolerantParcel(parcel, this.now(), this.store.limitsSnapshot()); if (`sha256:${await digest(parcel.ciphertext)}` !== parcel.ciphertextIntegrity) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel ciphertext integrity failed'); if (!(await verifyCanonical(unsignedParcel(parcel), parcel.manifestSignature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, parcel.manifestPublicKey)))) throw new ConnectivityError('POLICY_DENIED', 'Delay-tolerant parcel manifest signature is invalid');
     if (await this.store.hasTombstone(parcel.id, this.now())) { await this.send(session, this.custodyFrame(parcel, true)); return; }
     const localSecret = this.destinationSecrets.get(`@local:${parcel.destinationDigest}`);
     if (!localSecret) {

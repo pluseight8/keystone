@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { type CryptoProvider, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
 import type { KeystoneDeliveryInterface } from '../connectivity.js';
@@ -29,7 +29,7 @@ export class SocialGraphReplicationService {
   async publish(peer: NodeId, object: SocialGraphObject): Promise<void> {
     if (this.blocked.has(peer)) throw new Error('Blocked social graph peer rejected');
     if (object.visibility !== 'public') throw new Error('Social graph replication currently supports public objects only');
-    const parsed = parseGraphObject(object); if (!parsed || !(await this.crypto.verify(canonicalJson(unsignedObject(parsed)), parsed.signature, parsed.author))) throw new Error('Invalid signed social graph object');
+    const parsed = parseGraphObject(object); if (!parsed || !(await verifyCanonical(unsignedObject(parsed), parsed.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, parsed.author)))) throw new Error('Invalid signed social graph object');
     if (!(await this.eligible(parsed))) throw new Error('Social graph object failed mandatory SafetySurfaceGate');
     const unsigned: UnsignedEnvelope = { version: 1, type: SOCIAL_GRAPH_ENVELOPE, id: crypto.randomUUID(), sender: this.local.nodeId, recipient: peer, nonce: await this.crypto.randomNonce(), expiresAt: new Date(this.now() + MAX_LIFETIME_MS).toISOString(), body: { object: parsed } };
     await this.transport.connect(peer); await this.transport.send(peer, { ...unsigned, signature: await this.security.sign(unsigned) });
@@ -41,7 +41,7 @@ export class SocialGraphReplicationService {
     if (!Number.isFinite(expiresAt) || expiresAt <= this.now() || expiresAt - this.now() > MAX_LIFETIME_MS || this.seen.has(envelope.nonce) || !(await this.security.verify(envelope))) { this.rejectedCount++; return; }
     this.seen.add(envelope.nonce); if (this.seen.size > MAX_SEEN_NONCES) this.seen.delete(this.seen.values().next().value as string);
     const object = parseGraphObject((envelope.body as { object?: unknown } | undefined)?.object);
-    if (!object || object.visibility !== 'public' || !(await this.crypto.verify(canonicalJson(unsignedObject(object)), object.signature, object.author))) { this.rejectedCount++; return; }
+    if (!object || object.visibility !== 'public' || !(await verifyCanonical(unsignedObject(object), object.signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, object.author)))) { this.rejectedCount++; return; }
     const accepted = await this.graph.ingest(object); if (accepted) { this.acceptedCount++; await this.options.onAccepted?.(accepted); } else this.rejectedCount++;
   }
 }

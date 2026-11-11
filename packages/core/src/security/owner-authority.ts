@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import { ImmutableCore, type PrivilegedOperation } from './immutable-core.js';
 import type { OwnerRequestedSettingsIntent } from './content-safety.js';
 
@@ -108,7 +108,7 @@ export class OwnerAuthorityService {
     const requested = input.requested.map(normalizeRequestedSetting);
     const unsigned = { version: 1 as const, kind: 'owner_requested_settings_intent' as const, explicitOwnerRequest: true as const, source: 'OWNER' as const, requestId: input.requestId ?? randomId('owner-request'), ownerIdentityId: this.ownerIdentityId, deviceId: this.deviceId, sessionId: this.sessionId, sourceInteraction: input.sourceInteraction.trim().slice(0, 2_000), requested, createdAt: new Date(now).toISOString(), requestedAt: new Date(now).toISOString(), expiresAt, nonce: input.nonce ?? randomId('owner-nonce'), fields: requested.map(value => value.path) };
     if (this.requests.has(unsigned.requestId) || this.usedNonces.has(unsigned.nonce)) throw new OwnerAuthorityError('REPLAY', 'Owner request id or nonce was already used');
-    const signature = await this.options.crypto.sign(canonicalJson(unsigned), this.options.ownerPrivateKey);
+    const signature = await signCanonical(unsigned, canonicalBytes => this.options.crypto.sign(canonicalBytes, this.options.ownerPrivateKey!));
     const request: OwnerRequestedSettingsIntent = { ...unsigned, signature };
     const nonce = request.nonce; if (!nonce) throw new OwnerAuthorityError('INVALID_INTENT', 'Owner request nonce is missing');
     this.requests.set(request.requestId, request); this.usedNonces.add(nonce);
@@ -124,7 +124,7 @@ export class OwnerAuthorityService {
     }
     if (!request.nonce || !request.signature || !request.requested || this.requests.has(request.requestId) || this.usedNonces.has(request.nonce)) { this.audit({ kind: 'owner_request', requestId: request.requestId, decision: 'INVALID_REQUEST', confirmation: 'NONE', reason: 'Owner request replayed or incomplete' }); return false; }
     const { signature: _signature, ...unsigned } = request;
-    if (!(await this.options.crypto.verify(canonicalJson(unsigned), request.signature, this.options.ownerPublicKey))) { this.audit({ kind: 'owner_request', requestId: request.requestId, decision: 'INVALID_REQUEST', confirmation: 'NONE', reason: 'Owner request signature failed' }); return false; }
+    if (!(await verifyCanonical(unsigned, request.signature, (canonicalBytes, rawSignature) => this.options.crypto.verify(canonicalBytes, rawSignature, this.options.ownerPublicKey)))) { this.audit({ kind: 'owner_request', requestId: request.requestId, decision: 'INVALID_REQUEST', confirmation: 'NONE', reason: 'Owner request signature failed' }); return false; }
     this.requests.set(request.requestId, request); this.usedNonces.add(request.nonce); return true;
   }
 

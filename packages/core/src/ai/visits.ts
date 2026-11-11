@@ -9,7 +9,7 @@
  * ToolPolicy; this service itself never invokes a tool on behalf of a guest.
  */
 
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { canonicalJson, type CryptoProvider, signCanonical, verifyCanonical } from '../crypto.js';
 import type { DeviceSessionKeys } from '../identity.js';
 import type { Envelope, EnvelopeSecurity, UnsignedEnvelope } from '../connectivity.js';
 import type { KeystoneDeliveryInterface } from '../connectivity.js';
@@ -363,7 +363,7 @@ export class AgentVisitService {
     assertExpiry(createdAt, expiresAt, this.now());
     const requested = normalizeCapabilityRequests(requestedCapabilities);
     const unsigned = { version: 1 as const, id: randomId(), visitor: this.localAgent, host: normalizeAgentRef(host), requestedCapabilities: requested, createdAt, expiresAt, status: 'pending' as const };
-    const invitation: AgentInvitation = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const invitation: AgentInvitation = { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     this.invitations.set(invitation.id, invitation);
     await this.persist();
     return clone(invitation);
@@ -390,9 +390,9 @@ export class AgentVisitService {
     const createdAt = iso(this.now());
     const expiresAt = minExpiry(invitation.expiresAt, capabilities.map(value => value.expiresAt), this.now());
     const unsignedToken = { version: 1 as const, id: randomId(), visitId: randomId(), issuer: this.local.nodeId, subject: invitation.visitor.identityId, hostAgentId: this.localAgent.agentId, visitorAgentId: invitation.visitor.agentId, capabilities, issuedAt: createdAt, expiresAt };
-    const token: AgentDelegationToken = { ...unsignedToken, signature: await this.crypto.sign(canonicalJson(unsignedToken), this.local.privateKey) };
+    const token: AgentDelegationToken = { ...unsignedToken, signature: await signCanonical(unsignedToken, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     const unsignedVisit = { version: 1 as const, id: unsignedToken.visitId, invitationId: invitation.id, visitor: invitation.visitor, host: this.localAgent, capabilities, approvalMode: input.approvalMode, tokenId: token.id, createdAt, expiresAt, status: 'active' as const, revision: 1 };
-    const visit: AgentVisit = { ...unsignedVisit, signature: await this.crypto.sign(canonicalJson(unsignedVisit), this.local.privateKey) };
+    const visit: AgentVisit = { ...unsignedVisit, signature: await signCanonical(unsignedVisit, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     const session: GuestAgentSession = { version: 1, id: randomId(), visitId: visit.id, role: 'host', localAgent: this.localAgent, remoteAgent: invitation.visitor, tokenId: token.id, status: 'active', startedAt: createdAt, requestCount: 0 };
     this.invitations.set(invitation.id, { ...invitation, status: 'accepted' });
     this.visits.set(visit.id, visit); this.tokens.set(token.id, token); this.sessions.set(session.id, session);
@@ -462,7 +462,7 @@ export class AgentVisitService {
     const createdAt = iso(this.now()); const expiresAt = input.expiresAt ?? new Date(this.now() + AGENT_VISIT_MAX_LIFETIME_MS).toISOString(); assertExpiry(createdAt, expiresAt, this.now());
     const sharedContext = normalizeSharedContext(input.sharedContext ?? []);
     const unsigned = { version: 1 as const, id: randomId(), title: input.title.trim(), owner: this.localAgent, members, sharedContext, createdAt, expiresAt, status: 'active' as const, revision: 1 };
-    const room: AgentRoom = { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) };
+    const room: AgentRoom = { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) };
     this.rooms.set(room.id, room); await this.persist(); return clone(room);
   }
 
@@ -597,7 +597,7 @@ export class AgentVisitService {
   private surfaceForMessage(body: VisitMessage): 'AGENT_VISITS' | 'AGENT_ROOMS' { return body.kind === 'room' || body.kind === 'room_message' ? 'AGENT_ROOMS' : 'AGENT_VISITS'; }
   private async surfaceEligible(objectId: string, value: unknown, surface: 'AGENT_VISITS' | 'AGENT_ROOMS' = 'AGENT_VISITS'): Promise<boolean> { return (await this.protectedSurfaces.evaluate(surface, { objectId, domain: 'DIRECT_SHARED', value, content: value, sourceType: 'agent', verified: true, authorized: true, sharing: true })) !== undefined; }
 
-  private async resignVisit(value: Omit<AgentVisit, 'signature'>): Promise<AgentVisit> { const { signature: _signature, ...unsigned } = value as Omit<AgentVisit, 'signature'> & { signature?: string }; return { ...unsigned, signature: await this.crypto.sign(canonicalJson(unsigned), this.local.privateKey) }; }
+  private async resignVisit(value: Omit<AgentVisit, 'signature'>): Promise<AgentVisit> { const { signature: _signature, ...unsigned } = value as Omit<AgentVisit, 'signature'> & { signature?: string }; return { ...unsigned, signature: await signCanonical(unsigned, canonicalBytes => this.crypto.sign(canonicalBytes, this.local.privateKey)) }; }
   private sessionsForVisit(id: string): GuestAgentSession[] { return [...this.sessions.values()].filter(value => value.visitId === id); }
   private bumpSession(visitId: string): void { for (const [id, session] of this.sessions) if (session.visitId === visitId) this.sessions.set(id, { ...session, requestCount: session.requestCount + 1 }); }
   private updateSessionStatus(visitId: string, status: GuestAgentSession['status']): void { const endedAt = status === 'active' ? undefined : iso(this.now()); for (const [id, session] of this.sessions) if (session.visitId === visitId) this.sessions.set(id, { ...session, status, ...(endedAt ? { endedAt } : {}) }); }
@@ -652,7 +652,7 @@ function assertOperation(operation: AgentVisitOperation, toolId?: string): void 
 function assertOperationSafe(operation: AgentVisitOperation, toolId?: string): boolean { try { assertOperation(operation, toolId); return true; } catch { return false; } }
 function assertShareableDataClass(value: AIDataClass): asserts value is 'PUBLIC' | 'USER_EXPLICIT' { if (!AGENT_VISIT_SAFE_DATA_CLASSES.includes(value)) throw new AgentVisitError('UNSHAREABLE_DATA', 'Private and secret data cannot cross an agent visit'); }
 function capabilityLabels(values: readonly (AgentCapabilityRequest | AgentCapabilityGrant)[]): string[] { return values.map(value => value.capability === 'use_specific_tool' ? `${value.capability}:${value.toolId ?? ''}` : value.capability); }
-async function verifySigned(crypto: CryptoProvider, value: { readonly signature: string }, signer: NodeId): Promise<boolean> { try { const { signature: _signature, ...unsigned } = value as Record<string, unknown>; return !!value.signature && await crypto.verify(canonicalJson(unsigned), value.signature, signer); } catch { return false; } }
+async function verifySigned(crypto: CryptoProvider, value: { readonly signature: string }, signer: NodeId): Promise<boolean> { try { const { signature: _signature, ...unsigned } = value as Record<string, unknown>; return !!value.signature && await verifyCanonical(unsigned, value.signature, (canonicalBytes, rawSignature) => crypto.verify(canonicalBytes, rawSignature, signer)); } catch { return false; } }
 function parseMessage(value: unknown): VisitMessage | undefined { if (!value || typeof value !== 'object') return undefined; const candidate = value as VisitMessage; if (!['invitation', 'accept', 'request', 'response', 'revoke', 'end', 'room', 'room_message'].includes(candidate.kind)) return undefined; return candidate; }
 function parseSnapshot(value: unknown): AgentVisitSnapshot { if (!value || typeof value !== 'object' || (value as { version?: unknown }).version !== 1) throw new AgentVisitError('INVALID_STATE', 'Invalid agent visit state version'); const candidate = value as Partial<AgentVisitSnapshot>; if (!Array.isArray(candidate.invitations) || !Array.isArray(candidate.visits) || !Array.isArray(candidate.tokens) || !Array.isArray(candidate.sessions) || !Array.isArray(candidate.rooms) || !Array.isArray(candidate.seenIds) || !Array.isArray(candidate.usedGrants) || !Array.isArray(candidate.audit)) throw new AgentVisitError('INVALID_STATE', 'Invalid agent visit state shape'); return { version: 1, invitations: candidate.invitations.map(parseInvitation), visits: candidate.visits.map(parseVisit), tokens: candidate.tokens.map(parseToken), sessions: candidate.sessions.map(parseSession), rooms: candidate.rooms.map(parseRoom), seenIds: candidate.seenIds.filter(safeId).slice(-8_192), usedGrants: candidate.usedGrants.filter(value => !!value && safeId(value.visitId) && safeId(value.grantId) && Number.isSafeInteger(value.uses) && value.uses >= 0).map(value => ({ visitId: value.visitId, grantId: value.grantId, uses: value.uses })), audit: candidate.audit.map(parseAudit).slice(-AGENT_VISIT_MAX_AUDIT) }; }
 function parseInvitation(value: unknown): AgentInvitation { if (!value || typeof value !== 'object') throw new AgentVisitError('INVALID_STATE', 'Invalid invitation'); const candidate = value as AgentInvitation; if (candidate.version !== 1 || !safeId(candidate.id) || !normalizeAgentRefSafe(candidate.visitor) || !normalizeAgentRefSafe(candidate.host) || !Array.isArray(candidate.requestedCapabilities) || !Number.isFinite(Date.parse(candidate.createdAt)) || !Number.isFinite(Date.parse(candidate.expiresAt)) || !['pending', 'accepted', 'declined', 'expired', 'revoked'].includes(candidate.status) || typeof candidate.signature !== 'string') throw new AgentVisitError('INVALID_STATE', 'Invalid invitation'); normalizeCapabilityRequests(candidate.requestedCapabilities); return clone(candidate); }

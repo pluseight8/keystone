@@ -1,4 +1,4 @@
-import { canonicalJson, type CryptoProvider } from '../crypto.js';
+import { type CryptoProvider, verifyCanonical } from '../crypto.js';
 import type { NodeId } from '../types.js';
 import { keystoneObjectSchema, type KeystoneObject, type KeystoneObjectType } from './object-model.js';
 
@@ -79,7 +79,7 @@ export class NotificationService {
       const raw = value as { signature?: unknown; author?: unknown } & Record<string, unknown>;
       if (typeof raw.signature !== 'string' || typeof raw.author !== 'string') return undefined;
       const { signature: _signature, ...rawUnsigned } = raw;
-      if (!(await this.crypto.verify(canonicalJson(rawUnsigned), raw.signature, raw.author))) return undefined;
+      if (!(await verifyCanonical(rawUnsigned, raw.signature, (canonicalBytes, rawSignature) => this.crypto!.verify(canonicalBytes, rawSignature, raw.author as string)))) return undefined;
     }
     const classified = classify(object, this.localNodeId, this.localHandles); if (!classified) return undefined;
     const blocked = this.policy?.isBlocked ? await this.policy.isBlocked(object.author) : false;

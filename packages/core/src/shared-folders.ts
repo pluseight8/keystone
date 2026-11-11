@@ -8,7 +8,7 @@
  * device placement is handed to the R0P73 boundary.
  */
 import type { CryptoProvider } from './crypto.js';
-import { canonicalJson } from './crypto.js';
+import { signCanonical, verifyCanonical } from './crypto.js';
 import type { NodeId } from './types.js';
 import {
   ContentCache,
@@ -357,8 +357,8 @@ export interface FolderSigner {
 
 export class CryptoFolderSigner implements FolderSigner {
   constructor(private readonly crypto: CryptoProvider, private readonly privateKey: string) {}
-  sign(payload: unknown): Promise<string> { return this.crypto.sign(canonicalJson(payload), this.privateKey); }
-  verify(payload: unknown, signature: string, signer: NodeId): Promise<boolean> { return this.crypto.verify(canonicalJson(payload), signature, signer); }
+  sign(payload: unknown): Promise<string> { return signCanonical(payload, canonicalBytes => this.crypto.sign(canonicalBytes, this.privateKey)); }
+  verify(payload: unknown, signature: string, signer: NodeId): Promise<boolean> { return verifyCanonical(payload, signature, (canonicalBytes, rawSignature) => this.crypto.verify(canonicalBytes, rawSignature, signer)); }
 }
 
 export interface FolderSpaceAccessProvider {
