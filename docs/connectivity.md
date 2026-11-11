@@ -67,6 +67,28 @@ replaces a duplicate connection after both peers restart. The receipt means
 the envelope arrived, not that the application accepted its content, and a
 lost first copy can still arrive after a later envelope.
 
+What the receipt layer does and does not guarantee:
+
+- **At-least-once arrival while the sender process lives.** Pending envelopes
+  are kept in memory only (at most 1,024; the oldest is dropped beyond that)
+  and are lost on sender restart. Durability across restarts is the job of
+  each service's own outbox (messaging, agent mailbox); services that send
+  once without an outbox still lose the envelope if the sender exits first.
+- **A lost receipt is repaired.** A resend that the receiver deduplicates is
+  acknowledged again (at most four times per envelope) without running any
+  application handler a second time.
+- **After a receiver restart** its in-memory deduplication is empty, so a
+  resend can reach application handlers again; services reject it through
+  their own nonce and object-id checks.
+- **A dead route is redialed.** From the second unacknowledged resend the
+  provider's connection to that peer is dropped so the next attempt dials
+  again.
+- **Bounded load.** One envelope causes at most four resends and four repeat
+  receipts; receipts are never acknowledged themselves.
+- Three states stay distinct: provider acceptance (step 3), destination
+  receipt (step 5, this layer) and application commit (step 4, reported by
+  the owning service, not by this layer).
+
 ## Delivery profiles
 
 Profiles describe requirements, not technologies:
