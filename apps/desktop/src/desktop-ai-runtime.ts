@@ -9,24 +9,41 @@ import {
   type AIRequest,
   type AISettingsState,
 } from '@keystone/core';
-import { invoke } from '@tauri-apps/api/core';
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { isTauriAvailable } from './desktop-window-runtime';
 
 /**
  * Local model servers send no CORS headers by default, so the WebView cannot read their
  * answers. Inside the app the request goes through the loopback-only native command.
  */
+type LocalModelEvent = { readonly type: 'head'; readonly status: number } | { readonly type: 'chunk'; readonly text: string } | { readonly type: 'end' } | { readonly type: 'error'; readonly message: string };
+
 const localModelFetch: typeof fetch = async (input, init) => {
   if (!isTauriAvailable()) return fetch(input, init);
   const signal = init?.signal ?? undefined;
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  const request = invoke<{ status: number; body: string }>('desktop_local_model_http', { request: { method: init?.method ?? 'GET', url: String(input), ...(typeof init?.body === 'string' ? { body: init.body } : {}) } });
-  const result = signal ? await new Promise<Awaited<typeof request>>((resolve, reject) => {
-    const abort = () => reject(new DOMException('Aborted', 'AbortError'));
-    signal.addEventListener('abort', abort, { once: true });
-    void request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-  }) : await request;
-  return new Response(result.body, { status: result.status, headers: { 'content-type': 'application/json' } });
+  const requestId = globalThis.crypto.randomUUID();
+  const encoder = new TextEncoder();
+  // Cancelling drops the native connection, so the model server stops generating too.
+  const cancel = () => { void invoke('desktop_local_model_cancel', { requestId }).catch(() => undefined); };
+  let body!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { body = controller; }, cancel });
+  let settled = false;
+  const status = new Promise<number>((resolve, reject) => {
+    const fail = (error: Error) => { if (settled) { try { body.error(error); } catch { /* already closed */ } } else { settled = true; reject(error); } };
+    const channel = new Channel<LocalModelEvent>();
+    channel.onmessage = event => {
+      if (event.type === 'head') { settled = true; resolve(event.status); }
+      else if (event.type === 'chunk') body.enqueue(encoder.encode(event.text));
+      else if (event.type === 'end') { try { body.close(); } catch { /* already closed */ } }
+      else fail(signal?.aborted ? new DOMException('Aborted', 'AbortError') : new Error(event.message));
+    };
+    signal?.addEventListener('abort', cancel, { once: true });
+    invoke('desktop_local_model_http', { request: { requestId, method: init?.method ?? 'GET', url: String(input), ...(typeof init?.body === 'string' ? { body: init.body } : {}) }, onEvent: channel })
+      .catch(error => fail(new Error(typeof error === 'string' ? error : 'Local model request failed')))
+      .finally(() => signal?.removeEventListener('abort', cancel));
+  });
+  return new Response(stream, { status: await status, headers: { 'content-type': 'application/json' } });
 };
 
 export type DesktopLocalAIProviderKind = 'ollama' | 'openai-compatible' | 'lm-studio' | 'built-in' | 'llama.cpp';
@@ -55,6 +72,8 @@ export interface DesktopAIRuntime {
   discoverModels(draft?: { readonly kind: DesktopLocalAIProviderKind; readonly endpoint: string }): Promise<readonly DesktopLocalAIModel[]>;
   health(): Promise<AIHealthSnapshot | undefined>;
   runPrivate(request: Omit<AIRequest, 'taskPrivacy' | 'privacy'> & { readonly model?: AIModelRef | string }): Promise<{ readonly text: string; readonly model: AIModelRef }>;
+  /** Like runPrivate, but reports the answer as it grows. Aborting `request.signal` stops the generation. */
+  streamPrivate(request: Omit<AIRequest, 'taskPrivacy' | 'privacy'>, onText: (textSoFar: string) => void): Promise<{ readonly text: string }>;
   providerKind(): DesktopLocalAIProviderKind | undefined;
   subscribe?(listener: () => void): () => void;
 }
@@ -119,6 +138,14 @@ export function createDesktopAIRuntime(settings: AISettingsService, initialRoute
     },
     discoverModels,
     async health() { return provider?.health(); },
+    async streamPrivate(request, onText) {
+      let text = '';
+      for await (const token of router.stream({ ...request, taskPrivacy: 'private', privacy: 'private' })) {
+        if (request.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        text += token; onText(text);
+      }
+      return { text };
+    },
     async runPrivate(request) {
       const response = await router.run({ ...request, taskPrivacy: 'private', privacy: 'private' });
       return { text: response.text, model: response.model };

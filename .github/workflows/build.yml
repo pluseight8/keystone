@@ -170,6 +170,9 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17', cache: gradle }
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list still asks for the removed 'tools' package, which fails sdkmanager.
+          packages: 'platform-tools'
       - run: pnpm install --frozen-lockfile
       - name: Generate native project
         working-directory: apps/mobile

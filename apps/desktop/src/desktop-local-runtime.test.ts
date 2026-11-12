@@ -120,6 +120,19 @@ describe('desktop local document revisions', () => {
     const reopened = new LocalDocumentFileSource('owner-a', state);
     await expect(reopened.listFiles()).resolves.toEqual([]);
   });
+
+  it('keeps a stored document it cannot validate instead of erasing it on the next save', async () => {
+    const state = new DocumentState();
+    const source = new LocalDocumentFileSource('owner-a', state);
+    const ref = await source.register('a.md', 'text/markdown', new TextEncoder().encode('good'));
+    const damaged = { version: 1, fileId: 'local-document:damaged', filename: 'b.md', mimeType: 'text/markdown', size: 3, contentId: 'sha256-not-the-real-hash', bytes: new TextEncoder().encode('bad'), createdAt: '2026-01-01T00:00:00.000Z', ownerId: 'owner-a' };
+    state.value = { ...(state.value as object), files: [...(state.value as { files: unknown[] }).files, damaged] };
+
+    const reopened = new LocalDocumentFileSource('owner-a', state);
+    await expect(reopened.listFiles()).resolves.toHaveLength(1);
+    await reopened.replaceText(ref.fileId, ref.revision.revisionId, 'a.md', 'edited');
+    expect((state.value as { unreadable?: unknown[] }).unreadable).toEqual([damaged]);
+  });
 });
 
 describe('DesktopJsonStateStore', () => {

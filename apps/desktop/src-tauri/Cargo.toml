@@ -27,6 +27,9 @@ rfd = "0.15"
 base64 = "0.22"
 ring = "0.17.14"
 libc = "0.2"
+# Plain-HTTP client for local model servers only: no TLS, no cookies, no proxy support compiled in.
+reqwest = { version = "0.13", default-features = false }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

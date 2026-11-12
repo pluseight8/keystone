@@ -916,6 +916,7 @@ pub fn run() {
         .manage(InjectionState::default())
         .manage(KnowledgeState::default())
         .manage(DesktopAudioState::default())
+        .manage(local_http::LocalModelRequests::default())
         .manage(DesktopVideoState::default())
         .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, open_keystone_window, focus_keystone_window, close_keystone_window, quit_keystone, inject_confirmed_data, accessibility_status, scan_windows, get_system_locale, desktop_identity_provision, desktop_identity_status, desktop_identity_remove, desktop_identity_sign, local_http::desktop_local_model_http, decode_local_audio, desktop_audio_start, desktop_audio_pause, desktop_audio_resume, desktop_audio_seek, desktop_audio_volume, desktop_audio_status, desktop_audio_stop, probe_local_video, desktop_video_start, desktop_video_pause, desktop_video_resume, desktop_video_seek, desktop_video_volume, desktop_video_status, desktop_video_stop, knowledge::pick_local_folder, knowledge::pick_local_file, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
         .build(tauri::generate_context!())

@@ -82,4 +82,38 @@ describe('desktop local AI runtime', () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it('streams the answer as it grows and stops when the request is aborted', async () => {
+    const sse = (text: string) => `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          controller.enqueue(encoder.encode(sse('Па')));
+          await gate;
+          if (init?.signal?.aborted) { controller.error(new DOMException('Aborted', 'AbortError')); return; }
+          controller.enqueue(encoder.encode(sse('риж') + 'data: [DONE]\n\n')); controller.close();
+        },
+      });
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const runtime = createDesktopAIRuntime(new AISettingsService(new StateStore()));
+      await runtime.ready();
+      await runtime.configureLocalProvider({ kind: 'lm-studio', endpoint: 'http://127.0.0.1:1234/v1/chat/completions', model: 'qwen2.5' });
+      const seen: string[] = [];
+      const finished = runtime.streamPrivate({ userText: 'столица Франции?', task: 'test' }, text => { seen.push(text); if (text === 'Па') release(); });
+      await expect(finished).resolves.toEqual({ text: 'Париж' });
+      expect(seen).toEqual(['Па', 'Париж']);
+
+      const controller = new AbortController();
+      const stopped = runtime.streamPrivate({ userText: 'ещё раз', task: 'test', signal: controller.signal }, text => { if (text === 'Па') { controller.abort(); release(); } });
+      await expect(stopped).rejects.toThrow();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

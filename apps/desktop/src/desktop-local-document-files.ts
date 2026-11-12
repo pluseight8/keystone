@@ -3,8 +3,11 @@ import { DesktopIndexedDbStateStore } from './desktop-browser-state';
 
 export const DOCUMENT_FILES_KEY = 'keystone.local.documents.files.v1';
 export const DOCUMENT_FILES_STATE_KEY = 'keystone.local.documents.files.v2';
-const MAX_LOCAL_DOCUMENTS = 64;
+// The whole library is one IndexedDB value held in memory, so total size is what costs RAM and write time,
+// not the number of documents: at most ~128 MiB resident, about twice that while a save is cloned.
+const MAX_LOCAL_DOCUMENTS = 1024;
 const MAX_LOCAL_DOCUMENT_BYTES = 8 * 1024 * 1024;
+const MAX_LOCAL_LIBRARY_BYTES = 128 * 1024 * 1024;
 
 interface PersistedLocalFile {
   readonly version: 1;
@@ -28,6 +31,8 @@ function storedSnapshot(value: unknown): { readonly files?: unknown; readonly wr
 
 export class LocalDocumentFileSource implements DocumentFileSource {
   private files = new Map<string, IndexedDbLocalFile>();
+  /** Stored entries that failed validation. They are written back untouched so a later build or a manual recovery can still read them. */
+  private unreadable: unknown[] = [];
   private writeId: unknown;
   private readonly hydration: Promise<void>;
   private pendingWrite = Promise.resolve();
@@ -45,7 +50,7 @@ export class LocalDocumentFileSource implements DocumentFileSource {
     const fileId = `local-document:${crypto.randomUUID()}`;
     const entry = await this.makeEntry(fileId, filename, mimeType, bytes, new Date().toISOString());
     await this.change(files => {
-      if (files.size >= MAX_LOCAL_DOCUMENTS) throw new Error('The local document limit of 64 has been reached');
+      if (files.size >= MAX_LOCAL_DOCUMENTS) throw new Error('The local document limit of 1024 has been reached');
       files.set(fileId, entry);
     });
     return this.refFor(entry);
@@ -110,6 +115,9 @@ export class LocalDocumentFileSource implements DocumentFileSource {
       await this.ready();
       const files = new Map(this.files);
       apply(files);
+      let total = 0;
+      for (const file of files.values()) total += file.size;
+      if (total > MAX_LOCAL_LIBRARY_BYTES && total > [...this.files.values()].reduce((sum, file) => sum + file.size, 0)) throw new Error('Local documents would exceed 128 MiB. Delete or export some documents first');
       const writeId = crypto.randomUUID();
       let conflict = false;
       try {
@@ -118,7 +126,7 @@ export class LocalDocumentFileSource implements DocumentFileSource {
             conflict = true;
             throw new Error('Documents changed in another window. Reopen the document before saving');
           }
-          return { version: 1, writeId, files: [...files.values()] };
+          return { version: 1, writeId, files: [...files.values()], ...(this.unreadable.length ? { unreadable: this.unreadable } : {}) };
         });
       } catch (reason) {
         if (conflict) await this.hydrate().catch(() => undefined);
@@ -136,14 +144,16 @@ export class LocalDocumentFileSource implements DocumentFileSource {
     const snapshot = storedSnapshot(stored);
     const values = Array.isArray(snapshot.files) ? snapshot.files : this.readLegacyFiles();
     const files = new Map<string, IndexedDbLocalFile>();
-    for (const value of values.slice(0, MAX_LOCAL_DOCUMENTS)) {
+    const unreadable: unknown[] = Array.isArray((snapshot as { unreadable?: unknown }).unreadable) ? [...(snapshot as { unreadable: unknown[] }).unreadable] : [];
+    for (const value of values) {
       const entry = isIndexedDbLocalFile(value)
         ? value
         : isPersistedLocalFile(value) ? { ...value, bytes: decodeBase64(value.bytes) } : undefined;
-      if (entry?.ownerId !== this.ownerId || !entry.bytes || entry.bytes.byteLength !== entry.size || !(await contentMatches(entry.bytes, entry.contentId))) continue;
+      if (entry?.ownerId !== this.ownerId || !entry.bytes || entry.bytes.byteLength !== entry.size || !(await contentMatches(entry.bytes, entry.contentId))) { if (Array.isArray(snapshot.files)) unreadable.push(value); continue; }
       files.set(entry.fileId, { ...entry, bytes: entry.bytes });
     }
     this.files = files;
+    this.unreadable = unreadable;
     this.writeId = snapshot.writeId;
   }
 
