@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { captureDestinationLabel, captureStateLabel, formatBytes, formatMediaDuration, formatTimestamp, ruPlural, taskPriorityLabel, taskStatusLabel } from './desktop-format';
+import { errorText, captureDestinationLabel, captureStateLabel, formatBytes, formatMediaDuration, formatTimestamp, networkReachabilityLabel, networkStateLabel, ruPlural, taskPriorityLabel, taskStatusLabel } from './desktop-format';
 
 describe('desktop formatting', () => {
   it('formats sizes up to gigabytes with one shared formatter', () => {
@@ -34,5 +34,17 @@ describe('desktop formatting', () => {
     expect(captureStateLabel('ROUTED', true)).toBe('Разобрано');
     expect(captureStateLabel('UNKNOWN_STATE', true)).toBe('UNKNOWN_STATE');
     expect(captureDestinationLabel('TASK', false)).toBe('Task');
+  });
+
+  it('labels connectivity states instead of showing protocol codes', () => {
+    expect(networkStateLabel('DEVICE_ONLY', true)).toBe('Только это устройство');
+    expect(networkReachabilityLabel('UNAVAILABLE', false)).toBe('No route');
+    expect(networkStateLabel('FUTURE_STATE', true)).toBe('FUTURE_STATE');
+  });
+
+  it('keeps the message of a native command that rejects with a string', () => {
+    expect(errorText('ffprobe is not installed', 'fallback')).toBe('ffprobe is not installed');
+    expect(errorText(new Error('boom'), 'fallback')).toBe('boom');
+    expect(errorText({ code: 1 }, 'fallback')).toBe('fallback');
   });
 });

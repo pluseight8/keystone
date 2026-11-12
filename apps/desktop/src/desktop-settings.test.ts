@@ -5,6 +5,7 @@ import {
   DESKTOP_SETTINGS_KEY,
   DESKTOP_SESSION_RESTORE_POLICY_KEY,
   DesktopSettingsStore,
+  desktopAccentForeground,
   desktopThemeColors,
   findDesktopShortcutConflicts,
   validateCustomCss,
@@ -30,6 +31,12 @@ describe('canonical desktop settings registry', () => {
     expect(DEFAULT_DESKTOP_SETTINGS['tabs.maxWidth']).toBe(240);
     expect(DEFAULT_DESKTOP_SETTINGS['tabs.restoreTabs']).toBe(false);
     expect(DEFAULT_DESKTOP_SETTINGS['behavior.restoreWindows']).toBe(false);
+  });
+
+  it('chooses the more legible foreground for both light and dark accents', () => {
+    expect(desktopAccentForeground('#5d8df6')).toBe('#000000');
+    expect(desktopAccentForeground('#e9254d')).toBe('#000000');
+    expect(desktopAccentForeground('#173f71')).toBe('#ffffff');
   });
 
   it('keeps session restoration disabled until a versioned explicit opt-in exists', () => {

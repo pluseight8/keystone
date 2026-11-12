@@ -6,6 +6,7 @@
  */
 import {
   TaskService,
+  TaskError,
   type CreateTaskInput,
   type CreateTaskListInput,
   type Task,
@@ -56,6 +57,7 @@ export interface DesktopTaskRuntime {
   lists(options?: { readonly includeTrash?: boolean; readonly scope?: PersonalTaskList['scope'] }): Promise<readonly DesktopTaskList[]>;
   tasks(options?: TaskQuery): Promise<DesktopTaskPage>;
   search(query: string, options?: Omit<TaskQuery, 'query'>): Promise<DesktopTaskPage>;
+  task?(taskId: string): Promise<DesktopTask | undefined>;
   create(input: CreateTaskInput): Promise<DesktopTask>;
   quickCapture(title: string, options?: { readonly listId?: TaskListId | string; readonly locale?: 'en' | 'ru'; readonly timezone?: string }): Promise<DesktopTask>;
   previewQuickCapture(title: string, options?: { readonly locale?: 'en' | 'ru'; readonly timezone?: string }): ReturnType<TaskService['previewQuickCapture']>;
@@ -86,6 +88,14 @@ export function createDesktopTasksRuntime(service: TaskService): DesktopTaskRunt
     lists: async options => (await service.listLists(options)).map(listProjection),
     tasks: options => pageProjection(service.listTasks(options)),
     search: (query, options) => pageProjection(service.searchTasks(query, options)),
+    task: async taskId => {
+      await service.ready();
+      try { return taskProjection(service.getTask(taskId)); }
+      catch (reason) {
+        if (reason instanceof TaskError && reason.code === 'NOT_FOUND') return undefined;
+        throw reason;
+      }
+    },
     create: async input => taskProjection(await service.createTask(input)),
     quickCapture: async (title, options) => taskProjection(await service.quickCapture(title, options)),
     previewQuickCapture: (title, options) => service.previewQuickCapture(title, options),

@@ -18,9 +18,30 @@ export class DesktopIndexedDbStateStore {
     if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is unavailable on this desktop host');
     const database = await this.database();
     await new Promise<void>((resolve, reject) => {
-      const request = database.transaction('state', 'readwrite').objectStore('state').put(structuredClone(value), this.key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error ?? new Error('IndexedDB write failed'));
+      const transaction = database.transaction('state', 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB write failed'));
+      transaction.objectStore('state').put(value, this.key);
+    });
+  }
+
+  async update(transform: (current: unknown) => unknown): Promise<void> {
+    if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is unavailable on this desktop host');
+    const database = await this.database();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction('state', 'readwrite');
+      const store = transaction.objectStore('state');
+      const request = store.get(this.key);
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB write failed'));
+      request.onsuccess = () => {
+        try {
+          store.put(transform(request.result), this.key);
+        } catch (reason) {
+          reject(reason);
+          transaction.abort();
+        }
+      };
     });
   }
 
@@ -28,9 +49,10 @@ export class DesktopIndexedDbStateStore {
     if (typeof indexedDB === 'undefined') throw new Error('IndexedDB is unavailable on this desktop host');
     const database = await this.database();
     await new Promise<void>((resolve, reject) => {
-      const request = database.transaction('state', 'readwrite').objectStore('state').delete(this.key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error ?? new Error('IndexedDB delete failed'));
+      const transaction = database.transaction('state', 'readwrite');
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('IndexedDB delete failed'));
+      transaction.objectStore('state').delete(this.key);
     });
   }
 
@@ -46,6 +68,7 @@ export class DesktopIndexedDbStateStore {
       request.onerror = () => reject(request.error ?? new Error('IndexedDB open failed'));
     });
     DesktopIndexedDbStateStore.databases.set(this.databaseName, pending);
+    void pending.catch(() => DesktopIndexedDbStateStore.databases.delete(this.databaseName));
     return pending;
   }
 }

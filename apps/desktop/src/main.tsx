@@ -2,101 +2,109 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import TerminalOnboarding, { type OnboardingResult } from './onboarding';
 import './onboarding.css';
-import DesktopShell from './DesktopShell';
 import logoUrl from '../../../branding/logos/logo.png';
 import { bootstrapDesktopLocalRuntime, clearDesktopIndexedDbState, clearLocalDesktopRuntimeState, createLocalDesktopProfile, getLocalDesktopProfile, persistLocalDesktopProfile, type DesktopLocalDocumentsRuntime, type LocalDesktopProfile } from './desktop-local-runtime';
-import { removeDesktopIdentity } from './desktop-host-bridge';
+import { desktopIdentityAvailable, removeDesktopIdentity } from './desktop-host-bridge';
+import { errorText } from './desktop-format';
 import { Icon } from './desktop-icons';
 import { getDesktopDocumentsRuntime } from './desktop-documents-runtime';
 import { readDesktopPreferences, writeDesktopPreferences } from './desktop-preferences';
-import { DESKTOP_WINDOW_REGISTRY_KEY, DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY } from './desktop-shell-model';
-import { DESKTOP_SESSION_RESTORE_POLICY_KEY } from './desktop-settings';
 
 const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]') ?? Object.assign(document.head.appendChild(document.createElement('link')), { rel: 'icon' });
 favicon.href = logoUrl;
 
-type BootState = 'onboarding' | 'loading' | 'ready' | 'error';
+type BootState =
+  | { status: 'onboarding' }
+  | { status: 'loading' }
+  | { status: 'ready'; Shell: typeof import('./DesktopShell').default; notice?: string }
+  | { status: 'error'; message: string };
 
 function App() {
-  const [profile, setProfile] = React.useState<LocalDesktopProfile | undefined>(() => getLocalDesktopProfile());
-  const [pendingProfile, setPendingProfile] = React.useState<LocalDesktopProfile | undefined>();
-  const [state, setState] = React.useState<BootState>(() => getLocalDesktopProfile() ? 'loading' : 'onboarding');
-  const [error, setError] = React.useState('');
+  const [profile] = React.useState(getLocalDesktopProfile);
+  const [state, setState] = React.useState<BootState>(() => ({ status: profile ? 'loading' : 'onboarding' }));
+  const startup = React.useRef<Promise<void>>();
+  const en = profile !== undefined && localStorage.getItem('keystone.locale') === 'en';
 
-  const boot = React.useCallback(async (nextProfile: LocalDesktopProfile, options: { readonly transactional?: boolean } = {}): Promise<boolean> => {
-    const previousProfile = localStorage.getItem('keystone.local.identity.v1');
-    const previousMarker = localStorage.getItem('keystone.onboarding.complete');
-    setState('loading'); setError('');
+  const bootExistingProfile = React.useCallback(async () => {
+    if (!profile) return;
+    setState({ status: 'loading' });
     try {
-      if (options.transactional) persistLocalDesktopProfile(nextProfile);
-      await bootstrapDesktopLocalRuntime(nextProfile);
-      localStorage.setItem('keystone.onboarding.complete', '1');
-      setProfile(nextProfile); setPendingProfile(undefined); setState('ready');
-      return true;
+      const keyAvailable = await desktopIdentityAvailable(profile.deviceId);
+      if (!keyAvailable) throw new Error(en
+        ? 'The device key is unavailable. Unlock your system keyring and try again.'
+        : 'Ключ устройства недоступен. Разблокируйте системное хранилище ключей и повторите попытку.');
+      const [{ default: Shell }] = await Promise.all([
+        import('./DesktopShell'),
+        bootstrapDesktopLocalRuntime(profile),
+      ]);
+      setState({ status: 'ready', Shell });
     } catch (reason) {
-      if (options.transactional) {
-        clearLocalDesktopRuntimeState(nextProfile);
-        await Promise.all([
-          clearDesktopIndexedDbState(nextProfile.ownerIdentityId),
-          removeDesktopIdentity(nextProfile.deviceId),
-        ].map(operation => operation.catch(() => undefined)));
-        try {
-          if (previousProfile === null) localStorage.removeItem('keystone.local.identity.v1');
-          else localStorage.setItem('keystone.local.identity.v1', previousProfile);
-          if (previousMarker === null) localStorage.removeItem('keystone.onboarding.complete');
-          else localStorage.setItem('keystone.onboarding.complete', previousMarker);
-        } catch {
-          // The original error is more useful to the user than a rollback
-          // storage exception; reset setup remains available as a recovery path.
-        }
-      }
-      setError(reason instanceof Error ? reason.message : 'Local runtime could not start.');
-      setState('error');
-      return false;
+      setState({
+        status: 'error',
+        message: errorText(reason, en ? 'Local services could not start.' : 'Локальные службы не запустились.'),
+      });
     }
-  }, []);
+  }, [en, profile]);
 
   React.useEffect(() => {
-    if (profile && state === 'loading') void boot(profile);
-  }, [boot, profile, state]);
+    startup.current ??= bootExistingProfile();
+  }, [bootExistingProfile]);
 
   const completeOnboarding = async (result: OnboardingResult) => {
+    const previousProfile = localStorage.getItem('keystone.local.identity.v1');
     const nextProfile = await createLocalDesktopProfile(result.displayName, result.deviceName);
-    setPendingProfile(nextProfile);
-    setProfile(nextProfile);
-    const committed = await boot(nextProfile, { transactional: true });
-    if (!committed) return;
-    // Preferences and optional imports are applied only after all durable
-    // profile/runtime stores have been opened.  An unavailable optional
-    // provider or a bad imported file cannot roll back a valid owner profile.
-    writeDesktopPreferences({ ...readDesktopPreferences(), ...result.preferences });
-    localStorage.setItem('keystone.local-ai.preference', result.localAi ? 'enabled' : 'skipped');
-    localStorage.setItem('keystone.onboarding.focus.v1', JSON.stringify(result.interests));
-    localStorage.setItem('keystone.privacy.mode.v1', result.privacyMode);
-    if (result.avatarInitials) localStorage.setItem('keystone.local.avatar.v1', result.avatarInitials);
-    const runtime = await bootstrapDesktopLocalRuntime(nextProfile);
-    if (result.localAi && result.aiEndpoint && result.aiModel) {
-      const kind = result.aiProviderKind ?? 'ollama';
-      const endpoint = kind === 'ollama'
-        ? (result.aiEndpoint.endsWith('/api/chat') ? result.aiEndpoint : `${result.aiEndpoint}/api/chat`)
-        : (result.aiEndpoint.endsWith('/chat/completions') ? result.aiEndpoint : `${result.aiEndpoint.replace(/\/$/, '')}/chat/completions`);
-      await runtime.ai.configureLocalProvider({ kind, endpoint, model: result.aiModel, displayName: kind === 'lm-studio' ? 'LM Studio' : kind === 'openai-compatible' ? 'Local OpenAI-compatible' : 'Ollama' }).catch(() => undefined);
+    let Shell: typeof import('./DesktopShell').default;
+    let runtime: Awaited<ReturnType<typeof bootstrapDesktopLocalRuntime>>;
+    try {
+      ({ default: Shell } = await import('./DesktopShell'));
+      runtime = await bootstrapDesktopLocalRuntime(nextProfile);
+      persistLocalDesktopProfile(nextProfile);
+      localStorage.setItem('keystone.onboarding.complete', '1');
+    } catch (reason) {
+      clearLocalDesktopRuntimeState(nextProfile);
+      await Promise.allSettled([
+        clearDesktopIndexedDbState(nextProfile.ownerIdentityId),
+        removeDesktopIdentity(nextProfile.deviceId),
+      ]);
+      try {
+        if (previousProfile === null) localStorage.removeItem('keystone.local.identity.v1');
+        else localStorage.setItem('keystone.local.identity.v1', previousProfile);
+      } catch {
+        // Report the setup failure even if restoring the profile marker also fails.
+      }
+      throw reason;
     }
-    const importStatus = await applyOnboardingImports(runtime, result.imports);
-    localStorage.setItem('keystone.onboarding.imports.v1', JSON.stringify({ version: 1, items: importStatus }));
+
+    let notice: string | undefined;
+    try {
+      writeDesktopPreferences({ ...readDesktopPreferences(), ...result.preferences });
+      localStorage.setItem('keystone.local-ai.preference', result.localAi ? 'enabled' : 'skipped');
+      localStorage.setItem('keystone.onboarding.focus.v1', JSON.stringify(result.interests));
+      localStorage.setItem('keystone.privacy.mode.v1', result.privacyMode);
+      if (result.avatarInitials) localStorage.setItem('keystone.local.avatar.v1', result.avatarInitials);
+      if (result.localAi && result.aiEndpoint && result.aiModel) {
+        const kind = result.aiProviderKind ?? 'ollama';
+        const base = result.aiEndpoint.replace(/\/$/, '');
+        const path = kind === 'ollama' ? '/api/chat' : '/chat/completions';
+        const endpoint = base.endsWith(path) ? base : `${base}${path}`;
+        await runtime.ai.configureLocalProvider({ kind, endpoint, model: result.aiModel, displayName: kind === 'lm-studio' ? 'LM Studio' : kind === 'openai-compatible' ? 'Local OpenAI-compatible' : 'Ollama' }).catch(() => {
+          notice = 'Не удалось подключить локальный AI. Проверьте провайдера в настройках.';
+        });
+      }
+      const importStatus = await applyOnboardingImports(runtime, result.imports);
+      localStorage.setItem('keystone.onboarding.imports.v1', JSON.stringify({ version: 1, items: importStatus }));
+      if (importStatus.some(item => item.status === 'failed')) notice = 'Некоторые файлы не импортированы. Подробности на главной.';
+    } catch {
+      notice = 'Не удалось сохранить все параметры настройки. Проверьте настройки и импорт.';
+    }
+    setState({ status: 'ready', Shell, notice });
   };
 
-  const resetSetup = () => {
-    const previous = profile;
-    for (const key of ['keystone.onboarding.complete', 'keystone.local.identity.v1', 'keystone.local-ai.preference', 'keystone.local.avatar.v1', 'keystone.onboarding.focus.v1', 'keystone.onboarding.imports.v1', 'keystone.privacy.mode.v1', 'keystone.local.ai-settings.v1', 'keystone.local.discovery.v1', 'keystone.desktop.workspaces.v1', 'keystone.desktop.current-workspace.v1', 'keystone.desktop.startup-surface.v1', DESKTOP_WINDOW_REGISTRY_KEY, DESKTOP_WINDOW_REGISTRY_QUARANTINE_KEY, DESKTOP_SESSION_RESTORE_POLICY_KEY, ...(previous ? [`keystone.local.ai-settings.v1:${previous.ownerIdentityId}`, `keystone.local.discovery.v1:${previous.ownerIdentityId}`] : [])]) localStorage.removeItem(key);
-    if (previous) void removeDesktopIdentity(previous.deviceId).catch(() => undefined);
-    setProfile(undefined); setPendingProfile(undefined); setError(''); setState('onboarding');
-  };
-
-  if (state === 'onboarding') return <TerminalOnboarding onComplete={completeOnboarding}/>;
-  if (state === 'loading') return <BootScreen title="Запускаем локальное окружение…" detail="Проверяем owner identity и восстанавливаем Capture, Tasks, Documents, Discovery и local AI settings."/>;
-  if (state === 'error') return <main className="boot-error"><section className="boot-error-card" role="alert"><span className="onboarding-ready-icon" aria-hidden><Icon name="warning" size={25} /></span><h1>Не удалось запустить Keystone</h1><p>{error}</p><div><button className="onboarding-primary" type="button" onClick={() => { const candidate = pendingProfile ?? profile; if (candidate) void boot(candidate, { transactional: Boolean(pendingProfile) }); }}>Повторить</button><button className="onboarding-secondary" type="button" onClick={resetSetup}>Начать настройку заново</button></div></section></main>;
-  return <DesktopShell initialLocale={(localStorage.getItem('keystone.locale') as 'en' | 'ru' | null) ?? 'ru'} />;
+  if (state.status === 'onboarding') return <TerminalOnboarding onComplete={completeOnboarding}/>;
+  if (state.status === 'loading') return <BootScreen title={en ? 'Opening Keystone…' : 'Запускаем Keystone…'} detail={en ? 'Checking this device’s key and opening local storage.' : 'Проверяем ключ устройства и открываем локальное хранилище.'}/>;
+  if (state.status === 'error') return <main className="boot-error"><section className="boot-error-card" role="alert"><span className="onboarding-ready-icon" aria-hidden><Icon name="warning" size={25} /></span><h1>{en ? 'Keystone could not start' : 'Не удалось запустить Keystone'}</h1><p>{state.message}</p><button className="onboarding-primary" type="button" onClick={() => void bootExistingProfile()}>{en ? 'Try again' : 'Повторить'}</button></section></main>;
+  const { Shell, notice } = state;
+  return <Shell initialLocale={en ? 'en' : 'ru'} startupNotice={notice}/>;
 }
 
 async function applyOnboardingImports(runtime: Awaited<ReturnType<typeof bootstrapDesktopLocalRuntime>>, imports: OnboardingResult['imports']): Promise<readonly { readonly kind: string; readonly name: string; readonly status: 'imported' | 'failed'; readonly reason?: string }[]> {

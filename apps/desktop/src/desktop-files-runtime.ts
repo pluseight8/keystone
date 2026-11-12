@@ -93,6 +93,7 @@ export interface DesktopFilesRuntime {
   conflicts(folderId?: FolderId): Promise<readonly FolderConflict[]>;
   history(fileId: FolderFileId): Promise<readonly DesktopFileRevision[]>;
   importFile?(input: { readonly filename: string; readonly mimeType: string; readonly bytes: Uint8Array; readonly folderId?: FolderId }): Promise<DesktopFileProjection>;
+  describeFile?(fileId: FolderFileId): Promise<DesktopFileProjection>;
   readFile?(fileId: FolderFileId): Promise<Uint8Array>;
   createFolder?(input: { readonly name: string; readonly parentFolderId?: FolderId }): Promise<DesktopFileFolder>;
   rename?(entryId: string, name: string, ownerConfirmed?: true): Promise<DesktopFileEntry>;
@@ -132,6 +133,7 @@ export function createDesktopFilesRuntime(service: SharedFolderService, options:
     history: async fileId => (await service.versionHistory(fileId)).map(revisionProjection),
     createFolder: async input => folderProjection(await service.createFolder(input)),
     importFile: options.defaultFolderId ? async input => fileProjection(await service.createFile({ folderId: input.folderId ?? options.defaultFolderId!, name: input.filename, mimeType: input.mimeType, bytes: input.bytes })) : undefined,
+    describeFile: async fileId => fileProjection(await service.describeFile(fileId)),
     readFile: fileId => service.readFile(fileId),
     rename: async (entryId, name, ownerConfirmed) => entryProjection(await service.renameEntry(entryId as FolderEntryId, name, ownerConfirmed ? { ownerConfirmed: true } : {})),
     move: async (entryId, folderId, ownerConfirmed) => entryProjection(await service.moveEntry(entryId as FolderEntryId, folderId, ownerConfirmed ? { ownerConfirmed: true } : {})),

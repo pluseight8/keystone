@@ -61,7 +61,8 @@ describe('R0P74 bounded real distributed content delivery', () => {
       const served = await command(root, 'alice', { action: 'distributedContentServe', peer: 'alice_phone' });
       const manifest = served.result.manifest as { contentId: string; chunks: readonly string[]; byteLength: number };
       expect(manifest.contentId).toMatch(/^sha256-[a-f0-9]{64}$/);
-      expect(manifest.chunks.length).toBeGreaterThan(1);
+      expect(manifest.byteLength).toBe(4 * 1024 * 1024);
+      expect(manifest.chunks).toHaveLength(32);
 
       const partial = await command(root, 'alice_phone', { action: 'distributedContentFetch', peer: 'alice', manifest, maxChunks: 2 });
       expect(partial.result.complete).toBe(false);

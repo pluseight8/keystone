@@ -8,7 +8,7 @@
  */
 
 export { i18n, createI18nManager, dictionariesByLocale } from './i18n/index.js';
-export { CaptureService } from './capture.js';
+export { CaptureService, createCaptureDestinationRegistry } from './capture.js';
 export type {
   CaptureStateStore,
   CaptureTextInput,
@@ -17,7 +17,7 @@ export type {
   CapturePage,
 } from './capture.js';
 export { ContactService } from './contacts.js';
-export { TaskService } from './tasks.js';
+export { TaskError, TaskService } from './tasks.js';
 export type {
   TaskStateStore,
   TaskServiceOptions,

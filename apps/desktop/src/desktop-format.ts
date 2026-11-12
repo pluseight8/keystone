@@ -46,3 +46,20 @@ export function captureDestinationLabel(destination: CaptureDestinationKind, ru:
 
 export function captureAccessLabel(dataClass: string, ru: boolean): string { return ru ? (dataClass === 'SECRET' ? 'Особо защищённые данные' : dataClass === 'PRIVATE' ? 'Приватные данные' : 'Данные устройства') : (dataClass === 'SECRET' ? 'Highly protected data' : dataClass === 'PRIVATE' ? 'Private data' : 'Device data'); }
 
+
+/** Connectivity states as a person reads them; unknown codes fall back to the raw value. */
+export function networkStateLabel(state: string, ru: boolean): string {
+  const labels: Record<string, [string, string]> = { DEVICE_ONLY: ['This device only', 'Только это устройство'], LOCAL_ONLY: ['Local network', 'Локальная сеть'], NEARBY: ['Nearby', 'Рядом'], ONLINE: ['Online', 'В сети'], INTERNET: ['Internet', 'Интернет'], DELAY_TOLERANT: ['Delayed delivery', 'Отложенная доставка'], OFFLINE: ['Offline', 'Не в сети'] };
+  return labels[state]?.[ru ? 1 : 0] ?? state;
+}
+
+export function networkReachabilityLabel(reachability: string, ru: boolean): string {
+  const labels: Record<string, [string, string]> = { UNAVAILABLE: ['No route', 'Маршрута нет'], AVAILABLE: ['Reachable', 'Доступно'], REACHABLE: ['Reachable', 'Доступно'], EVENTUALLY: ['Will be delivered later', 'Будет доставлено позже'], DEGRADED: ['Unstable', 'Нестабильно'], UNKNOWN: ['Unknown', 'Неизвестно'] };
+  return labels[reachability]?.[ru ? 1 : 0] ?? reachability;
+}
+
+/** Message of a failure for the user. Native (Tauri) commands reject with a plain string, not an Error. */
+export function errorText(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  return typeof error === 'string' && error.trim() ? error : fallback;
+}

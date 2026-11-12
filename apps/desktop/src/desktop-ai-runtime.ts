@@ -9,6 +9,25 @@ import {
   type AIRequest,
   type AISettingsState,
 } from '@keystone/core';
+import { invoke } from '@tauri-apps/api/core';
+import { isTauriAvailable } from './desktop-window-runtime';
+
+/**
+ * Local model servers send no CORS headers by default, so the WebView cannot read their
+ * answers. Inside the app the request goes through the loopback-only native command.
+ */
+const localModelFetch: typeof fetch = async (input, init) => {
+  if (!isTauriAvailable()) return fetch(input, init);
+  const signal = init?.signal ?? undefined;
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const request = invoke<{ status: number; body: string }>('desktop_local_model_http', { request: { method: init?.method ?? 'GET', url: String(input), ...(typeof init?.body === 'string' ? { body: init.body } : {}) } });
+  const result = signal ? await new Promise<Awaited<typeof request>>((resolve, reject) => {
+    const abort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    void request.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  }) : await request;
+  return new Response(result.body, { status: result.status, headers: { 'content-type': 'application/json' } });
+};
 
 export type DesktopLocalAIProviderKind = 'ollama' | 'openai-compatible' | 'lm-studio' | 'built-in' | 'llama.cpp';
 
@@ -32,7 +51,8 @@ export interface DesktopAIRuntime {
   ready(): Promise<void>;
   configureLocalProvider(input: DesktopLocalAIProviderInput): Promise<Readonly<AISettingsState>>;
   clearLocalProvider(): Promise<Readonly<AISettingsState>>;
-  discoverModels(): Promise<readonly DesktopLocalAIModel[]>;
+  /** Lists models of the configured source, or of `draft` so a model can be picked before the source is saved. */
+  discoverModels(draft?: { readonly kind: DesktopLocalAIProviderKind; readonly endpoint: string }): Promise<readonly DesktopLocalAIModel[]>;
   health(): Promise<AIHealthSnapshot | undefined>;
   runPrivate(request: Omit<AIRequest, 'taskPrivacy' | 'privacy'> & { readonly model?: AIModelRef | string }): Promise<{ readonly text: string; readonly model: AIModelRef }>;
   providerKind(): DesktopLocalAIProviderKind | undefined;
@@ -61,29 +81,18 @@ export function createDesktopAIRuntime(settings: AISettingsService, initialRoute
     const model = cleanModel(input.model);
     const endpoint = input.kind === 'ollama' ? cleanEndpoint(input.endpoint || 'http://127.0.0.1:11434/api/chat') : cleanEndpoint(input.endpoint || 'http://127.0.0.1:1234/v1/chat/completions');
     const id = input.kind === 'ollama' ? 'ollama' : input.kind === 'lm-studio' ? 'lm-studio' : 'local-openai';
-    if (input.kind === 'ollama') provider = new OllamaAIProvider({ id, endpoint, model, displayName: input.displayName || 'Ollama', contextLimit: input.contextLimit ?? 8_192 });
-    else provider = new OpenAICompatibleAIProvider({ id, endpoint, model, scope: 'local', displayName: input.displayName || (input.kind === 'lm-studio' ? 'LM Studio' : 'Local OpenAI-compatible'), contextLimit: input.contextLimit ?? 8_192 });
+    if (input.kind === 'ollama') provider = new OllamaAIProvider({ fetch: localModelFetch, id, endpoint, model, displayName: input.displayName || 'Ollama', contextLimit: input.contextLimit ?? 8_192 });
+    else provider = new OpenAICompatibleAIProvider({ fetch: localModelFetch, id, endpoint, model, scope: 'local', displayName: input.displayName || (input.kind === 'lm-studio' ? 'LM Studio' : 'Local OpenAI-compatible'), contextLimit: input.contextLimit ?? 8_192 });
     kind = input.kind;
     router = new AIRouter({ providers: [provider], defaultModel: `${id}/${model}`, remoteEnabled: false });
     return { id, model, endpoint, displayName: input.displayName || provider.models[0]?.displayName || model, contextLimit: input.contextLimit ?? 8_192 };
   };
 
-  const discoverModels = async (): Promise<readonly DesktopLocalAIModel[]> => {
-    if (!provider || !kind) return [];
-    const endpoint = provider.models[0]?.endpoint;
-    if (!endpoint) return [];
-    const response = await fetch(localModelDiscoveryEndpoint(endpoint, kind), { method: 'GET', headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`Local AI model discovery failed with HTTP ${response.status}`);
-    const value = await response.json() as unknown;
-    const rows = kind === 'ollama' ? ollamaModels(value) : openAIModels(value);
-    return rows.flatMap(row => {
-      try {
-        const model = cleanModel(row.model);
-        return [{ model, displayName: row.displayName || model, ...(row.ownedBy ? { ownedBy: row.ownedBy } : {}) }];
-      } catch {
-        return [];
-      }
-    });
+  const discoverModels = async (draft?: { readonly kind: DesktopLocalAIProviderKind; readonly endpoint: string }): Promise<readonly DesktopLocalAIModel[]> => {
+    const sourceKind = draft?.kind ?? kind;
+    const endpoint = draft ? cleanEndpoint(draft.endpoint) : provider?.models[0]?.endpoint;
+    if (!sourceKind || !endpoint) return [];
+    return discoverDesktopLocalModels(sourceKind, endpoint);
   };
 
   const runtime: DesktopAIRuntime = {
@@ -132,7 +141,7 @@ async function restore(settings: AISettingsService, build: (input: DesktopLocalA
   const kind: DesktopLocalAIProviderKind = id === 'ollama' ? 'ollama' : id === 'lm-studio' ? 'lm-studio' : 'openai-compatible';
   try {
     const configured = build({ kind, endpoint: model.endpoint, model: model.ref.slice(separator + 1), displayName: model.displayName, contextLimit: model.contextLimit });
-    runtime.router = new AIRouter({ providers: [kind === 'ollama' ? new OllamaAIProvider({ id: configured.id, endpoint: configured.endpoint, model: configured.model, displayName: configured.displayName, contextLimit: configured.contextLimit }) : new OpenAICompatibleAIProvider({ id: configured.id, endpoint: configured.endpoint, model: configured.model, scope: 'local', displayName: configured.displayName, contextLimit: configured.contextLimit })], defaultModel: model.ref, remoteEnabled: false });
+    runtime.router = new AIRouter({ providers: [kind === 'ollama' ? new OllamaAIProvider({ fetch: localModelFetch, id: configured.id, endpoint: configured.endpoint, model: configured.model, displayName: configured.displayName, contextLimit: configured.contextLimit }) : new OpenAICompatibleAIProvider({ fetch: localModelFetch, id: configured.id, endpoint: configured.endpoint, model: configured.model, scope: 'local', displayName: configured.displayName, contextLimit: configured.contextLimit })], defaultModel: model.ref, remoteEnabled: false });
     await settings.bindRouter(runtime.router);
   } catch {
     // Persisted configuration remains visible as configuration metadata, but
@@ -140,8 +149,24 @@ async function restore(settings: AISettingsService, build: (input: DesktopLocalA
   }
 }
 
-function cleanModel(value: string): string { const model = String(value ?? '').trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(model)) throw new Error('AI model name is invalid'); return model; }
-function cleanEndpoint(value: string): string { const endpoint = String(value ?? '').trim(); const url = new URL(endpoint); if (!['http:', 'https:'].includes(url.protocol) || !['localhost', '127.0.0.1', '::1'].includes(url.hostname)) throw new Error('Desktop local AI endpoints must point to localhost'); return endpoint; }
+// '@' and '/' occur in LM Studio variants and org/model names; the name only travels in a JSON body.
+function cleanModel(value: string): string { const model = String(value ?? '').trim(); if (!/^[A-Za-z0-9][A-Za-z0-9._:@\/-]{0,127}$/.test(model)) throw new Error('AI model name is invalid'); return model; }
+function cleanEndpoint(value: string): string { const endpoint = String(value ?? '').trim(); const url = new URL(endpoint); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('Desktop local AI endpoints must point to localhost'); return endpoint; }
+
+export async function discoverDesktopLocalModels(kind: DesktopLocalAIProviderKind, endpoint: string): Promise<readonly DesktopLocalAIModel[]> {
+  const response = await localModelFetch(localModelDiscoveryEndpoint(cleanEndpoint(endpoint), kind), { method: 'GET', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new Error(`Local AI model discovery failed with HTTP ${response.status}`);
+  const value = await response.json() as unknown;
+  const rows = kind === 'ollama' ? ollamaModels(value) : openAIModels(value);
+  return rows.flatMap(row => {
+    try {
+      const model = cleanModel(row.model);
+      return [{ model, displayName: row.displayName || model, ...(row.ownedBy ? { ownedBy: row.ownedBy } : {}) }];
+    } catch {
+      return [];
+    }
+  });
+}
 
 function localModelDiscoveryEndpoint(endpoint: string, kind: DesktopLocalAIProviderKind): string {
   const url = new URL(endpoint);

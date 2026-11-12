@@ -53,7 +53,7 @@ export class LocalModelManager {
   private readonly active = new Map<string, Promise<string>>();
 
   constructor(private readonly options: LocalModelManagerOptions) {
-    this.fetcher = options.fetch ?? globalThis.fetch;
+    this.fetcher = options.fetch ?? globalThis.fetch?.bind(globalThis); // browsers reject fetch called with another receiver
     if (!this.fetcher) throw new Error('A fetch implementation is required');
   }
 

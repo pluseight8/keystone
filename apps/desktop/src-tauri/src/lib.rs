@@ -17,6 +17,7 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 use url::Url;
 mod identity_store;
 mod knowledge;
+mod local_http;
 use identity_store::{IdentityStore, SecretTool};
 use knowledge::KnowledgeState;
 
@@ -333,10 +334,12 @@ fn desktop_identity_provision(app: AppHandle, payload: IdentityProvisionPayload)
 }
 
 #[tauri::command]
-fn desktop_identity_status(app: AppHandle, device_id: String) -> Result<bool, String> {
+async fn desktop_identity_status(app: AppHandle, device_id: String) -> Result<bool, String> {
     validate_device_id(&device_id)?;
-    let seed = with_identity_store(&app, |store| store.seed(&device_id))?;
-    Ok(seed.map(|value| STANDARD.decode(value).ok().and_then(|seed| key_pair_from_seed(&seed).ok()).is_some()).unwrap_or(false))
+    tauri::async_runtime::spawn_blocking(move || {
+        let seed = with_identity_store(&app, |store| store.seed(&device_id))?;
+        Ok(seed.is_some_and(|value| STANDARD.decode(value).ok().and_then(|seed| key_pair_from_seed(&seed).ok()).is_some()))
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -789,13 +792,17 @@ fn run_piped_process(command: &str, args: &[&str], input: &[u8]) -> Result<std::
     let mut child = Command::new(command).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null())
         .spawn().map_err(|error| format!("The local {command} tool is unavailable: {error}"))?;
     let mut stdin = child.stdin.take().ok_or_else(|| format!("The local {command} input pipe is unavailable"))?;
-    if let Err(error) = stdin.write_all(input) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(format!("Could not send bytes to {command}: {error}"));
+    // Feed the input from its own thread: a tool that answers before it has read everything would otherwise block on a full output pipe while we block on its input.
+    let bytes = input.to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&bytes));
+    let output = child.wait_with_output().map_err(|error| format!("The local {command} did not finish: {error}"))?;
+    // A probe may read only the header and close its input; that is a normal finish, not a failure.
+    match writer.join() {
+        Ok(Err(error)) if error.kind() != std::io::ErrorKind::BrokenPipe => return Err(format!("Could not send bytes to {command}: {error}")),
+        Err(_) => return Err(format!("Could not send bytes to {command}")),
+        _ => {}
     }
-    drop(stdin);
-    child.wait_with_output().map_err(|error| format!("The local {command} did not finish: {error}"))
+    Ok(output)
 }
 
 #[tauri::command]
@@ -910,7 +917,7 @@ pub fn run() {
         .manage(KnowledgeState::default())
         .manage(DesktopAudioState::default())
         .manage(DesktopVideoState::default())
-        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, open_keystone_window, focus_keystone_window, close_keystone_window, quit_keystone, inject_confirmed_data, accessibility_status, scan_windows, get_system_locale, desktop_identity_provision, desktop_identity_status, desktop_identity_remove, desktop_identity_sign, decode_local_audio, desktop_audio_start, desktop_audio_pause, desktop_audio_resume, desktop_audio_seek, desktop_audio_volume, desktop_audio_status, desktop_audio_stop, probe_local_video, desktop_video_start, desktop_video_pause, desktop_video_resume, desktop_video_seek, desktop_video_volume, desktop_video_status, desktop_video_stop, knowledge::pick_local_folder, knowledge::pick_local_file, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
+        .invoke_handler(tauri::generate_handler![open_automation_browser, close_automation_browser, open_keystone_window, focus_keystone_window, close_keystone_window, quit_keystone, inject_confirmed_data, accessibility_status, scan_windows, get_system_locale, desktop_identity_provision, desktop_identity_status, desktop_identity_remove, desktop_identity_sign, local_http::desktop_local_model_http, decode_local_audio, desktop_audio_start, desktop_audio_pause, desktop_audio_resume, desktop_audio_seek, desktop_audio_volume, desktop_audio_status, desktop_audio_stop, probe_local_video, desktop_video_start, desktop_video_pause, desktop_video_resume, desktop_video_seek, desktop_video_volume, desktop_video_status, desktop_video_stop, knowledge::pick_local_folder, knowledge::pick_local_file, knowledge::scan_local_folder, knowledge::read_local_document, knowledge::extract_pdf_text, knowledge::watch_local_folder, knowledge::unwatch_local_folder])
         .build(tauri::generate_context!())
         .expect("error while building Keystone desktop application");
     app.run(|app, event| {
@@ -920,4 +927,29 @@ pub fn run() {
             app.state::<DesktopVideoState>().shutdown();
         }
     });
+}
+
+#[cfg(all(test, unix))]
+mod piped_process_tests {
+    use super::run_piped_process;
+
+    #[test]
+    fn a_tool_that_stops_reading_early_is_not_an_error() {
+        // `true` exits without reading; writing 4 MiB into its closed pipe fails with EPIPE.
+        let output = run_piped_process("true", &[], &vec![0u8; 4 * 1024 * 1024]).expect("early close must be tolerated");
+        assert!(output.status.success());
+    }
+
+    #[test]
+    fn a_tool_that_answers_with_more_than_a_pipe_buffer_does_not_deadlock() {
+        // `cat` echoes 4 MiB back while still reading; writing first and reading afterwards would hang here.
+        let input = vec![7u8; 4 * 1024 * 1024];
+        let output = run_piped_process("cat", &[], &input).expect("large echo must complete");
+        assert_eq!(output.stdout.len(), input.len());
+    }
+
+    #[test]
+    fn a_missing_tool_is_reported() {
+        assert!(run_piped_process("keystone-no-such-tool", &[], b"x").is_err());
+    }
 }

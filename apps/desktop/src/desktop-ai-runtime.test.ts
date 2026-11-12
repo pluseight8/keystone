@@ -39,7 +39,7 @@ describe('desktop local AI runtime', () => {
   it('discovers models through the configured localhost API only', async () => {
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       expect(String(input)).toBe('http://127.0.0.1:1234/v1/models');
-      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'qwen2.5', owned_by: 'lm-studio' }, { id: 'bad/model' }] }) } as Response;
+      return { ok: true, status: 200, json: async () => ({ data: [{ id: 'qwen2.5', owned_by: 'lm-studio' }, { id: 'bad model' }] }) } as Response;
     });
     vi.stubGlobal('fetch', fetch);
     try {
@@ -65,5 +65,21 @@ describe('desktop local AI runtime', () => {
     expect(restarted.providerKind()).toBe('lm-studio');
     expect(restarted.router.listModels().map(item => item.ref)).toContainEqual({ provider: 'lm-studio', model: 'qwen2.5' });
     expect(restarted.settings.snapshot().remoteEnabled).toBe(false);
+  });
+
+  it('discovers models of a draft source before it is saved, and only on localhost', async () => {
+    const fetch = vi.fn(async (_input: RequestInfo | URL) => ({ ok: true, status: 200, json: async () => ({ data: [{ id: 'qwen2.5' }, { id: 'org/model@q4_k_m' }, { id: '../etc' }] }) }) as Response);
+    vi.stubGlobal('fetch', fetch);
+    try {
+      const runtime = createDesktopAIRuntime(new AISettingsService(new StateStore()));
+      await runtime.ready();
+      expect(runtime.providerKind()).toBeUndefined();
+      await expect(runtime.discoverModels({ kind: 'lm-studio', endpoint: 'http://127.0.0.1:1234/v1/chat/completions' })).resolves.toEqual([{ model: 'qwen2.5', displayName: 'qwen2.5' }, { model: 'org/model@q4_k_m', displayName: 'org/model@q4_k_m' }]);
+      expect(String(fetch.mock.calls[0]![0])).toBe('http://127.0.0.1:1234/v1/models');
+      await expect(runtime.discoverModels({ kind: 'openai-compatible', endpoint: 'https://example.org/v1/chat/completions' })).rejects.toThrow();
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

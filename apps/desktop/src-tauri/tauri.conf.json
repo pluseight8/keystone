@@ -33,7 +33,7 @@
     ],
     "withGlobalTauri": false,
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:*; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'"
+      "csp": "default-src 'self'; connect-src 'self' https: http://127.0.0.1:* http://localhost:* ws://127.0.0.1:*; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; object-src 'none'; base-uri 'none'"
     }
   },
   "bundle": {

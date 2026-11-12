@@ -838,8 +838,8 @@ async function execute(command: Command, context: { local: DeviceSessionKeys; pe
   // union so this long-lived harness remains backwards compatible.
   if ((command.action as string) === 'distributedContentServe') {
     if (!peer) throw new Error('distributedContentServe requires peer');
-    const bytes = Uint8Array.from({ length: 96 * 1024 }, (_, index) => (index * 31) % 251);
-    const manifest = await createContentManifest(bytes, { mimeType: 'application/octet-stream', chunkSize: 16 * 1024, contentPolicy: 'OWNED_DEVICES' });
+    const bytes = Uint8Array.from({ length: 4 * 1024 * 1024 }, (_, index) => (index * 31) % 251);
+    const manifest = await createContentManifest(bytes, { mimeType: 'application/octet-stream', chunkSize: 128 * 1024, contentPolicy: 'OWNED_DEVICES' });
     await context.distributedContentServer.serve(manifest, bytes, { policy: 'OWNED_DEVICES', authorizedPeers: [peer.nodeId] });
     return { manifest, contentId: manifest.contentId, byteLength: manifest.byteLength, chunkCount: manifest.chunks.length };
   }

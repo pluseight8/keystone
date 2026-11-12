@@ -38,4 +38,10 @@ describe('desktop Tauri CSP', () => {
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'none'");
   });
+
+  it('lets the app play its own imported media from blob URLs, and nothing wider', () => {
+    const media = readCsp().split(';').find((directive) => directive.trim().startsWith('media-src'));
+    // Without this WebKit refuses blob: audio/video, so imported media can be neither probed nor played.
+    expect(media).toBe(" media-src 'self' blob:");
+  });
 });

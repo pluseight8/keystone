@@ -90,6 +90,12 @@ export interface SecretStatus extends SecretReference {
   readonly activeCapabilities: number;
 }
 
+// An owner identity is a base64url public key and may start with '-' or '_', which safeId rejects.
+function safeOwnerIdentity(value: string): string {
+  if (typeof value !== 'string' || value.length < 1 || value.length > 512 || /[\u0000-\u001f\u007f]/.test(value)) throw new Error('Invalid owner identity');
+  return value;
+}
+
 function safeId(value: string, label: string): string {
   if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)) throw new Error(`Invalid ${label}`);
   return value;
@@ -475,9 +481,9 @@ export class SecretExportService {
   private readonly used = new Set<string>();
   private readonly usedImports = new Set<string>();
   constructor(private readonly clock: () => number = Date.now) {}
-  createExportIntent(input: { ownerIdentityId: string; handle: SecretHandle; confirmed: boolean; policy?: RecoveryPolicy }): RecoveryExportIntent { const policy = input.policy ?? { exportAllowed: false, strongConfirmationRequired: true, ttlMs: 60_000, recoveryOnly: true }; input.handle.assertUsable('EXPORT'); if (input.handle.reference.exportPolicy === 'NON_EXPORTABLE' || input.handle.reference.exportPolicy === 'SCOPED_USE_ONLY') throw new SecretAccessError('Secret export policy forbids export'); if (!policy.exportAllowed || (policy.strongConfirmationRequired && input.confirmed !== true)) throw new SecretAccessError('Explicit owner confirmation is required for secret export'); const intentId = randomId('recovery-export'); return { kind: 'RECOVERY_EXPORT_INTENT', intentId, ownerIdentityId: safeId(input.ownerIdentityId, 'owner identity'), handleId: input.handle.id, expiresAt: nowIso(this.clock() + policy.ttlMs), nonce: bytesToBase64(randomBytes(24)), confirmed: true }; }
+  createExportIntent(input: { ownerIdentityId: string; handle: SecretHandle; confirmed: boolean; policy?: RecoveryPolicy }): RecoveryExportIntent { const policy = input.policy ?? { exportAllowed: false, strongConfirmationRequired: true, ttlMs: 60_000, recoveryOnly: true }; input.handle.assertUsable('EXPORT'); if (input.handle.reference.exportPolicy === 'NON_EXPORTABLE' || input.handle.reference.exportPolicy === 'SCOPED_USE_ONLY') throw new SecretAccessError('Secret export policy forbids export'); if (!policy.exportAllowed || (policy.strongConfirmationRequired && input.confirmed !== true)) throw new SecretAccessError('Explicit owner confirmation is required for secret export'); const intentId = randomId('recovery-export'); return { kind: 'RECOVERY_EXPORT_INTENT', intentId, ownerIdentityId: safeOwnerIdentity(input.ownerIdentityId), handleId: input.handle.id, expiresAt: nowIso(this.clock() + policy.ttlMs), nonce: bytesToBase64(randomBytes(24)), confirmed: true }; }
   consumeExportIntent(intent: RecoveryExportIntent, handle: SecretHandle, ownerIdentityId: string): void { if (this.used.has(intent.intentId) || intent.handleId !== handle.id || intent.ownerIdentityId !== ownerIdentityId || !intent.confirmed || new Date(intent.expiresAt).getTime() <= this.clock()) throw new SecretAccessError('Recovery export intent is invalid, expired or replayed'); this.used.add(intent.intentId); }
-  createImportIntent(input: { ownerIdentityId: string; confirmed: boolean; policy?: RecoveryPolicy }): RecoveryImportIntent { const policy = input.policy ?? { exportAllowed: true, strongConfirmationRequired: true, ttlMs: 60_000, recoveryOnly: true }; if (policy.strongConfirmationRequired && input.confirmed !== true) throw new SecretAccessError('Explicit owner confirmation is required for recovery import'); const intentId = randomId('recovery-import'); return { kind: 'RECOVERY_IMPORT_INTENT', intentId, ownerIdentityId: safeId(input.ownerIdentityId, 'owner identity'), expiresAt: nowIso(this.clock() + policy.ttlMs), nonce: bytesToBase64(randomBytes(24)), confirmed: true }; }
+  createImportIntent(input: { ownerIdentityId: string; confirmed: boolean; policy?: RecoveryPolicy }): RecoveryImportIntent { const policy = input.policy ?? { exportAllowed: true, strongConfirmationRequired: true, ttlMs: 60_000, recoveryOnly: true }; if (policy.strongConfirmationRequired && input.confirmed !== true) throw new SecretAccessError('Explicit owner confirmation is required for recovery import'); const intentId = randomId('recovery-import'); return { kind: 'RECOVERY_IMPORT_INTENT', intentId, ownerIdentityId: safeOwnerIdentity(input.ownerIdentityId), expiresAt: nowIso(this.clock() + policy.ttlMs), nonce: bytesToBase64(randomBytes(24)), confirmed: true }; }
   consumeImportIntent(intent: RecoveryImportIntent, ownerIdentityId: string): void { if (this.usedImports.has(intent.intentId) || intent.ownerIdentityId !== ownerIdentityId || !intent.confirmed || new Date(intent.expiresAt).getTime() <= this.clock()) throw new SecretAccessError('Recovery import intent is invalid, expired or replayed'); this.usedImports.add(intent.intentId); }
 }
 

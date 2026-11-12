@@ -28,7 +28,7 @@ pub trait SecretBackend {
 pub struct SecretTool {
     command: String,
     service: String,
-    available: std::sync::OnceLock<bool>,
+    available: std::sync::OnceLock<()>,
 }
 
 impl SecretTool {
@@ -63,14 +63,16 @@ impl SecretTool {
 
 impl SecretBackend for SecretTool {
     fn available(&self) -> bool {
-        *self.available.get_or_init(|| {
-            if !cfg!(target_os = "linux") { return false; }
-            let probe = format!("probe-{}", std::process::id());
-            let stored = self.run(&["store", "--label=Keystone secure-storage probe", "service", &self.service, "probe", &probe], Some("keystone-probe"));
-            let found = matches!(self.run(&["lookup", "service", &self.service, "probe", &probe], None), Ok((0, ref value)) if value == "keystone-probe");
-            let _ = self.run(&["clear", "service", &self.service, "probe", &probe], None);
-            matches!(stored, Ok((0, _))) && found
-        })
+        if !cfg!(target_os = "linux") { return false; }
+        if self.available.get().is_some() { return true; }
+        let probe = format!("probe-{}", std::process::id());
+        let stored = self.run(&["store", "--label=Keystone secure-storage probe", "service", &self.service, "probe", &probe], Some("keystone-probe"));
+        let found = matches!(self.run(&["lookup", "service", &self.service, "probe", &probe], None), Ok((0, ref value)) if value == "keystone-probe");
+        let _ = self.run(&["clear", "service", &self.service, "probe", &probe], None);
+        let available = matches!(stored, Ok((0, _))) && found;
+        // A locked or late-starting keyring must be reachable on a later retry.
+        if available { let _ = self.available.set(()); }
+        available
     }
 
     fn store(&self, device_id: &str, seed_b64: &str) -> Result<(), String> {
@@ -191,8 +193,8 @@ impl<B: SecretBackend> IdentityStore<B> {
 
     /// Base64 seed for `device_id`, or None when the device has no identity.
     pub fn seed(&self, device_id: &str) -> Result<Option<String>, String> {
-        self.migrate(device_id)?;
         if self.backend.available() {
+            self.migrate(device_id)?;
             if let Some(value) = self.backend.lookup(device_id)? { return Ok(Some(value)); }
         }
         // Existing file seeds stay usable while no Secret Service is reachable, so the owner is never locked out.

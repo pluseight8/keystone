@@ -71,6 +71,33 @@ describe('FabricTransport destination acknowledgements', () => {
     await alice.close();
   });
 
+  it('redials after frame loss and confirms delivery when the first ACK on the new session is also lost', async () => {
+    const sender = new LossyProvider('alice-provider', 2);
+    const receiver = new LossyProvider('bob-provider', 1);
+    sender.connectPeer('bob', new ControlledTransportProvider('stale-bob'));
+    receiver.connectPeer('alice', sender);
+    const resets: string[] = [];
+    sender.resetPeer = destination => {
+      resets.push(destination);
+      sender.connectPeer(destination, receiver);
+    };
+    const alice = node('alice', sender, [20, 20, 20]);
+    const bob = node('bob', receiver, []);
+    try {
+      await alice.start();
+      await bob.start();
+      const sent = envelope('alice', 'bob');
+      const received: string[] = [];
+      bob.onMessage(value => { received.push(value.id); });
+      await alice.send('bob', sent);
+      await until(() => received.length === 1 && alice.unacknowledgedCount === 0);
+      expect(resets).toEqual(['bob', 'bob']);
+      expect(received).toEqual([sent.id]);
+    } finally {
+      await Promise.all([alice.close(), bob.close()]);
+    }
+  });
+
   it('stops resending once the destination acknowledges', async () => {
     const aliceProvider = new ControlledTransportProvider('alice-provider'); const bobProvider = new ControlledTransportProvider('bob-provider');
     aliceProvider.connectPeer('bob', bobProvider); bobProvider.connectPeer('alice', aliceProvider);

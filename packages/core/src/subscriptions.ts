@@ -218,7 +218,7 @@ export interface FeedHttpTransport {
 }
 
 export class FetchFeedHttpTransport implements FeedHttpTransport {
-  constructor(private readonly fetchImpl: typeof fetch = globalThis.fetch) {}
+  constructor(private readonly fetchImpl: typeof fetch = globalThis.fetch?.bind(globalThis)) {}
 
   async request(input: FeedHttpRequest): Promise<FeedHttpResponse> {
     if (typeof this.fetchImpl !== 'function') throw new SubscriptionError('SOURCE_UNAVAILABLE', 'The external HTTP host is unavailable', true);

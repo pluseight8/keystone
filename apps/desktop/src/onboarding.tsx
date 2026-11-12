@@ -2,6 +2,8 @@ import React from 'react';
 import logoUrl from '../../../branding/logos/logo.png';
 import logoTextUrl from '../../../branding/logos/text-of-logo.png';
 import { Icon } from './desktop-icons';
+import { discoverDesktopLocalModels } from './desktop-ai-runtime';
+import { desktopAccentForeground } from './desktop-settings';
 import { DESKTOP_ACCENTS, type DesktopAccent, type DesktopDensity, type DesktopTheme } from './desktop-preferences';
 import { pickDesktopFile, type PickedDesktopFile } from './desktop-host-bridge';
 
@@ -131,18 +133,13 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
     if (!endpoint) { setAiStatus('missing'); setError('Для локального AI укажите адрес localhost или 127.0.0.1.'); return; }
     setAiEndpoint(endpoint); setAiStatus('checking'); setError('');
     try {
-      const response = await fetch(aiDiscoveryEndpoint(endpoint, aiProviderKind), { method: 'GET', headers: { accept: 'application/json' } });
-      if (response.ok) {
-        const payload = await response.json() as { readonly models?: readonly { readonly name?: string; readonly model?: string }[]; readonly data?: readonly { readonly id?: string }[] };
-        const models = [...(payload.models?.map(item => item.name ?? item.model) ?? []), ...(payload.data?.map(item => item.id) ?? [])];
-        const model = models.find(value => Boolean(value && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)));
-        setAiModel(model ?? '');
-        setAiStatus(model ? 'found' : 'missing');
-      } else setAiStatus('missing');
-      if (!response.ok) setError('Локальный AI пока не ответил. Настройку можно завершить и изменить позже.');
+      const [firstModel] = await discoverDesktopLocalModels(aiProviderKind, endpoint);
+      setAiModel(firstModel?.model ?? '');
+      setAiStatus(firstModel ? 'found' : 'missing');
+      if (!firstModel) setError('Провайдер ответил, но доступных моделей нет.');
     } catch {
       setAiStatus('missing');
-      setError('Локальный AI не найден. Keystone не обращается к удалённому сервису.');
+      setError('Локальный провайдер не ответил. Проверьте адрес и убедитесь, что сервер запущен.');
     }
   };
 
@@ -185,7 +182,8 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
     go(previous);
   };
 
-  return <main className="onboarding-shell" data-onboarding-theme={theme} style={{ '--onboarding-accent': accentValue(accent, '#e9254d') } as React.CSSProperties}>
+  const color = accentValue(accent, '#e9254d');
+  return <main className="onboarding-shell" data-onboarding-theme={theme} style={{ '--onboarding-accent': color, '--onboarding-accent-foreground': desktopAccentForeground(color) } as React.CSSProperties}>
     <section className="onboarding-card" aria-labelledby="onboarding-title">
       <header className="onboarding-header">
         <div className="onboarding-brand"><img src={logoUrl} alt=""/><img src={logoTextUrl} alt="Keystone"/></div>
@@ -251,14 +249,14 @@ export function TerminalOnboarding({ onComplete, typingDelayMs }: TerminalOnboar
 
         {step === 'appearance' && <div className="onboarding-form onboarding-wide-form">
           <p className="onboarding-lead">Эти настройки применятся сразу после входа и сохранятся для следующих запусков.</p>
-          <div className="onboarding-appearance-preview"><span className="onboarding-preview-dot"/><span><strong>Keystone</strong><small>Так будет выглядеть ваше рабочее пространство</small></span><span className="onboarding-preview-action" aria-hidden style={{ background: accentValue(accent, '#e9254d') }}>Открыть</span></div>
+          <div className="onboarding-appearance-preview"><span className="onboarding-preview-dot"/><span><strong>Keystone</strong><small>Так будет выглядеть ваше рабочее пространство</small></span><span className="onboarding-preview-action" aria-hidden>Открыть</span></div>
           <label>Тема</label><div className="onboarding-segmented">{(['system', 'light', 'dark'] as const).map(value => <button key={value} type="button" className={theme === value ? 'selected' : ''} onClick={() => setTheme(value)}>{value === 'system' ? 'Системная' : value === 'light' ? 'Светлая' : 'Тёмная'}</button>)}</div>
-          <label>Акцент</label><div className="onboarding-accent-row">{(Object.keys(DESKTOP_ACCENTS) as Array<Exclude<DesktopAccent, 'custom'>>).map(value => <button key={value} type="button" className={accent === value ? 'selected' : ''} aria-label={DESKTOP_ACCENTS[value].label} onClick={() => setAccent(value)}><span style={{ background: DESKTOP_ACCENTS[value].value }}/></button>)}</div>
+          <label>Акцент</label><div className="onboarding-accent-row">{(Object.keys(DESKTOP_ACCENTS) as Array<Exclude<DesktopAccent, 'custom'>>).map(value => <button key={value} type="button" className={accent === value ? 'selected' : ''} aria-label={({ rose: 'Розовый', blue: 'Синий', violet: 'Фиолетовый', amber: 'Янтарный', green: 'Зелёный' } as Record<string, string>)[value] ?? DESKTOP_ACCENTS[value].label} onClick={() => setAccent(value)}><span style={{ background: DESKTOP_ACCENTS[value].value }}/></button>)}</div>
           <label>Плотность</label><div className="onboarding-segmented"><button type="button" className={density === 'comfortable' ? 'selected' : ''} onClick={() => setDensity('comfortable')}>Комфортная</button><button type="button" className={density === 'compact' ? 'selected' : ''} onClick={() => setDensity('compact')}>Компактная</button></div>
           <OnboardingActions onBack={back} onNext={() => go('ready')} next="Посмотреть итог"/>
         </div>}
 
-        {step === 'ready' && <div className="onboarding-ready"><div className="onboarding-ready-icon" aria-hidden><Icon name="check-circle" size={25}/></div><p className="onboarding-lead">Создадим локальный профиль с ключом этого устройства и откроем главную.</p><dl><div><dt>Владелец</dt><dd>{clean(displayName) || 'Вы'}</dd></div><div><dt>Устройство</dt><dd>{clean(deviceName) || suggestedDeviceName()}</dd></div><div><dt>Интересы</dt><dd>{interests.includes('everything') ? 'Все разделы' : `${interests.length} выбрано`}</dd></div><div><dt>Импорт</dt><dd>{imports.length ? `${imports.length} файл(а)` : 'Позже'}</dd></div><div><dt>AI</dt><dd>{localAi ? (aiStatus === 'found' ? `Локальный провайдер · ${aiModel}` : 'Настроить после входа') : 'Позже'}</dd></div><div><dt>Вид</dt><dd>{theme === 'system' ? 'Системная тема' : theme === 'light' ? 'Светлая тема' : 'Тёмная тема'} · {density === 'compact' ? 'компактно' : 'комфортно'}</dd></div></dl><div className="onboarding-form-actions"><button className="onboarding-secondary" type="button" onClick={back}>Назад</button><button className="onboarding-primary" type="button" onClick={() => void finish()} disabled={busy} aria-busy={busy}>{busy ? 'Создаём пространство…' : 'Открыть Keystone'} <Icon name="arrow-right" size={16}/></button></div></div>}
+        {step === 'ready' && <div className="onboarding-ready"><div className="onboarding-ready-icon" aria-hidden><Icon name="check-circle" size={25}/></div><p className="onboarding-lead">Создадим локальный профиль с ключом этого устройства и откроем главную.</p><dl><div><dt>Владелец</dt><dd>{clean(displayName) || 'Вы'}</dd></div><div><dt>Устройство</dt><dd>{clean(deviceName) || suggestedDeviceName()}</dd></div><div><dt>Интересы</dt><dd>{interests.includes('everything') ? 'Все разделы' : `${interests.length} выбрано`}</dd></div><div><dt>Импорт</dt><dd>{imports.length ? `${imports.length} файл(а)` : 'Позже'}</dd></div><div><dt>AI</dt><dd>{localAi ? (aiStatus === 'found' ? `Локальный провайдер · ${aiModel}` : 'Настроить после входа') : 'Позже'}</dd></div><div><dt>Вид</dt><dd>{theme === 'system' ? 'Системная тема' : theme === 'light' ? 'Светлая тема' : 'Тёмная тема'} · {density === 'compact' ? 'компактно' : 'комфортно'}</dd></div></dl><div className="onboarding-form-actions"><button className="onboarding-secondary" type="button" onClick={back} disabled={busy}>Назад</button><button className="onboarding-primary" type="button" onClick={() => void finish()} disabled={busy} aria-busy={busy}>{busy ? 'Создаём пространство…' : 'Открыть Keystone'} <Icon name="arrow-right" size={16}/></button></div></div>}
         {error && <p className="onboarding-error" role="alert">{error}</p>}
       </div>
       <footer className="onboarding-footer"><span>Без облачной учётной записи</span><span>Настройки можно изменить позже</span></footer>
@@ -277,20 +275,12 @@ function toOnboardingImport(kind: OnboardingImportKind, file: PickedDesktopFile)
 function normalizeLocalEndpoint(value: string): string | undefined {
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    if (url.protocol !== 'http:' || url.username || url.password) return undefined;
     if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost' && url.hostname !== '[::1]') return undefined;
     return url.toString().replace(/\/$/, '');
   } catch {
     return undefined;
   }
-}
-
-function aiDiscoveryEndpoint(endpoint: string, kind: OnboardingAIProviderKind): string {
-  const url = new URL(endpoint);
-  if (kind === 'ollama') return `${url.origin}/api/tags`;
-  if (/\/chat\/completions$/.test(url.pathname)) url.pathname = url.pathname.replace(/\/chat\/completions$/, '/models');
-  else if (!url.pathname.endsWith('/models')) url.pathname = `${url.pathname.replace(/\/$/, '')}/models`;
-  return url.toString();
 }
 
 function readOnboardingError(reason: unknown): string {

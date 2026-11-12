@@ -493,7 +493,7 @@ export class OpenAICompatibleAIProvider implements AIProvider {
   private readonly fetcher: typeof globalThis.fetch;
   constructor(protected readonly options: OpenAICompatibleAIProviderOptions) {
     if (options.scope === 'local' && !isLocalEndpoint(options.endpoint)) throw new Error('Local AI endpoints must be localhost');
-    this.fetcher = options.fetch ?? globalThis.fetch;
+    this.fetcher = options.fetch ?? globalThis.fetch?.bind(globalThis); // browsers reject fetch called with another receiver
     if (!this.fetcher) throw new Error('A fetch implementation is required');
     this.models = [{ ref: { provider: options.id, model: options.model }, scope: options.scope, displayName: options.displayName ?? options.model, contextLimit: options.contextLimit, endpoint: options.endpoint }];
   }

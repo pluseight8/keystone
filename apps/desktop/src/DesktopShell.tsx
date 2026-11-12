@@ -67,7 +67,7 @@ import { getDesktopInboxRuntime, subscribeDesktopInboxRuntime, type DesktopInbox
 import { getDesktopFilesRuntime, subscribeDesktopFilesRuntime, type DesktopFileFolder, type DesktopFileProjection, type DesktopFilesRuntime } from './desktop-files-runtime';
 import { getDesktopDocumentsRuntime, subscribeDesktopDocumentsRuntime, type DesktopDocumentsRuntime } from './desktop-documents-runtime';
 import { getDesktopCaptureRuntime, subscribeDesktopCaptureRuntime, type DesktopCaptureRuntime } from './desktop-capture-runtime';
-import { getLocalDesktopProfile, type DesktopLocalDocumentsRuntime } from './desktop-local-runtime';
+import { getLocalDesktopProfile } from './desktop-local-runtime';
 import { getDesktopMusicRuntime, getDesktopShortsRuntime, getDesktopVideoRuntime, subscribeDesktopMusicRuntime, subscribeDesktopShortsRuntime, subscribeDesktopVideoRuntime, type DesktopMusicRuntime, type DesktopShortsRuntime, type DesktopVideoRuntime } from './desktop-media-runtime';
 import { pickDesktopFile } from './desktop-host-bridge';
 import { getDesktopAIRuntime, subscribeDesktopAIRuntime, type DesktopAIRuntime, type DesktopLocalAIProviderKind, type DesktopLocalAIModel } from './desktop-ai-runtime';
@@ -75,9 +75,12 @@ import { getDesktopDiscoveryRuntime, subscribeDesktopDiscoveryRuntime, type Desk
 import { createDesktopAIConversation, readDesktopAIConversations, writeDesktopAIConversations, type DesktopAIConversation } from './desktop-ai-conversations';
 import { getDesktopNetworkRuntime, subscribeDesktopNetworkRuntime, type DesktopNetworkRuntime } from './desktop-network-runtime';
 import type { CaptureDestinationKind } from '@keystone/core';
-import { captureAccessLabel, captureDestinationLabel, captureSourceLabel, captureStateLabel, formatBytes, formatCalendarTime, formatMediaDuration, formatTimestamp, ruPlural, taskPriorityLabel, taskStatusLabel } from './desktop-format';
+import { captureAccessLabel, captureDestinationLabel, captureSourceLabel, captureStateLabel, formatBytes, formatCalendarTime, formatMediaDuration, errorText, formatTimestamp, networkReachabilityLabel, networkStateLabel, ruPlural, taskPriorityLabel, taskStatusLabel } from './desktop-format';
 import { desktopWindowBridge, getDesktopWindowContext, isDesktopAltF4, observeDesktopWindowGeometry, requestDesktopQuit, restoreDetachedWindows } from './desktop-window-runtime';
 import { createDesktopActionCommands } from './desktop-actions';
+import { CommandPalette } from './desktop-command-palette';
+import { DocumentsSurface } from './desktop-documents-surface';
+import { TypedReferenceDock } from './desktop-reference-dock';
 import { cloneDesktopTransferTab, createDesktopTransferId, DESKTOP_TAB_TRANSFER_DATA, DESKTOP_WINDOW_TRANSFER_DOM_EVENT, DESKTOP_WINDOW_TRANSFER_STORAGE_KEY, emitDesktopWindowTransfer, listenDesktopWindowTransfers, parseDesktopWindowTransferEvent, type DesktopWindowTransferEvent, type DesktopWindowTransferStart } from './desktop-window-transfer';
 
 type Locale = 'en' | 'ru';
@@ -149,11 +152,18 @@ function useShell(): [DesktopShellController, () => void] {
 export interface DesktopShellProps {
   initialLocale?: Locale;
   onLocaleChange?: (locale: Locale) => void;
+  startupNotice?: string;
 }
 
-export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: DesktopShellProps) {
+export default function DesktopShell({ initialLocale = 'ru', onLocaleChange, startupNotice }: DesktopShellProps) {
   const [shell] = useShell();
-  const [locale, setLocaleState] = React.useState<Locale>(() => (localStorage.getItem('keystone.locale') as Locale) || initialLocale);
+  const [locale, setLocaleState] = React.useState<Locale>(() => {
+    const saved = localStorage.getItem('keystone.locale');
+    return saved === 'ru' || saved === 'en' ? saved : initialLocale;
+  });
+  // Screen readers and hyphenation pick the language from <html lang>.
+  React.useEffect(() => { document.documentElement.lang = locale; }, [locale]);
+  React.useEffect(() => { if (startupNotice) shell.setNotice(startupNotice); }, [shell, startupNotice]);
   const settingsStoreRef = React.useRef<DesktopSettingsStore>();
   settingsStoreRef.current ??= new DesktopSettingsStore();
   const settingsStore = settingsStoreRef.current;
@@ -274,6 +284,7 @@ export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: D
     const onKeyDown = (event: KeyboardEvent) => {
       const primary = isPrimaryModifier(event);
       if (isDesktopAltF4(event)) { event.preventDefault(); void requestDesktopQuit(); return; }
+      if (event.defaultPrevented || event.isComposing || paletteOpen) return;
       if (matchesShortcut(event, settings.values['shortcuts.commandPalette']) || (isPrimaryModifier(event) && event.key.toLowerCase() === 'p')) { event.preventDefault(); setPaletteOpen(true); return; }
       if (matchesShortcut(event, settings.values['shortcuts.quit']) || (primary && event.key.toLowerCase() === 'q')) { event.preventDefault(); void requestDesktopQuit(); return; }
       if (matchesShortcut(event, settings.values['shortcuts.focusOmnibox'])) { event.preventDefault(); omniboxRef.current?.focus(); omniboxRef.current?.select(); setOmniboxOpen(true); return; }
@@ -290,7 +301,7 @@ export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: D
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [shell, settings, locale, t.capture, t.home]);
+  }, [shell, settings, locale, paletteOpen, t.home]);
 
   const runCommand = (command: ShellCommand) => { setPaletteOpen(false); command.run(shell); };
   const submitOmnibox = (event: React.FormEvent) => {
@@ -369,10 +380,10 @@ export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: D
     {settings.values['layout.activityBarVisible'] && <ActivityBar items={visibleActivity} activeId={activeActivityId} t={t} onOpen={openActivity} onCustomize={() => setActivityEditorOpen(value => !value)} />}
     <div className="desktop-environment">
       <header className="desktop-header" data-keystone-region="toolbar">
-        <div className="desktop-brand"><img className="brand-lockup" src={logoLockupUrl} alt="Keystone" /><span className="brand-channel">/ DESKTOP</span></div>
+        <div className="desktop-brand"><img className="brand-lockup" src={logoLockupUrl} alt="Keystone" /></div>
         <div className="history-controls"><IconButton className="icon-control" icon="chevron-left" label={t.back} onClick={() => shell.goBack()} /><IconButton className="icon-control" icon="chevron-right" label={t.forward} onClick={() => shell.goForward()} /></div>
         {settings.values['layout.omniboxVisible'] && <form className="omnibox" onSubmit={submitOmnibox} data-keystone-component="omnibox">
-          <span className="omnibox-symbol" aria-hidden><Icon name="search" size={15} /></span><input ref={omniboxRef} value={omnibox} onFocus={() => setOmniboxOpen(true)} onChange={event => setOmnibox(event.target.value)} placeholder={t.omnibox} aria-label={t.omnibox}/><kbd>{isMac() ? '⌘' : 'Ctrl'} L</kbd>
+          <span className="omnibox-symbol" aria-hidden><Icon name="search" size={15} /></span><input ref={omniboxRef} value={omnibox} onFocus={() => setOmniboxOpen(true)} onChange={event => setOmnibox(event.target.value)} placeholder={locale === 'ru' ? 'Поиск, команды, ссылки…' : 'Search, commands, links…'} aria-label={t.omnibox}/><kbd>{isMac() ? '⌘' : 'Ctrl'} L</kbd>
           {omniboxOpen && <OmniboxMenu value={omnibox} t={t} onChoose={value => { setOmnibox(value); omniboxRef.current?.focus(); }} />}
         </form>}
         {settings.values['layout.workspaceSelectorVisible'] && <div className="header-workspace"><button className="workspace-switcher" onClick={() => setWorkspaceOpen(value => !value)} aria-expanded={workspaceOpen}><span className="workspace-dot"/><span>{snapshot.workspace.name}</span><Icon name="chevron-down" size={13} className="chevron" /></button>{workspaceOpen && <WorkspaceMenu shell={shell} t={t} onClose={() => setWorkspaceOpen(false)} />}</div>}
@@ -395,7 +406,15 @@ export default function DesktopShell({ initialLocale = 'ru', onLocaleChange }: D
       {settings.values['layout.statusBarVisible'] && <footer className="status-bar" data-keystone-region="status-bar"><span><i className="status-light"/> {t.status}</span><span className="status-spacer"/><span>{t.saved}</span></footer>}
       {activityEditorOpen && <ActivityEditor shell={shell} t={t} onClose={() => setActivityEditorOpen(false)} />}
     </div>
-    {paletteOpen && <CommandPalette commands={commands} t={t} onRun={runCommand} onClose={() => setPaletteOpen(false)} />}
+    {paletteOpen && <CommandPalette
+      commands={commands}
+      title={t.command}
+      searchLabel={t.commandHint}
+      noCommands={t.noCommands}
+      keyboardHint={`↑↓ ${t.navigate} · Enter ${t.run.toLowerCase()}`}
+      onRun={runCommand}
+      onClose={() => setPaletteOpen(false)}
+    />}
     {quickCaptureOpen && <QuickCaptureOverlay shell={shell} t={t} onClose={() => setQuickCaptureOpen(false)} />}
     <NoticeToast notice={shell.currentNotice} t={t} onClose={() => shell.clearNotice()} />
   </div>;
@@ -454,7 +473,7 @@ function parseDesktopMapsInput(value: string): DesktopMapsInput | undefined {
 
 function ActivityBar({ items, activeId, t, onOpen, onCustomize }: { items: ActivityBarItem[]; activeId?: string; t: Copy; onOpen: (item: ActivityBarItem, options?: { readonly newTab?: boolean }) => void; onCustomize: () => void }) {
   const open = (item: ActivityBarItem, event: React.MouseEvent<HTMLButtonElement>) => onOpen(item, { newTab: event.metaKey || event.ctrlKey });
-  return <aside className="activity-bar" data-keystone-region="activity-bar" aria-label={t.workspace}><div className="activity-logo" aria-hidden><img src={logoUrl} alt="" /></div><nav>{items.map(item => <button type="button" key={item.id} className={`activity-item${activeId === item.id ? ' active' : ''}`} onClick={event => open(item, event)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); onOpen(item, { newTab: true }); } }} title={item.extensionSlot ? t.extensionSlot : activityLabel(item, t)} aria-current={activeId === item.id ? 'page' : undefined}><span className="activity-icon" aria-hidden><Icon name={(item.icon as IconName) || 'circle'} size={18} /></span><span>{activityLabel(item, t)}</span></button>)}</nav><div className="activity-bottom"><button type="button" className="activity-item subtle" onClick={onCustomize} title={t.customize} aria-label={t.customize}><span className="activity-icon" aria-hidden><Icon name="sliders" size={18} /></span><span>{t.configure}</span></button></div></aside>;
+  return <aside className="activity-bar" data-keystone-region="activity-bar" aria-label={t.workspace}><div className="activity-logo" aria-hidden><img src={logoUrl} alt="" /></div><nav>{items.map(item => <button type="button" key={item.id} className={`activity-item${activeId === item.id ? ' active' : ''}`} onClick={event => open(item, event)} onAuxClick={event => { if (event.button === 1) { event.preventDefault(); onOpen(item, { newTab: true }); } }} title={item.extensionSlot ? t.extensionSlot : activityLabel(item, t)} aria-label={activityLabel(item, t)} aria-current={activeId === item.id ? 'page' : undefined}><span className="activity-icon" aria-hidden><Icon name={(item.icon as IconName) || 'circle'} size={18} /></span><span>{activityLabel(item, t)}</span></button>)}</nav><div className="activity-bottom"><button type="button" className="activity-item subtle" onClick={onCustomize} title={t.customize} aria-label={t.customize}><span className="activity-icon" aria-hidden><Icon name="sliders" size={18} /></span><span>{t.configure}</span></button></div></aside>;
 }
 
 function activityLabel(item: ActivityBarItem, t: Copy): string {
@@ -989,7 +1008,7 @@ function TabSurface({ tab, shell, t, contextRegistry, onDragRef, settings, setti
   if (tab.kind === 'subscriptions') return <SubscriptionsSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'web-library') return <WebLibrarySurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'workboard') return <WorkboardSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'tasks') return <TasksSurface tab={tab} shell={shell} t={t} />;
+  if (tab.kind === 'tasks') return <TasksSurface key={tab.id} tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'contacts') return <ContactsSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'space' && tab.object?.id === 'collaboration') return <CollaborationSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'settings') return tab.object?.id === 'search' ? <SearchSurface tab={tab} shell={shell} t={t} /> : tab.object?.id === 'device' ? <DeviceSurface t={t} /> : tab.object?.id === 'skills' ? <SkillsSurface shell={shell} t={t} /> : tab.object?.id === 'plugins' ? <PluginsSurface t={t} /> : tab.object?.id === 'continuity' ? <ContinuitySurface shell={shell} t={t} /> : tab.object?.id === 'nearby' ? <NearbyExchangeSurface shell={shell} t={t} /> : <SettingsSurface shell={shell} t={t} settings={settings} settingsStore={settingsStore} settingsContext={settingsContext} onSettingChange={onSettingChange} initialCategory={tab.object?.id === 'customize' ? 'appearance' : tab.object?.query} />;
@@ -999,8 +1018,8 @@ function TabSurface({ tab, shell, t, contextRegistry, onDragRef, settings, setti
   if (tab.kind === 'calendar') return <CalendarSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'map') return <MapsSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'mail') return <MailSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'file') return <FilesSurface tab={tab} shell={shell} t={t} />;
-  if (tab.kind === 'document') return <DocumentsSurface tab={tab} shell={shell} t={t} />;
+  if (tab.kind === 'file') return <FilesSurface key={tab.id} tab={tab} shell={shell} t={t} />;
+  if (tab.kind === 'document') return <DocumentsSurface key={tab.id} tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'publication') return <PublicationSurface tab={tab} shell={shell} t={t} />;
   if (tab.kind === 'media' && tab.object?.id === 'calls') return <CallsSurface t={t} />;
   if (tab.kind === 'media') return <PhotosSurface tab={tab} shell={shell} t={t} />;
@@ -1026,6 +1045,7 @@ function FilesSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
   const [searchResults, setSearchResults] = React.useState<Awaited<ReturnType<DesktopFilesRuntime['search']>>>([]);
   const [error, setError] = React.useState('');
   const [preview, setPreview] = React.useState<{ readonly name: string; readonly mimeType: string; readonly text?: string; readonly size: number }>();
+  const requestedId = tab.object?.id;
   const [version, setVersion] = React.useState(0);
   const ru = t.files === 'Файлы';
 
@@ -1049,7 +1069,7 @@ function FilesSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     void Promise.all([
       runtime.listFiles(selectedFolderId as DesktopFileFolder['id'], { limit: 128 }),
       runtime.conflicts(selectedFolderId as DesktopFileFolder['id']),
-    ]).then(([nextPage, nextConflicts]) => { if (active) { setPage(nextPage); setConflicts(nextConflicts); setError(''); } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
+    ]).then(([nextPage, nextConflicts]) => { if (active) { setPage(nextPage); setConflicts(nextConflicts); } }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
     return () => { active = false; };
   }, [runtime, selectedFolderId, version]);
   React.useEffect(() => {
@@ -1074,18 +1094,37 @@ function FilesSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     await run(async () => { await runtime.importFile!({ ...input, folderId: selectedFolderId as DesktopFileFolder['id'] }); });
   };
   const pickFile = async () => {
-    const file = await pickDesktopFile('file');
-    if (file) await importFile({ filename: file.name, mimeType: file.mimeType, bytes: file.bytes });
+    try {
+      const file = await pickDesktopFile('file');
+      if (file) await importFile({ filename: file.name, mimeType: file.mimeType, bytes: file.bytes });
+    } catch (reason) {
+      setError(errorText(reason, ru ? 'Не удалось выбрать файл.' : 'Could not pick a file.'));
+    }
   };
-  const openFile = async (file: DesktopFileProjection) => {
-    const currentRuntime = runtime;
-    if (!currentRuntime?.readFile) return;
-    await run(async () => {
-      const bytes = await currentRuntime.readFile!(file.fileId);
-      const text = file.revision.mimeType.startsWith('text/') || file.revision.mimeType === 'application/json' ? new TextDecoder().decode(bytes) : undefined;
-      setPreview({ name: file.entry.name, mimeType: file.revision.mimeType, size: bytes.byteLength, ...(text !== undefined ? { text } : {}) });
+  const openFile = React.useCallback(async (file: DesktopFileProjection) => {
+    if (!runtime?.readFile) return;
+    const bytes = await runtime.readFile(file.fileId);
+    const text = file.revision.mimeType.startsWith('text/') || file.revision.mimeType === 'application/json' ? new TextDecoder().decode(bytes) : undefined;
+    return { name: file.entry.name, mimeType: file.revision.mimeType, size: bytes.byteLength, text };
+  }, [runtime]);
+  const showFile = async (file: DesktopFileProjection) => {
+    setError('');
+    try { setPreview(await openFile(file)); }
+    catch (reason) { setError(errorText(reason, ru ? 'Не удалось открыть файл.' : 'Could not open the file.')); }
+  };
+  React.useEffect(() => {
+    if (!runtime?.describeFile || !requestedId?.startsWith('file:')) return undefined;
+    let active = true;
+    void runtime.describeFile(requestedId as DesktopFileProjection['fileId']).then(async file => {
+      const value = await openFile(file);
+      if (!active) return;
+      setSelectedFolderId(file.entry.parentFolderId);
+      setPreview(value);
+    }).catch(reason => {
+      if (active) setError(errorText(reason, ru ? 'Не удалось открыть файл.' : 'Could not open the file.'));
     });
-  };
+    return () => { active = false; };
+  }, [requestedId, openFile, ru, runtime]);
   const onDrop = async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1100,135 +1139,19 @@ function FilesSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     <div className="surface-kicker"><span className="surface-icon"><Icon name="files" size={15} /></span><span>{t.files}</span><span className="surface-badge">{t.local}</span></div>
     <div className="web-library-heading"><div><h1>{t.files}</h1><p className="surface-description">{ru ? 'Общие папки и версии файлов, доступные по запросу.' : 'Shared folders and file versions, available when you request them.'}</p></div><div className="web-library-actions"><button className="secondary-button" onClick={() => setVersion(value => value + 1)}>{t.refresh}</button>{runtime.importFile ? <button className="primary-button" disabled={!selectedFolderId} onClick={() => void pickFile()}>{ru ? 'Импортировать файл' : 'Import file'}</button> : null}<button className="primary-button" onClick={() => void createFolder()}>＋ {ru ? 'Папка' : 'Folder'}</button></div></div>
     <div className="web-library-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'Искать по именам файлов и папок…' : 'Search file and folder names…'} aria-label={ru ? 'Поиск файлов' : 'File search'} /><span>{ru ? `${folders.length} папок` : `${folders.length} folders`}</span></div>
-    {error ? <span className="maps-notice">{error}</span> : null}
-    {query.trim() ? <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'Результаты поиска' : 'Search results'}</span>{searchResults.length ? searchResults.map(result => <button key={result.entry.id} className="web-library-entry" onClick={() => setSelectedFolderId(result.folder.id)}><strong>{result.entry.name}</strong><small>{result.folder.name} · {Math.round(result.score * 100)}%</small></button>) : <div className="web-library-empty">{ru ? 'Совпадений нет.' : 'No matches.'}</div>}</div><div className="web-library-reader"><div className="web-library-reader-empty"><div><span>⌕</span><p>{ru ? 'Выберите папку, чтобы открыть локальный список.' : 'Choose a folder to open its local listing.'}</p></div></div></div></div> : folders.length ? <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'Папки' : 'Folders'}</span>{folders.map(folder => <button key={folder.id} className={`web-library-entry${folder.id === selectedFolderId ? ' active' : ''}`} onClick={() => setSelectedFolderId(folder.id)}><strong>{folder.name}</strong><small>{folder.scope}</small></button>)}<div className="adapter-note"><span><Icon name="folder" size={16} /></span><div><strong>{ru ? 'Папка на устройстве' : 'Device folder'}</strong><small>{ru ? 'Файлы подключаются только после явного выбора владельца.' : 'Files are connected only after the owner explicitly chooses a folder.'}</small></div></div></div><div className="web-library-reader">{selectedFolder ? <><div className="web-library-reader-heading"><div><h2>{selectedFolder.name}</h2><p>{selectedFolder.scope} · {selectedFolder.revision} {ru ? 'последняя версия' : 'latest version'}</p></div>{runtime.filesystemStatus?.(selectedFolder.id) ? <span className="surface-badge">{runtime.filesystemStatus(selectedFolder.id)?.state}</span> : null}</div><div className="web-library-entry-list">{page?.items.length ? page.items.map(file => <div key={file.fileId} className="surface-card"><strong>{file.entry.name}</strong><small>{file.revision.mimeType} · {formatBytes(file.revision.size)} · {file.revisionCount} {ru ? 'версий' : 'revisions'}</small><small>{ru ? 'Доступность' : 'Availability'}: {file.availability}</small><div className="web-library-actions">{runtime.readFile ? <button className="secondary-button" onClick={() => void openFile(file)}>{ru ? 'Открыть' : 'Open'}</button> : null}{runtime.keepOnDevice ? <button className="secondary-button" onClick={() => void run(() => runtime.keepOnDevice!(selectedFolder.id, file.fileId))}>{ru ? 'Хранить на устройстве' : 'Keep on device'}</button> : null}{runtime.trash ? <button className="secondary-button" onClick={() => void run(() => runtime.trash!(file.entry.id, true))}>{ru ? 'В корзину' : 'Move to trash'}</button> : null}</div></div>) : <div className="web-library-empty">{ru ? 'Файлов в этой папке нет.' : 'No files in this folder.'}</div>}</div>{preview ? <div className="file-preview"><div><strong>{preview.name}</strong><small>{preview.mimeType} · {formatBytes(preview.size)}</small></div>{preview.text !== undefined ? <pre>{preview.text.slice(0, 200_000)}</pre> : <p>{ru ? 'Файл импортирован и доступен локально; встроенный просмотр для этого MIME ещё не подключён.' : 'The file is imported and available locally; an inline preview for this MIME is not connected yet.'}</p>}</div> : null}{page && page.total > page.items.length ? <p className="web-library-notice">{ru ? `Показана первая страница из ${page.total} записей.` : `Showing the first page of ${page.total} entries.`}</p> : null}{conflicts.length ? <div className="adapter-note"><span>!</span><div><strong>{ru ? `Открытых конфликтов: ${conflicts.length}` : `${conflicts.length} open conflicts`}</strong><small>{conflicts.slice(0, 3).map(conflict => `${conflict.kind}: ${conflict.details}`).join(' · ')}</small></div></div> : null}</> : <div className="web-library-reader-empty"><div><span>▣</span><p>{ru ? 'Создайте или выберите папку.' : 'Create or choose a folder.'}</p></div></div>}</div></div> : <div className="file-empty-state"><Icon name="folder" size={22} /><strong>{ru ? 'Папок пока нет' : 'No folders yet'}</strong><p>{ru ? 'Создайте папку на устройстве, чтобы импортировать и просматривать файлы.' : 'Create a device folder to import and browse files.'}</p></div>}
+    {error ? <span className="maps-notice" role="status">{error}</span> : null}
+    {query.trim() ? <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'Результаты поиска' : 'Search results'}</span>{searchResults.length ? searchResults.map(result => <button key={result.entry.id} className="web-library-entry" onClick={() => {
+      const id = result.entry.fileId ?? result.entry.childFolderId;
+      if (id) shell.openReference({ kind: 'file', id, label: result.entry.name });
+    }}><strong>{result.entry.name}</strong><small>{result.folder.name} · {Math.round(result.score * 100)}%</small></button>) : <div className="web-library-empty">{ru ? 'Совпадений нет.' : 'No matches.'}</div>}</div><div className="web-library-reader"><div className="web-library-reader-empty"><div><span>⌕</span><p>{ru ? 'Выберите папку, чтобы открыть локальный список.' : 'Choose a folder to open its local listing.'}</p></div></div></div></div> : folders.length ? <div className="web-library-layout"><div className="web-library-list"><span className="section-label">{ru ? 'Папки' : 'Folders'}</span>{folders.map(folder => <button key={folder.id} className={`web-library-entry${folder.id === selectedFolderId ? ' active' : ''}`} onClick={() => setSelectedFolderId(folder.id)}><strong>{folder.name}</strong><small>{folder.scope}</small></button>)}<div className="adapter-note"><span><Icon name="folder" size={16} /></span><div><strong>{ru ? 'Папка на устройстве' : 'Device folder'}</strong><small>{ru ? 'Файлы подключаются только после явного выбора владельца.' : 'Files are connected only after the owner explicitly chooses a folder.'}</small></div></div></div><div className="web-library-reader">{selectedFolder ? <><div className="web-library-reader-heading"><div><h2>{selectedFolder.name}</h2><p>{selectedFolder.scope} · {selectedFolder.revision} {ru ? 'последняя версия' : 'latest version'}</p></div>{runtime.filesystemStatus?.(selectedFolder.id) ? <span className="surface-badge">{runtime.filesystemStatus(selectedFolder.id)?.state}</span> : null}</div><div className="web-library-entry-list">{page?.items.length ? page.items.map(file => <div key={file.fileId} className="surface-card"><strong>{file.entry.name}</strong><small>{file.revision.mimeType} · {formatBytes(file.revision.size)} · {file.revisionCount} {ru ? 'версий' : 'revisions'}</small><small>{ru ? 'Доступность' : 'Availability'}: {file.availability}</small><div className="web-library-actions">{runtime.readFile ? <button className="secondary-button" onClick={() => void showFile(file)}>{ru ? 'Открыть' : 'Open'}</button> : null}{runtime.keepOnDevice ? <button className="secondary-button" onClick={() => void run(() => runtime.keepOnDevice!(selectedFolder.id, file.fileId))}>{ru ? 'Хранить на устройстве' : 'Keep on device'}</button> : null}{runtime.trash ? <button className="secondary-button" onClick={() => void run(() => runtime.trash!(file.entry.id, true))}>{ru ? 'В корзину' : 'Move to trash'}</button> : null}</div></div>) : <div className="web-library-empty">{ru ? 'Файлов в этой папке нет.' : 'No files in this folder.'}</div>}</div>{preview ? <div className="file-preview"><div><strong>{preview.name}</strong><small>{preview.mimeType} · {formatBytes(preview.size)}</small></div>{preview.text !== undefined ? <pre>{preview.text.slice(0, 200_000)}</pre> : <p>{ru ? 'Файл импортирован и доступен локально; встроенный просмотр для этого MIME ещё не подключён.' : 'The file is imported and available locally; an inline preview for this MIME is not connected yet.'}</p>}</div> : null}{page && page.total > page.items.length ? <p className="web-library-notice">{ru ? `Показана первая страница из ${page.total} записей.` : `Showing the first page of ${page.total} entries.`}</p> : null}{conflicts.length ? <div className="adapter-note"><span>!</span><div><strong>{ru ? `Открытых конфликтов: ${conflicts.length}` : `${conflicts.length} open conflicts`}</strong><small>{conflicts.slice(0, 3).map(conflict => `${conflict.kind}: ${conflict.details}`).join(' · ')}</small></div></div> : null}</> : <div className="web-library-reader-empty"><div><span>▣</span><p>{ru ? 'Создайте или выберите папку.' : 'Create or choose a folder.'}</p></div></div>}</div></div> : <div className="file-empty-state"><Icon name="folder" size={22} /><strong>{ru ? 'Папок пока нет' : 'No folders yet'}</strong><p>{ru ? 'Создайте папку на устройстве, чтобы импортировать и просматривать файлы.' : 'Create a device folder to import and browse files.'}</p></div>}
     <TypedReferenceDock tab={tab} shell={shell} t={t} />
   </div>;
 }
 
-
-type DesktopDocumentFile = Awaited<ReturnType<DesktopDocumentsRuntime['listSupportedFiles']>>[number];
-type DesktopDocumentReader = Awaited<ReturnType<DesktopDocumentsRuntime['open']>>;
-type DesktopDocumentRenderedPage = Awaited<ReturnType<DesktopDocumentReader['renderPage']>>;
-type DesktopDocumentSearchResult = Awaited<ReturnType<DesktopDocumentsRuntime['search']>>[number];
-type DesktopDocumentAnnotation = Awaited<ReturnType<DesktopDocumentsRuntime['listAnnotations']>>[number];
-
-function DocumentsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [runtime, setRuntime] = React.useState<DesktopDocumentsRuntime | undefined>(getDesktopDocumentsRuntime);
-  const [files, setFiles] = React.useState<readonly DesktopDocumentFile[]>([]);
-  const [recent, setRecent] = React.useState<readonly Awaited<ReturnType<DesktopDocumentsRuntime['recent']>>[number][]>([]);
-  const [selectedFileId, setSelectedFileId] = React.useState<string>();
-  const [reader, setReader] = React.useState<DesktopDocumentReader>();
-  const [pageNumber, setPageNumber] = React.useState(1);
-  const [rendered, setRendered] = React.useState<DesktopDocumentRenderedPage>();
-  const [imageUrl, setImageUrl] = React.useState<string>();
-  const [query, setQuery] = React.useState('');
-  const [results, setResults] = React.useState<readonly DesktopDocumentSearchResult[]>([]);
-  const [annotations, setAnnotations] = React.useState<readonly DesktopDocumentAnnotation[]>([]);
-  const [ocr, setOcr] = React.useState<Awaited<ReturnType<DesktopDocumentsRuntime['recognizePage']>>>();
-  const [ocrJob, setOcrJob] = React.useState<Awaited<ReturnType<DesktopDocumentsRuntime['recognizeDocument']>>>();
-  const [note, setNote] = React.useState('');
-  const [notice, setNotice] = React.useState('');
-  const ru = t.documents === 'Документы';
-  const labels = ru
-    ? { subtitle: 'PDF, EPUB, Markdown и текст · локальная работа без сети', search: 'Искать в документах', open: 'Открыть', previous: 'Назад', next: 'Далее', bookmark: 'Закладка', addNote: 'Сохранить заметку', note: 'Приватная заметка к странице', ocrPage: 'Распознать страницу', ocrDocument: 'Распознать документ', outline: 'Оглавление', annotations: 'Аннотации', recent: 'Недавние', files: 'Доступные файлы', noFiles: 'Поддерживаемых документов нет.', choose: 'Выберите документ для чтения.', noRuntime: 'Просмотрщик пока недоступен.', boundary: 'Выберите документ в локальном хранилище. Внешнее распознавание и загрузка в AI не выполняются.', page: 'Страница', chapter: 'Глав', safe: 'БЕЗОПАСНЫЙ ТЕКСТ', raster: 'ИЗОБРАЖЕНИЕ', saved: 'Сохранено локально', noResults: 'Совпадений нет.', ocrDone: 'Распознавание сохранено локально.' }
-    : { subtitle: 'PDF, EPUB, Markdown and text · works offline', search: 'Search documents', open: 'Open', previous: 'Previous', next: 'Next', bookmark: 'Bookmark', addNote: 'Save note', note: 'Private page note', ocrPage: 'Recognize page', ocrDocument: 'Recognize document', outline: 'Outline', annotations: 'Annotations', recent: 'Recent', files: 'Available files', noFiles: 'No supported documents.', choose: 'Choose a document to read.', noRuntime: 'Reader is not available yet.', boundary: 'Choose a document from local storage. External OCR and AI uploads are not used.', page: 'Page', chapter: 'chapters', safe: 'SAFE TEXT', raster: 'IMAGE', saved: 'Saved locally', noResults: 'No matches.', ocrDone: 'OCR saved locally.' };
-  if (ru) {
-    labels.noRuntime = 'Просмотрщик пока недоступен.';
-    labels.boundary = 'Выберите документ в локальном хранилище. Внешнее распознавание и загрузка в AI не используются.';
-    labels.safe = 'БЕЗОПАСНЫЙ ТЕКСТ';
-    labels.raster = 'ИЗОБРАЖЕНИЕ';
-  }
-
-  React.useEffect(() => subscribeDesktopDocumentsRuntime(() => setRuntime(getDesktopDocumentsRuntime())), []);
-  const refresh = React.useCallback(async () => {
-    if (!runtime) { setFiles([]); setRecent([]); return; }
-    try {
-      const [nextFiles, nextRecent] = await Promise.all([runtime.listSupportedFiles(), runtime.recent()]);
-      setFiles(nextFiles); setRecent(nextRecent);
-      setSelectedFileId(current => tab.object?.id && nextFiles.some(file => file.fileId === tab.object?.id) ? tab.object.id : current && nextFiles.some(file => file.fileId === current) ? current : nextFiles[0]?.fileId);
-      setNotice('');
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  }, [runtime, tab.object?.id]);
-  React.useEffect(() => { void refresh(); return () => { reader?.close(); }; }, [refresh]);
-  React.useEffect(() => {
-    if (!runtime) return undefined;
-    const unsubscribe = runtime.subscribe?.(() => { void refresh(); });
-    return unsubscribe;
-  }, [refresh, runtime]);
-  React.useEffect(() => {
-    if (!reader || !reader.pages.length) { setRendered(undefined); setImageUrl(undefined); return undefined; }
-    const page = Math.max(1, Math.min(pageNumber, reader.pages.length));
-    if (page !== pageNumber) { setPageNumber(page); return undefined; }
-    let active = true;
-    void reader.renderPage(page, { scale: 1 }).then(value => { if (active) { setRendered(value); setImageUrl(value.imageBytes && value.mimeType ? documentBytesToDataUrl(value.imageBytes, value.mimeType) : undefined); } }).catch(reason => { if (active) setNotice(reason instanceof Error ? reason.message : String(reason)); });
-    return () => { active = false; };
-  }, [reader, pageNumber]);
-
-  const openFile = async (fileId: string) => {
-    if (!runtime) return;
-    try {
-      const nextReader = await runtime.open(fileId);
-      const [nextProgress, nextAnnotations] = await Promise.all([runtime.progress(nextReader.document.documentId), runtime.listAnnotations(nextReader.document.documentId)]);
-      reader?.close(); setReader(nextReader); setAnnotations(nextAnnotations); setOcr(undefined); setOcrJob(undefined);
-      const chapterIndex = nextProgress?.locator.chapterId ? nextReader.pages.findIndex(page => page.locator.chapterId === nextProgress.locator.chapterId) : -1;
-      setPageNumber(Math.max(1, Math.min(nextReader.pages.length, nextProgress?.locator.page ?? (chapterIndex >= 0 ? chapterIndex + 1 : 1)))); setNotice('');
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const localRuntime = runtime as DesktopLocalDocumentsRuntime | undefined;
-  const createLocalDocument = async () => {
-    if (!localRuntime?.createText) { setNotice(labels.noRuntime); return; }
-    try {
-      const ref = await localRuntime.createText({ filename: `Untitled-${new Date().toISOString().slice(0, 10)}.md`, content: '# New Keystone document\n\n' });
-      await refresh(); setSelectedFileId(ref.fileId); await openFile(ref.fileId);
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const importLocalDocument = async (file: { readonly name: string; readonly mimeType: string; readonly bytes: Uint8Array }) => {
-    if (!localRuntime?.importFile) { setNotice(labels.noRuntime); return; }
-    try {
-      const ref = await localRuntime.importFile({ filename: file.name, mimeType: file.mimeType || 'application/octet-stream', bytes: file.bytes });
-      await refresh(); setSelectedFileId(ref.fileId); await openFile(ref.fileId);
-    } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const pickDocument = async () => {
-    try { const file = await pickDesktopFile('document'); if (file) await importLocalDocument(file); }
-    catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); }
-  };
-  const dropDocument = async (file: File) => importLocalDocument({ name: file.name, mimeType: file.type || 'application/octet-stream', bytes: new Uint8Array(await file.arrayBuffer()) });
-  const currentPage = reader?.pages[pageNumber - 1];
-  const hasDocuments = files.length > 0 || Boolean(reader);
-  const saveProgress = async () => { if (!runtime || !reader || !currentPage) return; try { await runtime.saveProgress(reader.document.documentId, currentPage.locator); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const addBookmark = async () => { if (!runtime || !reader || !currentPage) return; try { const value = await runtime.addBookmark({ documentId: reader.document.documentId, locator: currentPage.locator, label: currentPage.text.slice(0, 80) }); setAnnotations(current => [...current.filter(item => item.id !== value.id), value]); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const addNote = async () => { if (!runtime || !reader || !currentPage || !note.trim()) return; try { const value = await runtime.addNote({ documentId: reader.document.documentId, locator: currentPage.locator, body: note.trim() }); setAnnotations(current => [...current.filter(item => item.id !== value.id), value]); setNote(''); setNotice(labels.saved); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const runSearch = async (event: React.FormEvent) => { event.preventDefault(); if (!runtime || !query.trim()) { setResults([]); return; } try { setResults(reader ? await reader.search(query.trim(), { limit: 64 }) : await runtime.search(query.trim(), { limit: 64 })); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const recognizePage = async () => { if (!runtime || !reader || !currentPage) return; try { setOcr(await runtime.recognizePage(reader.document.documentId, pageNumber)); setNotice(labels.ocrDone); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-  const recognizeDocument = async () => { if (!runtime || !reader) return; try { const value = await runtime.recognizeDocument(reader.document.documentId, { onProgress: setOcrJob }); setOcrJob(value); setNotice(labels.ocrDone); } catch (reason) { setNotice(reason instanceof Error ? reason.message : String(reason)); } };
-
-  if (!runtime) return <div className="object-surface"><div className="surface-kicker"><span className="surface-icon"><Icon name="document" size={15} /></span><span>{t.documents}</span><span className="surface-badge">{ru ? 'НЕ ПОДКЛЮЧЕНО' : 'NOT CONNECTED'}</span></div><h1>{t.documents}</h1><p className="surface-description">{labels.noRuntime}</p><div className="adapter-note"><span><Icon name="info" size={17} /></span><div><strong>{ru ? 'Просмотрщик пока недоступен' : 'Reader is not available yet'}</strong><small>{labels.boundary}</small></div></div></div>;
-
-  return <div className="object-surface documents-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const file = event.dataTransfer.files[0]; if (file) void dropDocument(file); }}>
-    <div className="surface-kicker"><span className="surface-icon"><Icon name="document" size={15} /></span><span>{t.documents}</span><span className="surface-badge">{ru ? 'ЛОКАЛЬНО' : 'LOCAL-FIRST'}</span></div>
-    <div className="web-library-heading"><div><h1>{reader?.document.title ?? t.documents}</h1><p className="surface-description">{labels.subtitle}</p></div><div className="web-library-actions"><button className="secondary-button" type="button" onClick={() => void refresh()}><Icon name="refresh" size={14} /> {t.refresh}</button><button className="primary-button" type="button" onClick={() => void createLocalDocument()}><Icon name="plus" size={14} /> {ru ? 'Новый Markdown' : 'New Markdown'}</button><button className="secondary-button" type="button" onClick={() => void pickDocument()}><Icon name="upload" size={14} /> {ru ? 'Импортировать' : 'Import'}</button></div></div>
-    <form className="web-library-toolbar" onSubmit={runSearch}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><button className="primary-button" type="submit" aria-label={labels.search}><Icon name="search" size={14} /></button><span>{files.length} · {recent.length} {labels.recent.toLowerCase()}</span></form>
-    {notice ? <p className="web-library-notice">{notice}</p> : null}
-    {hasDocuments ? <div className="web-library-layout documents-layout">
-      <div className="web-library-list"><span className="section-label">{labels.files}</span>{files.length ? files.map(file => <button key={file.fileId} className={`web-library-entry${file.fileId === selectedFileId ? ' active' : ''}`} onClick={() => { setSelectedFileId(file.fileId); void openFile(file.fileId); }}><strong>{file.filename}</strong><small>{file.mimeType} · {formatBytes(file.size)}</small></button>) : <div className="web-library-empty">{labels.noFiles}</div>}{recent.length ? <><span className="section-label">{labels.recent}</span>{recent.slice(0, 8).map(item => <button key={item.documentId} className="web-library-entry" onClick={() => void openFile(item.file.fileId)}><strong>{item.title}</strong><small>{item.format} · {item.pageCount} {labels.page.toLowerCase()}</small></button>)}</> : null}<div className="adapter-note"><span><Icon name="folder" size={16} /></span><div><strong>{ru ? 'Приватные данные' : 'Private data'}</strong><small>{ru ? 'Прогресс и заметки принадлежат владельцу устройства и синхронизируются только по его явному запросу.' : 'Progress and notes belong to the device owner and sync only after an explicit request.'}</small></div></div></div>
-      <div className="web-library-reader">{reader && currentPage ? <><div className="web-library-reader-heading"><div><h2>{reader.document.title}</h2><p>{reader.document.format} · {reader.document.pageCount} {labels.page.toLowerCase()} · {reader.document.chapterCount} {labels.chapter}</p></div><span className="surface-badge">{rendered?.mode === 'RASTER' ? labels.raster : labels.safe}</span></div><div className="web-library-reader-footer"><div className="web-library-actions"><button className="secondary-button" disabled={pageNumber <= 1} onClick={() => setPageNumber(value => Math.max(1, value - 1))}>{labels.previous}</button><span className="surface-badge">{labels.page} {pageNumber}/{reader.pages.length}</span><button className="secondary-button" disabled={pageNumber >= reader.pages.length} onClick={() => setPageNumber(value => Math.min(reader.pages.length, value + 1))}>{labels.next}</button><button className="secondary-button" onClick={() => void saveProgress()}>↧</button><button className="secondary-button" onClick={() => void addBookmark()}>☆ {labels.bookmark}</button></div><code>{reader.document.revision.revisionId}</code></div>{imageUrl ? <img className="document-reader-image" src={imageUrl} alt={`${reader.document.title} ${labels.page} ${pageNumber}`} /> : null}<div className="web-library-reader-content document-reader-content"><pre>{currentPage.text || (ru ? 'Текстовый слой отсутствует; используйте локальное распознавание.' : 'No text layer; use local OCR.')}</pre></div>{ocr ? <div className="adapter-note"><span><Icon name="folder" size={16} /></span><div><strong>OCR · {ocr.engine}</strong><small>{ocr.text || (ru ? 'Текст не распознан.' : 'No text recognized.')}</small></div></div> : null}<div className="web-library-actions"><button className="secondary-button" onClick={() => void recognizePage()} disabled={currentPage.textLayer === 'EXTRACTED'}>{labels.ocrPage}</button><button className="secondary-button" onClick={() => void recognizeDocument()}>{labels.ocrDocument}</button>{ocrJob ? <span className="surface-badge">{ocrJob.state} · {ocrJob.completedPages}/{ocrJob.totalPages}</span> : null}</div><div className="document-note-row"><input value={note} onChange={event => setNote(event.target.value)} placeholder={labels.note}/><button className="primary-button" onClick={() => void addNote()} disabled={!note.trim()}>{labels.addNote}</button></div>{reader.outline.length ? <section className="document-section"><span className="section-label">{labels.outline}</span>{reader.outline.slice(0, 64).map(entry => <button className="document-outline-entry" key={entry.id} onClick={() => { if (entry.page) setPageNumber(entry.page); }}>{entry.title}{entry.page ? ` · ${labels.page} ${entry.page}` : ''}</button>)}</section> : null}<section className="document-section"><span className="section-label">{labels.annotations} · {annotations.length}</span>{annotations.slice(0, 32).map(annotation => <div className="document-annotation" key={annotation.id}><strong>{annotation.kind}</strong><span>{annotation.selectedText ?? annotation.body ?? annotation.label ?? ''}</span></div>)}</section></> : <div className="web-library-reader-empty"><div><span>▥</span><p>{labels.choose}</p></div></div>}</div>
-    </div> : <div className="document-empty-state"><Icon name="document" size={22} /><strong>{labels.noFiles}</strong><p>{ru ? 'Создайте заметку или импортируйте PDF, EPUB, Markdown или текстовый файл, чтобы начать чтение.' : 'Create a note or import a PDF, EPUB, Markdown, or text file to start reading.'}</p></div>}
-    {results.length ? <section className="document-search-results"><span className="section-label">{labels.search}</span>{results.map(result => <button key={`${result.documentId}:${result.locator.page ?? result.locator.chapterId ?? result.snippet}`} onClick={() => { if (result.locator.page) setPageNumber(result.locator.page); }}>{result.title} · {result.source} · {result.snippet}</button>)}</section> : query.trim() ? <p className="web-library-notice">{labels.noResults}</p> : null}
-    <TypedReferenceDock tab={tab} shell={shell} t={t} />
-  </div>;
-}
-
-function documentBytesToDataUrl(bytes: Uint8Array, mimeType: string): string | undefined {
-  if (typeof btoa !== 'function') return undefined;
-  let binary = '';
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
-  return `data:${mimeType};base64,${btoa(binary)}`;
-}
 
 type DesktopInboxView = 'ALL' | 'UNREAD' | 'NEEDS_ACTION' | 'SNOOZED' | 'ARCHIVE';
 type DesktopInboxResult = Awaited<ReturnType<DesktopInboxRuntime['inbox']['list']>>;
+
 
 function InboxSurface({ t }: { t: Copy }) {
   const [runtime, setRuntime] = React.useState<DesktopInboxRuntime | undefined>(getDesktopInboxRuntime);
@@ -1380,12 +1303,25 @@ function HomeSurface({ shell, t, settings, onSettingChange }: { shell: DesktopSh
   const hasToday = todayTasks.length > 0;
   const hasRecent = recentDocuments.length > 0 || recentCaptures.length > 0;
   const hasHomeColumns = (hasToday && !hiddenSections.has('today')) || (hasRecent && !hiddenSections.has('recent'));
-  return <div className={`home-surface home-customizable home-density-${settings.values['home.density']}`} data-keystone-region="home" data-home-hidden={Array.from(hiddenSections).join(' ')} data-home-order={sectionOrder.join(' ')}><div className="surface-kicker"><span className="surface-icon"><Icon name="home" size={15} /></span><span>{t.local}</span><span className="surface-badge"><Icon name="privacy" size={12} /> {t.privacy}</span></div><div className="home-heading"><div><span className="section-label">{t.home}</span><h1>{profile ? `${ru ? 'Добро пожаловать, ' : 'Welcome, '}${profile.displayName}` : t.home}</h1><p className="surface-description">{ru ? 'Ваше рабочее пространство на устройстве — без фиктивных данных и обязательной сети.' : 'Your on-device workspace — without fabricated data or a required network.'}</p></div><div className="home-heading-actions"><span className="home-local-status"><i className="status-light" /> {t.saved}</span><button type="button" className="quiet-button" onClick={openCustomize}><Icon name="sliders" size={14} /> {ru ? 'Настроить' : 'Customize'}</button></div></div>
-    {!hasContinue && !hasHomeColumns && <section className="home-section" data-home-section="start"><div className="home-section-heading"><div><span className="section-label">{ru ? 'Начало' : 'Get started'}</span><h2>{ru ? 'С чего начать' : 'Where to start'}</h2></div></div><div className="home-continue-grid">{([
-      ['task', ru ? 'Новая задача' : 'New task', ru ? 'Запишите, что нужно сделать' : 'Write down what needs doing', { kind: 'tasks', id: 'tasks', label: 'Tasks' }],
-      ['capture', t.capture, ru ? 'Сохраните текст, ссылку или файл' : 'Save text, a link or a file', { kind: 'capture', id: 'capture', label: t.capture }],
-      ['document', t.documents, ru ? 'Создайте заметку или импортируйте файл' : 'Write a note or import a file', { kind: 'document', id: 'documents', label: t.documents }],
-    ] as const).map(([icon, title, detail, ref]) => <button type="button" className="home-continue-card" key={ref.id} onClick={() => open(ref)}><span className="home-card-icon"><Icon name={icon} size={18} /></span><span><strong>{title}</strong><small>{detail}</small></span><Icon name="chevron-right" size={15} /></button>)}</div></section>}
+  return <div className={`home-surface home-customizable home-density-${settings.values['home.density']}`} data-keystone-region="home" data-home-hidden={Array.from(hiddenSections).join(' ')} data-home-order={sectionOrder.join(' ')}>
+    <div className="home-heading">
+      <div>
+        <h1>{profile ? `${ru ? 'Добро пожаловать, ' : 'Welcome, '}${profile.displayName}` : t.home}</h1>
+        <p className="surface-description">{ru ? 'Ваше рабочее пространство на этом устройстве.' : 'Your workspace on this device.'}</p>
+      </div>
+      <div className="home-heading-actions"><button type="button" className="quiet-button" onClick={openCustomize}><Icon name="sliders" size={14} /> {ru ? 'Настроить' : 'Customize'}</button></div>
+    </div>
+    {!hasContinue && !hasHomeColumns && <section className="home-section home-start" data-home-section="start">
+      <div className="home-section-heading"><h2>{ru ? 'Быстрые действия' : 'Quick actions'}</h2></div>
+      <div className="home-continue-grid">{([
+        ['task', ru ? 'Новая задача' : 'New task', ru ? 'Запишите, что нужно сделать' : 'Write down what needs doing', { kind: 'tasks', id: 'new-task', label: ru ? 'Новая задача' : 'New task' }],
+        ['capture', t.capture, ru ? 'Сохраните текст, ссылку или файл' : 'Save text, a link or a file', { kind: 'capture', id: 'capture', label: t.capture }],
+        ['document', ru ? 'Новый документ' : 'New document', ru ? 'Начните с черновика Markdown' : 'Start a Markdown draft', { kind: 'document', id: 'new-document', label: ru ? 'Новый документ' : 'New document' }],
+        ['files', t.files, ru ? 'Откройте папки и импортируйте файлы' : 'Browse folders and import files', { kind: 'file', id: 'file', label: t.files }],
+        ['search', t.search, ru ? 'Найдите объекты на устройстве' : 'Find items on this device', { kind: 'settings', id: 'search', label: t.search }],
+        ['bot', t.localAI, ru ? 'Откройте чат с локальной моделью' : 'Open a chat with a local model', { kind: 'ai', id: 'ai', label: t.localAI }],
+      ] as const).map(([icon, title, detail, ref]) => <button type="button" className="home-continue-card" key={ref.id} onClick={() => open(ref)}><span className="home-card-icon"><Icon name={icon} size={18} /></span><span><strong>{title}</strong><small>{detail}</small></span><Icon name="chevron-right" size={15} /></button>)}</div>
+    </section>}
     {!hiddenSections.has('continue') && hasContinue && <section className="home-section" data-home-section="continue" style={sectionStyle('continue')}><div className="home-section-heading"><div><span className="section-label">{ru ? 'Продолжить' : 'Continue'}</span><h2>{ru ? 'С того места, где остановились' : 'Pick up where you left off'}</h2></div><Icon name="arrow-right" size={18} /></div><div className="home-continue-grid">{continueItems.map(item => <button type="button" className="home-continue-card" key={item.key} onClick={() => open(item.ref)}><span className="home-card-icon"><Icon name={item.icon} size={18} /></span><span><strong>{item.title}</strong><small>{item.detail}</small></span><Icon name="chevron-right" size={15} /></button>)}</div></section>}
     {hasHomeColumns && <div className="home-columns">{!hiddenSections.has('today') && hasToday && <section className="home-section home-today" data-home-section="today" style={sectionStyle('today')}><div className="home-section-heading"><div><span className="section-label">{ru ? 'Сегодня' : 'Today'}</span><h2>{ru ? 'План на сегодня' : 'Plan for today'}</h2></div><Icon name="calendar" size={18} /></div><div className="home-list">{todayTasks.map(task => <button type="button" key={task.id} onClick={() => open({ kind: 'tasks', id: task.id, label: task.title })}><span className="home-list-check"><Icon name={task.status === 'COMPLETED' ? 'check-circle' : 'circle'} size={15} /></span><span><strong>{task.title}</strong><small>{[formatTaskDate(task.due, ru ? 'ru' : 'en'), taskPriorityLabel(task.priority, ru)].filter(Boolean).join(' · ')}</small></span><Icon name="chevron-right" size={14} /></button>)}</div></section>}
       {!hiddenSections.has('recent') && hasRecent && <section className="home-section home-recent" data-home-section="recent" style={sectionStyle('recent')}><div className="home-section-heading"><div><span className="section-label">{ru ? 'Недавнее' : 'Recent'}</span><h2>{ru ? 'Локальная активность' : 'Local activity'}</h2></div><Icon name="activity" size={18} /></div><div className="home-list">{recentDocuments.slice(0, 3).map(item => <button type="button" key={`doc:${item.documentId}`} onClick={() => open({ kind: 'document', id: item.file.fileId, label: item.title })}><span className="home-list-icon"><Icon name="document" size={15} /></span><span><strong>{item.title}</strong><small>{item.format} · {formatTimestamp(item.openedAt, ru)}</small></span><Icon name="chevron-right" size={14} /></button>)}{recentCaptures.slice(0, 3).map(item => <button type="button" key={`capture:${item.id}`} onClick={() => open({ kind: 'capture', id: item.id, label: item.title })}><span className="home-list-icon"><Icon name="capture" size={15} /></span><span><strong>{item.title}</strong><small>{captureStateLabel(item.state, ru)} · {captureSourceLabel(item.provenance.source.kind, ru)}</small></span><Icon name="chevron-right" size={14} /></button>)}</div></section>}
@@ -1441,32 +1377,32 @@ function MusicSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     if (!runtime || !tracks[index]) return;
     setBusy(true); setNotice('');
     try { await runtime.playback.setEligibleQueue(tracks, index); await runtime.playback.play(); setPlayingId(tracks[index].id); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Воспроизведение недоступно.' : 'Playback is unavailable.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Воспроизведение недоступно.' : 'Playback is unavailable.'))); }
     finally { setBusy(false); }
   };
   const save = async (trackId: string) => {
     if (!runtime) return;
     try { await runtime.music.saveToLibrary(trackId); await refresh(); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось сохранить трек.' : 'Could not save the track.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось сохранить трек.' : 'Could not save the track.'))); }
   };
   const importAudioFile = async (file: { readonly name: string; readonly mimeType: string; readonly bytes: Uint8Array }) => {
     if (!runtime?.importTrack) return;
     setBusy(true); setNotice('');
     try { await runtime.importTrack({ filename: file.name, mimeType: file.mimeType, bytes: file.bytes }); await refresh(); setNotice(ru ? 'Аудио импортировано локально.' : 'Audio imported locally.'); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось импортировать аудио.' : 'Audio import failed.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось импортировать аудио.' : 'Audio import failed.'))); }
     finally { setBusy(false); }
   };
   const importAudio = async () => {
     if (!runtime?.importTrack) return;
     try { const file = await pickDesktopFile('audio'); if (file) await importAudioFile(file); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось открыть выбор аудио.' : 'Could not open the audio picker.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось открыть выбор аудио.' : 'Could not open the audio picker.'))); }
   };
   const importDroppedAudio = async (file: File) => importAudioFile({ name: file.name, mimeType: file.type || 'application/octet-stream', bytes: new Uint8Array(await file.arrayBuffer()) });
   if (!runtime) return <div className="media-surface"><MediaSurfaceHeading icon="rss" title={t.music} detail={ru ? 'Музыкальные объекты Keystone и локальная библиотека.' : 'Keystone music objects and the local library.'} /><MediaAdapterEmpty icon="rss" title={ru ? 'Музыка не подключена' : 'Music is not connected'} detail={ru ? 'Подключите локальную библиотеку или импортируйте аудио. Пустые треки не создаются автоматически.' : 'Connect a local library or import audio. Empty tracks are never created automatically.'} /></div>;
   return <div className="media-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const file = event.dataTransfer.files[0]; if (file) void importDroppedAudio(file); }}><MediaSurfaceHeading icon="rss" title={t.music} detail={ru ? 'Локальная музыкальная библиотека и воспроизведение.' : 'Local music library and playback.'} action={<div className="media-heading-actions"><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button>{runtime.importTrack ? <button className="primary-button" disabled={busy} onClick={() => void importAudio()}>{ru ? 'Импортировать аудио' : 'Import audio'}</button> : null}</div>} />
-    <div className="media-summary"><span><strong>{tracks.length}</strong><small>{ru ? 'треков' : 'tracks'}</small></span><span><strong>{library.length}</strong><small>{ru ? 'в библиотеке' : 'in library'}</small></span><span><strong>{ru ? 'На устройстве' : 'On this device'}</strong><small>{ru ? 'источник воспроизведения' : 'playback source'}</small></span></div>
+    <div className="media-summary"><span><strong>{tracks.length}</strong><small>{ru ? ruPlural(tracks.length, 'трек', 'трека', 'треков') : tracks.length === 1 ? 'track' : 'tracks'}</small></span><span><strong>{library.length}</strong><small>{ru ? 'в библиотеке' : 'in library'}</small></span><span><strong>{ru ? 'На устройстве' : 'On this device'}</strong><small>{ru ? 'источник воспроизведения' : 'playback source'}</small></span></div>
     {playbackState.currentId ? <MediaControlBar state={playbackState} ru={ru} onSeek={value => void runtime.playback.seek(value)} onVolume={value => runtime.setVolume?.(value)} /> : null}
-    {tracks.length ? <div className="media-list">{tracks.slice(0, 100).map((track, index) => <div className={`media-row${playingId === track.id ? ' active' : ''}`} key={track.id}><span className="media-row-icon"><Icon name={playingId === track.id ? 'pause' : 'play'} size={16} /></span><span className="media-row-copy"><strong>{track.payload.title}</strong><small>{track.payload.artistIds.join(', ')} · {formatMediaDuration(track.payload.durationMs)} · {track.payload.codec}</small></span><button className="secondary-button" disabled={busy} onClick={() => playingId === track.id ? void runtime.playback.pause().then(() => setPlayingId(undefined)) : void play(index)}>{playingId === track.id ? (ru ? 'Пауза' : 'Pause') : (ru ? 'Играть' : 'Play')}</button><button className="quiet-button" onClick={() => void save(track.payload.trackId)} disabled={library.some(item => item.payload.trackId === track.payload.trackId)}>{library.some(item => item.payload.trackId === track.payload.trackId) ? (ru ? 'Сохранено' : 'Saved') : (ru ? 'В библиотеку' : 'Save')}</button></div>)}</div> : <MediaAdapterEmpty icon="rss" title={ru ? 'Локальных треков пока нет' : 'No local tracks yet'} detail={ru ? 'Импортируйте аудио, чтобы оно появилось в библиотеке устройства.' : 'Import audio to add it to the device library.'} />}
+    {tracks.length ? <div className="media-list">{tracks.slice(0, 100).map((track, index) => <div className={`media-row${playingId === track.id ? ' active' : ''}`} key={track.id}><span className="media-row-icon"><Icon name={playingId === track.id ? 'pause' : 'play'} size={16} /></span><span className="media-row-copy"><strong>{track.payload.title}</strong><small>{formatMediaDuration(track.payload.durationMs)} · {track.payload.codec.toUpperCase()}</small></span><button className="secondary-button" disabled={busy} onClick={() => playingId === track.id ? void runtime.playback.pause().then(() => setPlayingId(undefined)) : void play(index)}>{playingId === track.id ? (ru ? 'Пауза' : 'Pause') : (ru ? 'Играть' : 'Play')}</button><button className="quiet-button" onClick={() => void save(track.payload.trackId)} disabled={library.some(item => item.payload.trackId === track.payload.trackId)}>{library.some(item => item.payload.trackId === track.payload.trackId) ? (ru ? 'Сохранено' : 'Saved') : (ru ? 'В библиотеку' : 'Save')}</button></div>)}</div> : <MediaAdapterEmpty icon="rss" title={ru ? 'Локальных треков пока нет' : 'No local tracks yet'} detail={ru ? 'Импортируйте аудио, чтобы оно появилось в библиотеке устройства.' : 'Import audio to add it to the device library.'} />}
     {notice && <p className="surface-notice" role="status">{notice}</p>}
     <TypedReferenceDock tab={tab} shell={shell} t={t} />
   </div>;
@@ -1485,7 +1421,7 @@ function VideoSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
   const refresh = React.useCallback(async () => {
     if (!runtime) { setVideos([]); return; }
     try { setVideos((await runtime.videos.videos()).filter(video => !video.payload.shortForm)); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Видео недоступно.' : 'Video is unavailable.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Видео недоступно.' : 'Video is unavailable.'))); }
   }, [runtime, ru]);
   React.useEffect(() => subscribeDesktopVideoRuntime(() => setRuntime(getDesktopVideoRuntime())), []);
   React.useEffect(() => { if (!runtime?.subscribe) return undefined; return runtime.subscribe(() => { const next = runtime.state?.(); if (next) { setPlaybackState(next); setPlayingId(next.playing ? next.currentId : undefined); } setNativePlayback(runtime.nativePlayback?.() ?? false); }); }, [runtime]);
@@ -1495,28 +1431,28 @@ function VideoSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     setSelectedVideo(video);
     setBusy(true); setNotice('');
     try { await runtime.playback.play(video); setPlayingId(video.id); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Воспроизведение недоступно.' : 'Playback is unavailable.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Воспроизведение недоступно.' : 'Playback is unavailable.'))); }
     finally { setBusy(false); }
   };
   const importVideo = async () => {
     if (!runtime?.importVideo) return;
     setBusy(true); setNotice('');
     try { const file = await pickDesktopFile('video'); if (file) { await runtime.importVideo({ filename: file.name, mimeType: file.mimeType, bytes: file.bytes }); await refresh(); setNotice(ru ? 'Видео импортировано локально.' : 'Video imported locally.'); } }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось импортировать видео.' : 'Video import failed.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось импортировать видео.' : 'Video import failed.'))); }
     finally { setBusy(false); }
   };
   const importDroppedVideo = async (file: File) => {
     if (!runtime?.importVideo) return;
     setBusy(true); setNotice('');
     try { await runtime.importVideo({ filename: file.name, mimeType: file.type || 'application/octet-stream', bytes: new Uint8Array(await file.arrayBuffer()) }); await refresh(); setNotice(ru ? 'Видео импортировано локально.' : 'Video imported locally.'); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось импортировать видео.' : 'Video import failed.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось импортировать видео.' : 'Video import failed.'))); }
     finally { setBusy(false); }
   };
   const videoRef = React.useCallback((element: HTMLVideoElement | null) => runtime?.attachVideoElement?.(element), [runtime]);
   if (!runtime) return <div className="media-surface"><MediaSurfaceHeading icon="play" title={t.video} detail={ru ? 'Видео Keystone и локальное воспроизведение.' : 'Keystone video and local playback.'} /><MediaAdapterEmpty icon="play" title={ru ? 'Видео пока недоступно' : 'Video is not available yet'} detail={ru ? 'Добавьте видеофайл или подключите локальную библиотеку.' : 'Add a video file or connect a local library.'} /></div>;
   return <div className="media-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const file = event.dataTransfer.files[0]; if (file) void importDroppedVideo(file); }}><MediaSurfaceHeading icon="play" title={t.video} detail={ru ? 'Полноразмерное видео из локальной библиотеки.' : 'Full-length video from the local library.'} action={<div className="media-heading-actions"><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button>{runtime.importVideo ? <button className="primary-button" disabled={busy} onClick={() => void importVideo()}>{ru ? 'Импортировать видео' : 'Import video'}</button> : null}</div>} />
     {selectedVideo ? <div className="media-player">{nativePlayback ? <NativeVideoStage title={selectedVideo.payload.title} ru={ru} /> : <video ref={videoRef} className="desktop-media-video" controls playsInline aria-label={selectedVideo.payload.title} />}<MediaControlBar state={playbackState} ru={ru} onSeek={value => void runtime.playback.seek(value)} onVolume={value => runtime.setVolume?.(value)} onToggleMute={runtime.setMuted ? () => runtime.setMuted?.(!playbackState.muted) : undefined} onFullscreen={!nativePlayback && runtime.toggleFullscreen ? () => void runtime.toggleFullscreen?.() : undefined} /></div> : null}
-    {videos.length ? <div className="media-list">{videos.slice(0, 100).map(video => <div className={`media-row media-video-row${playingId === video.id ? ' active' : ''}`} key={video.id}><span className="media-row-icon"><Icon name={playingId === video.id ? 'pause' : 'play'} size={16} /></span><span className="media-row-copy"><strong>{video.payload.title}</strong><small>{formatMediaDuration(video.payload.durationMs)} · {video.payload.videoStream.container}/{video.payload.videoStream.codec} · {video.author.slice(0, 16)}</small></span><button className="secondary-button" disabled={busy} onClick={() => playingId === video.id ? void runtime.playback.pause().then(() => setPlayingId(undefined)) : void play(video)}>{playingId === video.id ? (ru ? 'Пауза' : 'Pause') : (ru ? 'Открыть' : 'Play')}</button><button className="quiet-button" disabled={playingId !== video.id} onClick={() => void runtime.playback.setSaved(true).then(() => setNotice(ru ? 'Видео сохранено локально.' : 'Video saved locally.')).catch(error => setNotice(error instanceof Error ? error.message : 'Save failed'))}>{ru ? 'Сохранить' : 'Save'}</button></div>)}</div> : <MediaAdapterEmpty icon="play" title={ru ? 'Локальных видео пока нет' : 'No local videos yet'} detail={ru ? 'Импортируйте видео, чтобы добавить его в библиотеку устройства.' : 'Import a video to add it to the device library.'} />}
+    {videos.length ? <div className="media-list">{videos.slice(0, 100).map(video => <div className={`media-row media-video-row${playingId === video.id ? ' active' : ''}`} key={video.id}><span className="media-row-icon"><Icon name={playingId === video.id ? 'pause' : 'play'} size={16} /></span><span className="media-row-copy"><strong>{video.payload.title}</strong><small>{formatMediaDuration(video.payload.durationMs)} · {video.payload.videoStream.container.toUpperCase()}</small></span><button className="secondary-button" disabled={busy} onClick={() => playingId === video.id ? void runtime.playback.pause().then(() => setPlayingId(undefined)) : void play(video)}>{playingId === video.id ? (ru ? 'Пауза' : 'Pause') : (ru ? 'Открыть' : 'Play')}</button><button className="quiet-button" disabled={playingId !== video.id} onClick={() => void runtime.playback.setSaved(true).then(() => setNotice(ru ? 'Видео сохранено локально.' : 'Video saved locally.')).catch(error => setNotice(error instanceof Error ? error.message : 'Save failed'))}>{ru ? 'Сохранить' : 'Save'}</button></div>)}</div> : <MediaAdapterEmpty icon="play" title={ru ? 'Локальных видео пока нет' : 'No local videos yet'} detail={ru ? 'Импортируйте видео, чтобы добавить его в библиотеку устройства.' : 'Import a video to add it to the device library.'} />}
     {notice && <p className="surface-notice" role="status">{notice}</p>}
     <TypedReferenceDock tab={tab} shell={shell} t={t} />
   </div>;
@@ -1534,7 +1470,7 @@ function ShortsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
   const refresh = React.useCallback(async () => {
     if (!runtime) { setItems([]); return; }
     try { const next = await runtime.shorts.list(); setItems(next); runtime.feed.setItems(next); setCurrentId(next[0]?.id); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Лента Shorts недоступна.' : 'Shorts are unavailable.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Лента Shorts недоступна.' : 'Shorts are unavailable.'))); }
   }, [runtime, ru]);
   React.useEffect(() => subscribeDesktopShortsRuntime(() => setRuntime(getDesktopShortsRuntime())), []);
   React.useEffect(() => { if (!runtime?.subscribe) return undefined; return runtime.subscribe(() => { const next = runtime.state?.(); if (next) setPlaybackState(next); setNativePlayback(runtime.nativePlayback?.() ?? false); }); }, [runtime]);
@@ -1545,7 +1481,7 @@ function ShortsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
     if (!runtime || !items[index]) return;
     setBusy(true); setNotice('');
     try { runtime.feed.setItems(items, index); await runtime.feed.openCurrent(); setCurrentId(items[index].id); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось открыть короткое видео.' : 'Short could not be opened.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось открыть короткое видео.' : 'Short could not be opened.'))); }
     finally { setBusy(false); }
   };
   const move = async (delta: -1 | 1) => {
@@ -1554,27 +1490,27 @@ function ShortsSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
     if (nextIndex < 0 || nextIndex >= items.length) return;
     setBusy(true); setNotice('');
     try { await (delta > 0 ? runtime.feed.next() : runtime.feed.previous()); setCurrentId(items[nextIndex].id); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось переключить ленту Shorts.' : 'Could not move through Shorts.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось переключить ленту Shorts.' : 'Could not move through Shorts.'))); }
     finally { setBusy(false); }
   };
   const importShort = async () => {
     if (!runtime?.importVideo) return;
     setBusy(true); setNotice('');
     try { const file = await pickDesktopFile('video'); if (file) { await runtime.importVideo({ filename: file.name, mimeType: file.mimeType, bytes: file.bytes, shortForm: true }); await refresh(); setNotice(ru ? 'Короткое видео импортировано локально.' : 'Short imported locally.'); } }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось импортировать короткое видео.' : 'Short import failed.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось импортировать короткое видео.' : 'Short import failed.'))); }
     finally { setBusy(false); }
   };
   const current = items.find(item => item.id === currentId) ?? items[0];
   if (!runtime) return <div className="media-surface"><MediaSurfaceHeading icon="play" title={t.shorts} detail={ru ? 'Короткие видео из локальной библиотеки.' : 'Short-form video from the local library.'} /><MediaAdapterEmpty icon="play" title={ru ? 'Лента Shorts не подключена' : 'Shorts are not connected'} detail={ru ? 'Импортируйте настоящий вертикальный видеофайл, чтобы добавить короткое видео.' : 'Import a real vertical video file to add a Short.'} /></div>;
   return <div className="media-surface shorts-surface"><MediaSurfaceHeading icon="play" title={t.shorts} detail={ru ? 'Локальная лента коротких видео с безопасной предварительной загрузкой.' : 'A local short-video feed with safe preloading.'} action={<div className="media-heading-actions"><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button>{runtime.importVideo ? <button className="primary-button" disabled={busy} onClick={() => void importShort()}>{ru ? 'Импортировать короткое видео' : 'Import short'}</button> : null}</div>} />
-    {current ? <><div className="shorts-stage"><div className="shorts-stage-icon"><Icon name="play" size={28} /></div><div><span className="section-label">{currentIndex + 1} / {items.length}</span><h2>{current.payload.title}</h2><p>{current.payload.shortForm?.caption ?? current.payload.description ?? (ru ? 'Без подписи.' : 'No caption.')}</p><small>{formatMediaDuration(current.payload.durationMs)} · {current.payload.videoStream.container}/{current.payload.videoStream.codec}</small></div></div><div className="shorts-player">{nativePlayback ? <NativeVideoStage title={current.payload.title} ru={ru} shortForm /> : <video ref={videoRef} className="desktop-media-video shorts-video" controls playsInline aria-label={current.payload.title} />}<MediaControlBar state={playbackState} ru={ru} onSeek={value => void runtime.seek?.(value)} onVolume={value => runtime.setVolume?.(value)} onToggleMute={runtime.setMuted ? () => runtime.setMuted?.(!playbackState.muted) : undefined} onFullscreen={!nativePlayback && runtime.toggleFullscreen ? () => void runtime.toggleFullscreen?.() : undefined} /></div><div className="media-actions"><button className="secondary-button" disabled={busy || currentIndex === 0} onClick={() => void move(-1)}>{ru ? 'Назад' : 'Previous'}</button><button className="primary-button" disabled={busy} onClick={() => void openAt(currentIndex)}>{ru ? 'Открыть / играть' : 'Open / play'}</button><button className="secondary-button" disabled={busy || currentIndex >= items.length - 1} onClick={() => void move(1)}>{ru ? 'Далее' : 'Next'}</button>{current.payload.creatorProfileId && runtime.followCreator && <button className="quiet-button" onClick={() => void runtime.followCreator?.(current.payload.creatorProfileId!).then(() => setNotice(ru ? 'Автор добавлен в подписки.' : 'Creator followed.'))}>{ru ? 'Подписаться' : 'Follow'}</button>}{runtime.shareToChat && <button className="quiet-button" onClick={() => void runtime.shareToChat?.(current.id)}>{ru ? 'В чат' : 'To chat'}</button>}</div><div className="media-list shorts-list">{items.slice(0, 100).map((item, index) => <button type="button" className={`media-row${item.id === current.id ? ' active' : ''}`} key={item.id} onClick={() => void openAt(index)}><span className="media-row-icon"><Icon name="play" size={15} /></span><span className="media-row-copy"><strong>{item.payload.title}</strong><small>{formatMediaDuration(item.payload.durationMs)} · {item.payload.creatorProfileId ?? item.author.slice(0, 16)}</small></span></button>)}</div></> : <MediaAdapterEmpty icon="play" title={ru ? 'Лента Shorts пока пуста' : 'Shorts is empty'} detail={ru ? 'Импортируйте настоящий вертикальный видеофайл, чтобы добавить короткое видео.' : 'Import a real vertical video file to add a Short.'} />}
+    {current ? <><div className="shorts-stage"><div className="shorts-stage-icon"><Icon name="play" size={28} /></div><div><span className="section-label">{currentIndex + 1} / {items.length}</span><h2>{current.payload.title}</h2><p>{current.payload.shortForm?.caption ?? current.payload.description ?? (ru ? 'Без подписи.' : 'No caption.')}</p><small>{formatMediaDuration(current.payload.durationMs)} · {current.payload.videoStream.container}/{current.payload.videoStream.codec}</small></div></div><div className="shorts-player">{nativePlayback ? <NativeVideoStage title={current.payload.title} ru={ru} shortForm /> : <video ref={videoRef} className="desktop-media-video shorts-video" controls playsInline aria-label={current.payload.title} />}<MediaControlBar state={playbackState} ru={ru} onSeek={value => void runtime.seek?.(value)} onVolume={value => runtime.setVolume?.(value)} onToggleMute={runtime.setMuted ? () => runtime.setMuted?.(!playbackState.muted) : undefined} onFullscreen={!nativePlayback && runtime.toggleFullscreen ? () => void runtime.toggleFullscreen?.() : undefined} /></div><div className="media-actions"><button className="secondary-button" disabled={busy || currentIndex === 0} onClick={() => void move(-1)}>{ru ? 'Назад' : 'Previous'}</button><button className="primary-button" disabled={busy} onClick={() => void openAt(currentIndex)}>{ru ? 'Открыть / играть' : 'Open / play'}</button><button className="secondary-button" disabled={busy || currentIndex >= items.length - 1} onClick={() => void move(1)}>{ru ? 'Далее' : 'Next'}</button>{current.payload.creatorProfileId && runtime.followCreator && <button className="quiet-button" onClick={() => void runtime.followCreator?.(current.payload.creatorProfileId!).then(() => setNotice(ru ? 'Автор добавлен в подписки.' : 'Creator followed.'))}>{ru ? 'Подписаться' : 'Follow'}</button>}{runtime.shareToChat && <button className="quiet-button" onClick={() => void runtime.shareToChat?.(current.id)}>{ru ? 'В чат' : 'To chat'}</button>}</div><div className="media-list shorts-list">{items.slice(0, 100).map((item, index) => <button type="button" className={`media-row${item.id === current.id ? ' active' : ''}`} key={item.id} onClick={() => void openAt(index)}><span className="media-row-icon"><Icon name="play" size={15} /></span><span className="media-row-copy"><strong>{item.payload.title}</strong><small>{formatMediaDuration(item.payload.durationMs)} · {ru ? 'локально' : 'local'}</small></span></button>)}</div></> : <MediaAdapterEmpty icon="play" title={ru ? 'Лента Shorts пока пуста' : 'Shorts is empty'} detail={ru ? 'Импортируйте настоящий вертикальный видеофайл, чтобы добавить короткое видео.' : 'Import a real vertical video file to add a Short.'} />}
     {notice && <p className="surface-notice" role="status">{notice}</p>}
     <TypedReferenceDock tab={tab} shell={shell} t={t} />
   </div>;
 }
 
 function MediaSurfaceHeading({ icon, title, detail, action }: { icon: IconName; title: string; detail: string; action?: React.ReactNode }) {
-  const localLabel = /[А-Яа-яЁё]/.test(title) ? 'ЛОКАЛЬНО' : 'LOCAL';
+  const localLabel = document.documentElement.lang === 'en' ? 'LOCAL' : 'ЛОКАЛЬНО';
   return <div className="media-heading"><div><div className="surface-kicker"><span className="surface-icon"><Icon name={icon} size={15} /></span><span>{title}</span><span className="surface-badge">{localLabel}</span></div><h1>{title}</h1><p className="surface-description">{detail}</p></div>{action}</div>;
 }
 
@@ -1630,7 +1566,7 @@ function AISurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
     if (!runtime) return;
     setBusy(true); setNotice('');
     try { const next = await runtime.configureLocalProvider({ kind: providerKind, endpoint, model }); setSettings(next); setHealth(await runtime.health()); setShowConfig(false); setNotice(ru ? 'Источник локальной модели сохранён.' : 'Local model source saved.'); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось настроить источник модели.' : 'Could not configure the model source.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось настроить источник модели.' : 'Could not configure the model source.'))); }
     finally { setBusy(false); }
   };
   const run = async (event: React.FormEvent) => {
@@ -1647,14 +1583,14 @@ function AISurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
       const next = [nextConversation, ...conversations.filter(item => item.id !== nextConversation.id)].slice(0, 32);
       setConversations(next); setActiveConversationId(nextConversation.id); setAnswer(result.text); writeDesktopAIConversations(ownerIdentityId, next);
     }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Локальный AI недоступен.' : 'Local AI is unavailable.')); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Локальный AI недоступен.' : 'Local AI is unavailable.'))); }
     finally { abortRef.current = undefined; setGenerating(false); setBusy(false); }
   };
   const discover = async () => {
     if (!runtime) return;
     setDiscoverBusy(true); setNotice('');
-    try { setDiscoveredModels(await runtime.discoverModels()); setNotice(ru ? 'Список локальных моделей обновлён.' : 'Local model list updated.'); }
-    catch (error) { setNotice(error instanceof Error ? error.message : (ru ? 'Не удалось получить список моделей.' : 'Could not discover local models.')); }
+    try { const found = await runtime.discoverModels({ kind: providerKind, endpoint }); setDiscoveredModels(found); if (found.length && !found.some(item => item.model === model)) setModel(found[0]!.model); setNotice(ru ? 'Список локальных моделей обновлён.' : 'Local model list updated.'); }
+    catch (error) { setNotice(errorText(error, (ru ? 'Не удалось получить список моделей.' : 'Could not discover local models.'))); }
     finally { setDiscoverBusy(false); }
   };
   const newConversation = () => {
@@ -1668,7 +1604,7 @@ function AISurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
   const configured = settings?.models.find(item => item.scope === 'local');
   return <div className="ai-surface"><MediaSurfaceHeading icon="bot" title={t.localAI} detail={ru ? 'Ollama, LM Studio и другие локальные модели. Приватные запросы остаются на устройстве.' : 'Ollama, LM Studio, and other local models. Private requests stay on this device.'} action={<button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button>} />
     <div className="ai-status-grid"><div className="surface-card"><strong>{ru ? 'Источник' : 'Source'}</strong><small>{configured?.displayName ?? (ru ? 'не настроен' : 'not configured')}</small></div><div className="surface-card"><strong>{ru ? 'Проверка' : 'Health'}</strong><small>{health?.state ?? (ru ? 'не проверен' : 'not checked')}{health?.detail ? ` · ${health.detail}` : ''}</small></div><div className="surface-card"><strong>{ru ? 'Внешняя сеть' : 'External network'}</strong><small>{settings?.remoteEnabled === false ? (ru ? 'запрещена' : 'disabled') : (ru ? 'проверяется' : 'not enabled')}</small></div></div>
-    {showConfig ? <form className="ai-config-form" onSubmit={configure}><span className="section-label">{ru ? 'Источник локальной модели' : 'Local model source'}</span><div className="ai-form-grid"><label><span>{ru ? 'Система' : 'System'}</span><select value={providerKind} onChange={event => { const next = event.target.value as DesktopLocalAIProviderKind; setProviderKind(next); setDiscoveredModels([]); if (next === 'ollama') setEndpoint('http://127.0.0.1:11434/api/chat'); else if (next === 'lm-studio') setEndpoint('http://127.0.0.1:1234/v1/chat/completions'); }}><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="openai-compatible">OpenAI-compatible localhost</option><option value="built-in">Built-in native host</option><option value="llama.cpp">llama.cpp native host</option></select></label><label><span>{ru ? 'Адрес подключения' : 'Connection address'}</span><input value={endpoint} onChange={event => setEndpoint(event.target.value)} placeholder="http://127.0.0.1:11434/api/chat" /></label><label><span>{ru ? 'Модель' : 'Model'}</span><input list="desktop-ai-models" value={model} onChange={event => setModel(event.target.value)} placeholder="llama3.2" /><datalist id="desktop-ai-models">{discoveredModels.map(item => <option key={item.model} value={item.model}>{item.displayName}</option>)}</datalist></label><button className="primary-button" disabled={busy} type="submit">{t.configure}</button></div><div className="ai-config-actions"><button className="secondary-button" type="button" disabled={discoverBusy || !runtime.providerKind()} onClick={() => void discover()}>{discoverBusy ? <Icon name="loader" size={14} /> : <Icon name="search" size={14} />}{ru ? 'Найти модели' : 'Discover models'}</button><button className="quiet-button" type="button" onClick={() => setShowConfig(false)}>{ru ? 'Отмена' : 'Cancel'}</button>{discoveredModels.length ? <div className="ai-discovered-models" aria-label={ru ? 'Найденные модели' : 'Discovered models'}>{discoveredModels.map(item => <button type="button" className={item.model === model ? 'selected' : ''} key={item.model} onClick={() => setModel(item.model)}>{item.displayName}{item.ownedBy ? <small>{item.ownedBy}</small> : null}</button>)}</div> : null}</div></form> : <div className="ai-source-summary"><div><strong>{configured?.displayName ?? (ru ? 'Источник не настроен' : 'No source configured')}</strong><small>{configured ? (ru ? 'Готов к локальному разговору.' : 'Ready for a local conversation.') : (ru ? 'Выберите локальную модель, чтобы начать.' : 'Choose a local model to get started.')}</small></div><button className="secondary-button" type="button" onClick={() => setShowConfig(true)}>{configured ? (ru ? 'Изменить источник' : 'Change source') : (ru ? 'Настроить источник' : 'Set up source')}</button></div>}
+    {showConfig ? <form className="ai-config-form" onSubmit={configure}><span className="section-label">{ru ? 'Источник локальной модели' : 'Local model source'}</span><div className="ai-form-grid"><label><span>{ru ? 'Система' : 'System'}</span><select value={providerKind} onChange={event => { const next = event.target.value as DesktopLocalAIProviderKind; setProviderKind(next); setDiscoveredModels([]); if (next === 'ollama') setEndpoint('http://127.0.0.1:11434/api/chat'); else if (next === 'lm-studio') setEndpoint('http://127.0.0.1:1234/v1/chat/completions'); }}><option value="ollama">Ollama</option><option value="lm-studio">LM Studio</option><option value="openai-compatible">OpenAI-compatible localhost</option><option value="built-in">Built-in native host</option><option value="llama.cpp">llama.cpp native host</option></select></label><label><span>{ru ? 'Адрес подключения' : 'Connection address'}</span><input value={endpoint} onChange={event => setEndpoint(event.target.value)} placeholder="http://127.0.0.1:11434/api/chat" /></label><label><span>{ru ? 'Модель' : 'Model'}</span><input list="desktop-ai-models" value={model} onChange={event => setModel(event.target.value)} placeholder="llama3.2" /><datalist id="desktop-ai-models">{discoveredModels.map(item => <option key={item.model} value={item.model}>{item.displayName}</option>)}</datalist></label><button className="primary-button" disabled={busy} type="submit">{t.configure}</button></div><div className="ai-config-actions"><button className="secondary-button" type="button" disabled={discoverBusy || !endpoint.trim() || providerKind === 'built-in' || providerKind === 'llama.cpp'} onClick={() => void discover()}>{discoverBusy ? <Icon name="loader" size={14} /> : <Icon name="search" size={14} />}{ru ? 'Найти модели' : 'Discover models'}</button><button className="quiet-button" type="button" onClick={() => setShowConfig(false)}>{ru ? 'Отмена' : 'Cancel'}</button>{discoveredModels.length ? <div className="ai-discovered-models" aria-label={ru ? 'Найденные модели' : 'Discovered models'}>{discoveredModels.map(item => <button type="button" className={item.model === model ? 'selected' : ''} key={item.model} onClick={() => setModel(item.model)}>{item.displayName}{item.ownedBy ? <small>{item.ownedBy}</small> : null}</button>)}</div> : null}</div></form> : <div className="ai-source-summary"><div><strong>{configured?.displayName ?? (ru ? 'Источник не настроен' : 'No source configured')}</strong><small>{configured ? (ru ? 'Готов к локальному разговору.' : 'Ready for a local conversation.') : (ru ? 'Выберите локальную модель, чтобы начать.' : 'Choose a local model to get started.')}</small></div><button className="secondary-button" type="button" onClick={() => setShowConfig(true)}>{configured ? (ru ? 'Изменить источник' : 'Change source') : (ru ? 'Настроить источник' : 'Set up source')}</button></div>}
     <section className="ai-conversations"><div className="ai-conversation-heading"><span className="section-label">{ru ? 'Локальные разговоры' : 'Local conversations'}</span><button className="secondary-button" type="button" onClick={newConversation} disabled={busy}>{ru ? 'Новый разговор' : 'New conversation'}</button></div>{conversations.length ? <div className="ai-conversation-list">{conversations.map(item => <button type="button" key={item.id} className={item.id === activeConversationId ? 'selected' : undefined} onClick={() => { setActiveConversationId(item.id); const last = item.messages.at(-1); setAnswer(last?.role === 'assistant' ? last.text : ''); }}>{item.title}<small>{item.messages.length} {ru ? 'сообщений' : 'messages'}</small></button>)}</div> : <p className="ai-conversation-empty">{ru ? 'Ответы сохраняются только после успешного локального запроса.' : 'Responses are saved only after a successful local request.'}</p>}</section>
     <form className="ai-run-form" onSubmit={run}><span className="section-label">{ru ? 'Приватный запрос' : 'Private request'}{activeConversation ? ` · ${activeConversation.title}` : ''}</span><textarea value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={ru ? 'Запрос остаётся на устройстве…' : 'The request stays on this device…'} rows={3} disabled={!configured || busy} /><div className="ai-run-actions"><button className="primary-button" type="submit" disabled={!configured || busy || !prompt.trim()}>{busy ? <Icon name="loader" size={14} /> : <Icon name="bot" size={14} />}{ru ? 'Выполнить локально' : 'Run locally'}</button>{generating ? <button className="secondary-button" type="button" onClick={() => abortRef.current?.abort()}>{ru ? 'Отменить' : 'Cancel'}</button> : null}</div>{answer && <div className="ai-answer"><strong>{ru ? 'Ответ' : 'Response'}</strong><p>{answer}</p></div>}{activeConversation?.messages.length ? <div className="ai-message-history">{activeConversation.messages.map(message => <div className={`ai-message ${message.role}`} key={message.id}><span>{message.role === 'user' ? (ru ? 'Вы' : 'You') : 'AI'}</span><p>{message.text}</p></div>)}</div> : null}</form>
     {notice && <p className="surface-notice" role="status">{notice}</p>}
@@ -1684,8 +1620,8 @@ function ConnectivitySurface({ t }: { t: Copy }) {
   if (!runtime) return <div className="network-surface"><MediaSurfaceHeading icon="network" title={t.connectivity} detail={ru ? 'Состояние сети и доступные способы соединения.' : 'Network status and available connection methods.'} /><MediaAdapterEmpty icon="network" title={ru ? 'Связь пока не подключена' : 'Connectivity is not connected yet'} detail={ru ? 'Нужен локальный способ соединения, чтобы показать доступные устройства.' : 'A local connection is needed to show available devices.'} /></div>;
   const state = runtime.snapshot();
   const configuration = runtime.configuration();
-  const flag = (value: boolean | 'UNKNOWN') => value === true ? (ru ? 'доступно' : 'available') : value === false ? (ru ? 'нет' : 'no') : 'unknown';
-  return <div className="network-surface"><MediaSurfaceHeading icon="network" title={t.connectivity} detail={ru ? 'Состояние сети и доступные способы соединения.' : 'Network status and available connection methods.'} /><div className="network-state-card"><div><span className="section-label">{ru ? 'Текущее состояние' : 'Current state'}</span><h2>{state.state}</h2><small>{state.reachability} · {state.observedAt}</small></div><span className="network-state-dot" data-state={state.state} /></div><div className="network-metrics"><div className="surface-card"><strong>{ru ? 'Интернет' : 'Internet'}</strong><small>{flag(state.internetAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Локальная сеть' : 'Local network'}</strong><small>{flag(state.localNetworkAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Рядом' : 'Nearby'}</strong><small>{flag(state.nearbyAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Подключения' : 'Connections'}</strong><small>{state.availableProviders.length || (ru ? 'нет' : 'none')}</small></div></div><span className="section-label">{ru ? 'Подключённые способы' : 'Available connections'}</span><div className="media-list">{configuration.providers.length ? configuration.providers.map(provider => <div className="media-row" key={provider.id}><span className="media-row-icon"><Icon name="network" size={15} /></span><span className="media-row-copy"><strong>{provider.id}</strong><small>{provider.type} · {provider.enabled ? (ru ? 'включён' : 'enabled') : (ru ? 'выключен' : 'disabled')}</small></span></div>) : <MediaAdapterEmpty icon="network" title={ru ? 'Подключений нет' : 'No connections yet'} detail={ru ? 'На этом устройстве интернет и локальная сеть пока не настроены.' : 'Internet and local network are not configured on this device yet.'} />}</div></div>;
+  const flag = (value: boolean | 'UNKNOWN') => value === true ? (ru ? 'доступно' : 'available') : value === false ? (ru ? 'нет' : 'no') : (ru ? 'неизвестно' : 'unknown');
+  return <div className="network-surface"><MediaSurfaceHeading icon="network" title={t.connectivity} detail={ru ? 'Состояние сети и доступные способы соединения.' : 'Network status and available connection methods.'} /><div className="network-state-card"><div><span className="section-label">{ru ? 'Текущее состояние' : 'Current state'}</span><h2>{networkStateLabel(state.state, ru)}</h2><small>{networkReachabilityLabel(state.reachability, ru)} · {formatTimestamp(state.observedAt, ru)}</small></div><span className="network-state-dot" data-state={state.state} /></div><div className="network-metrics"><div className="surface-card"><strong>{ru ? 'Интернет' : 'Internet'}</strong><small>{flag(state.internetAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Локальная сеть' : 'Local network'}</strong><small>{flag(state.localNetworkAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Рядом' : 'Nearby'}</strong><small>{flag(state.nearbyAvailable)}</small></div><div className="surface-card"><strong>{ru ? 'Подключения' : 'Connections'}</strong><small>{state.availableProviders.length || (ru ? 'нет' : 'none')}</small></div></div><span className="section-label">{ru ? 'Подключённые способы' : 'Available connections'}</span><div className="media-list">{configuration.providers.length ? configuration.providers.map(provider => <div className="media-row" key={provider.id}><span className="media-row-icon"><Icon name="network" size={15} /></span><span className="media-row-copy"><strong>{provider.id}</strong><small>{provider.type} · {provider.enabled ? (ru ? 'включён' : 'enabled') : (ru ? 'выключен' : 'disabled')}</small></span></div>) : <MediaAdapterEmpty icon="network" title={ru ? 'Подключений нет' : 'No connections yet'} detail={ru ? 'На этом устройстве интернет и локальная сеть пока не настроены.' : 'Internet and local network are not configured on this device yet.'} />}</div></div>;
 }
 
 function AgentSurface({ shell, t }: { shell: DesktopShellController; t: Copy }) {
@@ -1766,14 +1702,17 @@ function formatTaskDate(value: DesktopTask['due'], locale: Locale): string {
 
 function TasksSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
   const [runtime, setRuntime] = React.useState<DesktopTaskRuntime | undefined>(getDesktopTasksRuntime);
-  const [view, setView] = React.useState<DesktopTaskView>(tab.object?.id === 'today' ? 'TODAY' : tab.object?.id === 'overdue' ? 'OVERDUE' : 'INBOX');
+  const objectId = tab.object?.id;
+  const linkedTaskId = objectId?.startsWith('task:') ? objectId : undefined;
+  const [view, setView] = React.useState<DesktopTaskView>(linkedTaskId ? 'ALL' : objectId === 'today' ? 'TODAY' : objectId === 'overdue' ? 'OVERDUE' : 'INBOX');
   const [page, setPage] = React.useState<{ readonly items: readonly DesktopTask[]; readonly total: number }>();
   const [lists, setLists] = React.useState<readonly { readonly id: string; readonly name: string; readonly scope: string; readonly memberCount: number; readonly tombstone: boolean }[]>([]);
   const [listId, setListId] = React.useState('all');
   const [query, setQuery] = React.useState('');
+  const requestSequence = React.useRef(0);
   const [quick, setQuick] = React.useState('');
   const [preview, setPreview] = React.useState<ReturnType<DesktopTaskRuntime['previewQuickCapture']>>();
-  const [selectedId, setSelectedId] = React.useState<string>();
+  const [selectedId, setSelectedId] = React.useState(linkedTaskId);
   const [editTitle, setEditTitle] = React.useState('');
   const [editNote, setEditNote] = React.useState('');
   const [editDue, setEditDue] = React.useState('');
@@ -1783,12 +1722,22 @@ function TasksSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     ? { title: 'Задачи', subtitle: 'Планы, сроки и напоминания сохраняются на этом устройстве.', inbox: 'Входящие', today: 'Сегодня', upcoming: 'Предстоящие', all: 'Все', completed: 'Завершённые', overdue: 'Просроченные', someday: 'Когда-нибудь', shared: 'Общие', trash: 'Корзина', search: 'Поиск по задачам…', add: 'Что нужно сделать?', preview: 'Проверка даты', empty: 'Пока нет задач', unavailable: 'Задачи временно недоступны', boundary: 'Проверьте локальное хранилище и перезапустите Keystone.', complete: 'Отметить выполненной', reopen: 'Вернуть в работу', trashAction: 'Удалить', local: 'Сохранено локально', list: 'список', due: 'Срок', note: 'Заметка', details: 'Детали задачи', name: 'Название', save: 'Сохранить', clear: 'Очистить', filter: 'Показывать', allLists: 'Все списки', reminders: 'Напоминания', noReminders: 'Нет напоминаний', priority: 'Приоритет', low: 'Низкий', medium: 'Средний', high: 'Высокий', ambiguous: 'Дата неоднозначна', choose: 'Выберите задачу слева' }
     : { title: 'Tasks', subtitle: 'Plans, due dates, and reminders stay on this device.', inbox: 'Inbox', today: 'Today', upcoming: 'Upcoming', all: 'All', completed: 'Completed', overdue: 'Overdue', someday: 'Someday', shared: 'Shared', trash: 'Trash', search: 'Search tasks…', add: 'What needs to be done?', preview: 'Date check', empty: 'No tasks yet', unavailable: 'Tasks are temporarily unavailable', boundary: 'Check local storage and restart Keystone.', complete: 'Mark complete', reopen: 'Return to active', trashAction: 'Delete', local: 'Saved locally', list: 'list', due: 'Due', note: 'Note', details: 'Task details', name: 'Title', save: 'Save', clear: 'Clear', filter: 'Show', allLists: 'All lists', reminders: 'Reminders', noReminders: 'No reminders', priority: 'Priority', low: 'Low', medium: 'Medium', high: 'High', ambiguous: 'Ambiguous date', choose: 'Select a task on the left' };
   const refresh = React.useCallback(async () => {
+    const sequence = ++requestSequence.current;
     if (!runtime) { setPage(undefined); setLists([]); return; }
     try {
       const [nextPage, nextLists] = await Promise.all([runtime.tasks({ view, query: query.trim() || undefined, ...(listId !== 'all' ? { listId } : {}), includeTrash: view === 'TRASH', limit: 128 }), runtime.lists({ includeTrash: view === 'TRASH' })]);
-      setPage(nextPage); setLists(nextLists); setSelectedId(current => current && nextPage.items.some(task => task.id === current) ? current : nextPage.items[0]?.id); setNotice('');
-    } catch (error) { setNotice(error instanceof Error ? error.message : labels.unavailable); }
-  }, [labels.unavailable, listId, query, runtime, view]);
+      const includeLinked = linkedTaskId && view === 'ALL' && listId === 'all' && !query.trim();
+      const linked = includeLinked && !nextPage.items.some(task => task.id === linkedTaskId) ? await runtime.task?.(linkedTaskId) : undefined;
+      if (sequence !== requestSequence.current) return;
+      const items = linked ? [linked, ...nextPage.items] : nextPage.items;
+      setPage({ ...nextPage, items });
+      setLists(nextLists);
+      setSelectedId(current => items.some(task => task.id === current) ? current : includeLinked ? undefined : items[0]?.id);
+      setNotice(includeLinked && !items.some(task => task.id === linkedTaskId)
+        ? (ru ? 'Эта задача недоступна или находится в корзине.' : 'This task is unavailable or in Trash.')
+        : '');
+    } catch (error) { if (sequence === requestSequence.current) setNotice(errorText(error, labels.unavailable)); }
+  }, [labels.unavailable, linkedTaskId, listId, query, ru, runtime, view]);
   React.useEffect(() => subscribeDesktopTasksRuntime(() => setRuntime(getDesktopTasksRuntime())), []);
   React.useEffect(() => { if (!runtime?.subscribe) return undefined; const unsubscribe = runtime.subscribe(() => void refresh()); return unsubscribe; }, [refresh, runtime]);
   React.useEffect(() => { void refresh(); }, [refresh]);
@@ -1811,7 +1760,8 @@ function TasksSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     await run(() => runtime.update(selected.id, { title: editTitle.trim(), note: editNote.trim() || null, due: editDue.trim() || null }));
   };
   const views: readonly [DesktopTaskView, string][] = [['INBOX', labels.inbox], ['TODAY', labels.today], ['UPCOMING', labels.upcoming], ['ALL', labels.all], ['COMPLETED', labels.completed], ['OVERDUE', labels.overdue], ['SOMEDAY', labels.someday], ['SHARED', labels.shared], ['TRASH', labels.trash]];
-  const countLabel = ru ? `${page?.total ?? 0} ${page?.total === 1 ? 'задача' : page?.total && page.total < 5 ? 'задачи' : 'задач'}` : `${page?.total ?? 0} ${page?.total === 1 ? 'task' : 'tasks'}`;
+  const count = page?.total ?? 0;
+  const countLabel = `${count} ${ru ? ruPlural(count, 'задача', 'задачи', 'задач') : count === 1 ? 'task' : 'tasks'}`;
   const priorityLabel = (priority: DesktopTask['priority']): string => priority === 'HIGH' ? labels.high : priority === 'MEDIUM' ? labels.medium : priority === 'LOW' ? labels.low : '';
   // The built-in Inbox is stored with an English name in Core; show it in the UI locale.
   const listLabel = (list: { readonly id: string; readonly name: string }): string => list.id === 'task-list:inbox' ? labels.inbox : list.name;
@@ -1824,19 +1774,19 @@ function TasksSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellC
     <div className="task-manager-toolbar">
       <label className="task-filter-control"><Icon name="filter" size={15} /><span>{labels.filter}</span><select value={view} onChange={event => setView(event.target.value as DesktopTaskView)} aria-label={labels.filter}>{views.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       {lists.length > 1 && <label className="task-filter-control"><Icon name="list" size={15} /><span>{labels.list}</span><select value={listId} onChange={event => setListId(event.target.value)} aria-label={labels.list}><option value="all">{labels.allLists}</option>{lists.filter(list => !list.tombstone).map(list => <option key={list.id} value={list.id}>{listLabel(list)}</option>)}</select></label>}
-      <span className="task-manager-count">{countLabel}</span>
+      <input className="task-manager-search" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={labels.search} aria-label={labels.search}/><span className="task-manager-count">{countLabel}</span>
     </div>
-    <form className="task-manager-add" onSubmit={add}><input value={quick} onChange={event => setQuick(event.target.value)} placeholder={labels.add} aria-label={labels.add}/><button className="primary-button" type="submit" aria-label={labels.add}><Icon name="plus" size={15} /><span>{ru ? 'Добавить' : 'Add'}</span></button></form>
+    <form className="task-manager-add" onSubmit={add}><input autoFocus={objectId === 'new-task'} value={quick} onChange={event => setQuick(event.target.value)} placeholder={labels.add} aria-label={labels.add}/><button className="primary-button" type="submit" aria-label={labels.add}><Icon name="plus" size={15} /><span>{ru ? 'Добавить' : 'Add'}</span></button></form>
     {preview && <div className="task-manager-preview"><span>{labels.preview}</span><strong>{preview.title}</strong>{preview.due && <small>{labels.due}: {formatTaskDate(preview.due, ru ? 'ru' : 'en')}{preview.ambiguous ? ` · ${labels.ambiguous}` : ''}</small>}</div>}
-    {notice && <div className="tasks-notice">{notice}</div>}
+    {notice && <div className="tasks-notice" role="status">{notice}</div>}
     <div className={`task-manager-layout${page?.items.length ? '' : ' is-empty'}`}>
-      <main className={`task-manager-list${page?.items.length ? '' : ' is-empty'}`} aria-label={labels.title}>
-        {page?.items.length ? page.items.map(task => <article className={`task-manager-row${task.id === selectedId ? ' active' : ''}${task.status === 'COMPLETED' ? ' completed' : ''}`} key={task.id} role="button" tabIndex={0} onClick={() => setSelectedId(task.id)} onKeyDown={event => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); setSelectedId(task.id); } }}>
+      <section className={`task-manager-list${page?.items.length ? '' : ' is-empty'}`} aria-label={labels.title}>
+        {page?.items.length ? page.items.map(task => <article className={`task-manager-row${task.id === selectedId ? ' active' : ''}${task.status === 'COMPLETED' ? ' completed' : ''}`} key={task.id}>
           <button type="button" className="task-manager-check" aria-label={task.status === 'COMPLETED' ? labels.reopen : labels.complete} title={task.status === 'COMPLETED' ? labels.reopen : labels.complete} onClick={event => { event.stopPropagation(); void run(() => task.status === 'COMPLETED' ? runtime.reopen(task.id) : runtime.complete(task.id)); }}><Icon name={task.status === 'COMPLETED' ? 'check-circle' : 'circle'} size={18} /></button>
-          <div className="task-manager-row-copy"><strong>{task.title}</strong><div className="task-manager-row-meta"><span>{listName(task)}</span>{task.priority !== 'NONE' && <span className={`task-priority priority-${task.priority.toLowerCase()}`}>{labels.priority}: {priorityLabel(task.priority)}</span>}{task.due && <span className="task-due"><Icon name="calendar" size={13} />{formatTaskDate(task.due, ru ? 'ru' : 'en')}</span>}{task.note && <span><Icon name="file-text" size={13} />{labels.note}</span>}{task.tags.length > 0 && <span>{task.tags.join(', ')}</span>}</div></div>
+          <button type="button" className="task-manager-row-copy" aria-pressed={task.id === selectedId} onClick={() => setSelectedId(task.id)}><strong>{task.title}</strong><span className="task-manager-row-meta"><span>{listName(task)}</span>{task.priority !== 'NONE' && <span className={`task-priority priority-${task.priority.toLowerCase()}`}>{labels.priority}: {priorityLabel(task.priority)}</span>}{task.due && <span className="task-due"><Icon name="calendar" size={13} />{formatTaskDate(task.due, ru ? 'ru' : 'en')}</span>}{task.note && <span><Icon name="file-text" size={13} />{labels.note}</span>}{task.tags.length > 0 && <span>{task.tags.join(', ')}</span>}</span></button>
           <button type="button" className="task-manager-row-action" aria-label={view === 'TRASH' ? (ru ? 'Восстановить задачу' : 'Restore task') : labels.trashAction} title={view === 'TRASH' ? (ru ? 'Восстановить' : 'Restore') : labels.trashAction} onClick={event => { event.stopPropagation(); void run(() => view === 'TRASH' ? runtime.restore(task.id) : runtime.trash(task.id)); }}><Icon name={view === 'TRASH' ? 'rotate-ccw' : 'trash'} size={15} /></button>
         </article>) : <div className="task-empty"><span className="task-empty-icon"><Icon name="check" size={18} /></span><strong>{labels.empty}</strong><span>{ru ? 'Добавьте первую задачу в поле выше.' : 'Add your first task in the field above.'}</span></div>}
-      </main>
+      </section>
       <aside className="task-manager-detail" aria-label={labels.details}>
         {selected ? <>
           <div className="task-manager-detail-heading"><div><span className="section-label">{labels.details}</span><h2>{selected.title}</h2></div><span className={`task-status task-status-${selected.status.toLowerCase()}`}>{taskStatusLabel(selected.status, ru)}</span></div>
@@ -2110,9 +2060,11 @@ function SearchSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
     setContactResults([]); setInboxResults([]); setWebLibraryResults([]); setVaultResults([]); setAiResults([]);
   };
 
+  const searchRun = React.useRef(0);
   const runSearch = async (event?: React.FormEvent) => {
     event?.preventDefault();
     const value = query.trim();
+    const run = ++searchRun.current;
     if (!value) { clearResults(); return; }
     setBusy(true); setNotice('');
     const capture = getDesktopCaptureRuntime();
@@ -2150,6 +2102,7 @@ function SearchSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
       webLibrary?.search(value),
       vaultSearch,
     ]);
+    if (run !== searchRun.current) return; // a newer query is already running
     setCaptureResults(captureResult.status === 'fulfilled' ? captureResult.value?.items ?? [] : []);
     setTaskResults(taskResult.status === 'fulfilled' ? taskResult.value?.items ?? [] : []);
     setDocumentResults(documentResult.status === 'fulfilled' ? documentResult.value ?? [] : []);
@@ -2167,7 +2120,8 @@ function SearchSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
     setBusy(false);
   };
 
-  React.useEffect(() => { if (tab.object?.query) void runSearch(); }, []);
+  // Search as you type; the short delay keeps fast typing from running every local index per key.
+  React.useEffect(() => { const timer = window.setTimeout(() => void runSearch(), 180); return () => window.clearTimeout(timer); }, [query]);
   const total = captureResults.length + taskResults.length + documentResults.length + discoveryResults.length + musicResults.length + videoResults.length + shortResults.length + fileResults.length + contactResults.length + inboxResults.length + webLibraryResults.length + vaultResults.length + aiResults.length;
   return <div className="object-surface search-surface">
     <div className="surface-kicker"><span className="surface-icon"><Icon name="search" size={15} /></span><span>{t.search}</span><span className="surface-badge">{t.local}</span></div>
@@ -2183,7 +2137,7 @@ function SearchSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
       {musicResults.length > 0 && <section><span className="section-label">{t.music}</span>{musicResults.map(item => <button type="button" key={item.id} onClick={() => shell.openReference({ kind: 'music', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.codec} · {formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}
       {videoResults.length > 0 && <section><span className="section-label">{t.video}</span>{videoResults.map(item => <button type="button" key={item.id} onClick={() => shell.openReference({ kind: 'video', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.videoStream.container} · {formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}
       {shortResults.length > 0 && <section><span className="section-label">{t.shorts}</span>{shortResults.map(item => <button type="button" key={item.id} onClick={() => shell.openReference({ kind: 'shorts', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.shortForm?.caption ?? formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}
-      {fileResults.length > 0 && <section><span className="section-label">{t.files}</span>{fileResults.map(item => { const fileId = item.entry.fileId ?? item.entry.id; return <button type="button" key={item.entry.id} onClick={() => shell.openReference({ kind: 'file', id: fileId, label: item.entry.name }, { allowDuplicate: true })}><strong>{item.entry.name}</strong><small>{item.folder.name} · {item.entry.kind}</small></button>; })}</section>}
+      {fileResults.length > 0 && <section><span className="section-label">{t.files}</span>{fileResults.map(item => { const fileId = item.entry.fileId ?? item.entry.childFolderId ?? item.entry.id; return <button type="button" key={item.entry.id} onClick={() => shell.openReference({ kind: 'file', id: fileId, label: item.entry.name }, { allowDuplicate: true })}><strong>{item.entry.name}</strong><small>{item.folder.name} · {item.entry.kind}</small></button>; })}</section>}
       {contactResults.length > 0 && <section><span className="section-label">{t.contacts}</span>{contactResults.map(item => <button type="button" key={item.id} onClick={() => shell.openReference({ kind: 'contacts', id: item.id, label: item.displayName }, { allowDuplicate: true })}><strong>{item.displayName}</strong><small>{item.kind}{item.emails[0] ? ` · ${item.emails[0].value}` : ''}</small></button>)}</section>}
       {inboxResults.length > 0 && <section><span className="section-label">{t.inbox}</span>{inboxResults.map(item => <button type="button" key={item.id} onClick={() => shell.openReference({ kind: 'inbox', id: item.id, label: item.presentation.title }, { allowDuplicate: true })}><strong>{item.presentation.title}</strong><small>{item.presentation.sender ?? item.kind}{item.presentation.snippet ? ` · ${item.presentation.snippet}` : ''}</small></button>)}</section>}
       {webLibraryResults.length > 0 && <section><span className="section-label">{t.webLibrary}</span>{webLibraryResults.map(result => <button type="button" key={result.entry.id} onClick={() => shell.openReference({ kind: 'web-library', id: result.entry.id, label: result.entry.title }, { allowDuplicate: true })}><strong>{result.entry.title}</strong><small>{result.entry.sourceUrl} · {result.snippet}</small></button>)}</section>}
@@ -2193,85 +2147,6 @@ function SearchSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShell
       {query.trim() && !busy && total === 0 && <div className="adapter-note"><span><Icon name="search" size={17} /></span><div><strong>{ru ? 'Ничего не найдено.' : 'No local matches.'}</strong><small>{ru ? 'Попробуйте другой запрос или сначала создайте локальный объект.' : 'Try another query or create a local object first.'}</small></div></div>}
     </div>
   </div>;
-}
-
-function SearchSurfaceLegacy({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const [query, setQuery] = React.useState(tab.object?.query ?? '');
-  const [captureResults, setCaptureResults] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['search']>>['items']>([]);
-  const [taskResults, setTaskResults] = React.useState<Awaited<ReturnType<DesktopTaskRuntime['search']>>['items']>([]);
-  const [documentResults, setDocumentResults] = React.useState<Awaited<ReturnType<DesktopDocumentsRuntime['search']>>>([]);
-  const [discoveryResults, setDiscoveryResults] = React.useState<Awaited<ReturnType<DesktopDiscoveryRuntime['search']>>['items']>([]);
-  const [musicResults, setMusicResults] = React.useState<readonly Extract<import('@keystone/core').MusicObject, { type: 'track' }>[]>([]);
-  const [videoResults, setVideoResults] = React.useState<readonly import('@keystone/core').VideoObject[]>([]);
-  const [shortResults, setShortResults] = React.useState<readonly import('@keystone/core').ShortVideoObject[]>([]);
-  const [fileResults, setFileResults] = React.useState<Awaited<ReturnType<DesktopFilesRuntime['search']>>>([]);
-  const [contactResults, setContactResults] = React.useState<Awaited<ReturnType<DesktopContactsRuntime['contacts']>>['items']>([]);
-  const [inboxResults, setInboxResults] = React.useState<Awaited<ReturnType<DesktopInboxRuntime['inbox']['search']>>['items']>([]);
-  const [webLibraryResults, setWebLibraryResults] = React.useState<Awaited<ReturnType<DesktopWebLibraryRuntime['search']>>>([]);
-  const [vaultResults, setVaultResults] = React.useState<readonly DesktopVaultSearchHit[]>([]);
-  const [aiResults, setAiResults] = React.useState<DesktopAIConversation[]>([]);
-  const [notice, setNotice] = React.useState('');
-  const [busy, setBusy] = React.useState(false);
-  const ru = t.home === 'Главная';
-  const runSearch = async (event?: React.FormEvent) => {
-    event?.preventDefault();
-    const value = query.trim();
-    if (!value) { setCaptureResults([]); setTaskResults([]); setDocumentResults([]); setDiscoveryResults([]); setMusicResults([]); setVideoResults([]); setShortResults([]); setFileResults([]); setContactResults([]); setInboxResults([]); setWebLibraryResults([]); setVaultResults([]); setAiResults([]); return; }
-    setBusy(true); setNotice('');
-    const capture = getDesktopCaptureRuntime();
-    const tasks = getDesktopTasksRuntime();
-    const documents = getDesktopDocumentsRuntime();
-    const discovery = getDesktopDiscoveryRuntime();
-    const music = getDesktopMusicRuntime();
-    const video = getDesktopVideoRuntime();
-    const shorts = getDesktopShortsRuntime();
-    const files = getDesktopFilesRuntime();
-    const contacts = getDesktopContactsRuntime();
-    const inbox = getDesktopInboxRuntime();
-    const webLibrary = getDesktopWebLibraryRuntime();
-    const vault = getDesktopVaultRuntime();
-    const match = (title: string) => title.toLocaleLowerCase().includes(value.toLocaleLowerCase());
-    const localAIResult = readDesktopAIConversations(getLocalDesktopProfile()?.ownerIdentityId ?? 'unbound').filter(item => `${item.title} ${item.messages.map(message => message.text).join(' ')}`.toLocaleLowerCase().includes(value.toLocaleLowerCase()));
-    const [captureResult, taskResult, documentResult, discoveryResult, musicResult, videoResult, shortResult, fileResult, contactResult, inboxResult, webLibraryResult, vaultResult] = await Promise.allSettled([
-      capture?.search(value, { limit: 32 }),
-      tasks?.search(value, { limit: 32 }),
-      documents?.search(value, { limit: 32 }),
-      discovery?.search(value, { scope: 'local', limit: 32 }),
-      music?.music.tracks().then(items => items.filter(item => match(item.payload.title))),
-      video?.videos.videos().then(items => items.filter(item => !item.payload.shortForm && match(item.payload.title))),
-      shorts?.shorts.list().then(items => items.filter(item => match(item.payload.title))),
-      files?.search(value, { limit: 32 }),
-      contacts?.search(value, { limit: 32, includePrivateNotes: false }),
-      inbox?.inbox.search(value, { limit: 32 }),
-      webLibrary?.search(value),
-      vault ? vault.listVaults().then(vaults => Promise.all(vaults.slice(0, 8).map(async item => (await vault.search(item.id, value)).map(result => ({ ...result, vaultId: item.id })))).then(values => values.flat()) ) : undefined,
-    ]);
-    setCaptureResults(captureResult.status === 'fulfilled' ? captureResult.value?.items ?? [] : []);
-    setTaskResults(taskResult.status === 'fulfilled' ? taskResult.value?.items ?? [] : []);
-    setDocumentResults(documentResult.status === 'fulfilled' ? documentResult.value ?? [] : []);
-    setDiscoveryResults(discoveryResult.status === 'fulfilled' ? discoveryResult.value?.items ?? [] : []);
-    setMusicResults(musicResult.status === 'fulfilled' ? musicResult.value ?? [] : []);
-    setVideoResults(videoResult.status === 'fulfilled' ? videoResult.value ?? [] : []);
-    setShortResults(shortResult.status === 'fulfilled' ? shortResult.value ?? [] : []);
-    setFileResults(fileResult.status === 'fulfilled' ? fileResult.value ?? [] : []);
-    setContactResults(contactResult.status === 'fulfilled' ? contactResult.value?.items ?? [] : []);
-    setInboxResults(inboxResult.status === 'fulfilled' ? inboxResult.value?.items ?? [] : []);
-    setWebLibraryResults(webLibraryResult.status === 'fulfilled' ? webLibraryResult.value ?? [] : []);
-    setVaultResults(vaultResult.status === 'fulfilled' ? vaultResult.value ?? [] : []);
-    setAiResults(localAIResult);
-    if ([captureResult, taskResult, documentResult, discoveryResult, musicResult, videoResult, shortResult, fileResult, contactResult, inboxResult, webLibraryResult, vaultResult].every(result => result.status === 'rejected')) setNotice(ru ? 'Локальные индексы недоступны.' : 'Local indexes are unavailable.');
-    setBusy(false);
-  };
-  React.useEffect(() => { if (tab.object?.query) void runSearch(); }, []);
-  const total = captureResults.length + taskResults.length + documentResults.length + discoveryResults.length + musicResults.length + videoResults.length + shortResults.length + fileResults.length + contactResults.length + inboxResults.length + webLibraryResults.length + vaultResults.length + aiResults.length;
-  const extendedResults = <>
-    {contactResults.length > 0 && <section><span className="section-label">{t.contacts}</span>{contactResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'contacts', id: item.id, label: item.displayName }, { allowDuplicate: true })}><strong>{item.displayName}</strong><small>{item.kind}{item.emails[0] ? ` · ${item.emails[0].value}` : ''}</small></button>)}</section>}
-    {inboxResults.length > 0 && <section><span className="section-label">{t.inbox}</span>{inboxResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'inbox', id: item.id, label: item.presentation.title }, { allowDuplicate: true })}><strong>{item.presentation.title}</strong><small>{item.presentation.sender ?? item.kind}{item.presentation.snippet ? ` · ${item.presentation.snippet}` : ''}</small></button>)}</section>}
-    {webLibraryResults.length > 0 && <section><span className="section-label">{t.webLibrary}</span>{webLibraryResults.map(result => <button key={result.entry.id} onClick={() => shell.openReference({ kind: 'web-library', id: result.entry.id, label: result.entry.title }, { allowDuplicate: true })}><strong>{result.entry.title}</strong><small>{result.entry.sourceUrl} · {result.snippet}</small></button>)}</section>}
-    {vaultResults.length > 0 && <section><span className="section-label">{t.vault}</span>{vaultResults.map(result => <button key={`${result.vaultId}:${result.note.id}`} onClick={() => shell.openReference({ kind: 'vault', id: result.note.id, vaultId: result.vaultId, label: result.note.title }, { allowDuplicate: true })}><strong>{result.note.title}</strong><small>{result.note.path} · {result.snippet}</small></button>)}</section>}
-    {aiResults.length > 0 && <section><span className="section-label">{t.localAI}</span>{aiResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'ai', id: item.id, label: item.title }, { allowDuplicate: true })}><strong>{item.title}</strong><small>{item.messages.at(-1)?.text.slice(0, 180) ?? ''}</small></button>)}</section>}
-  </>;
-  return <div className="object-surface search-surface"><div className="surface-kicker"><span className="surface-icon"><Icon name="search" size={15} /></span><span>{t.search}</span><span className="surface-badge">{t.local}</span></div><h1>{t.search}</h1><p className="surface-description">{ru ? 'Поиск выполняется по локальным захватам, задачам, документам, музыке, видео, ленте Shorts, файлам, контактам, входящим, веб-библиотеке, хранилищу, AI-сессиям и разрешённым объектам обнаружения.' : 'Search runs across local Capture, Tasks, Documents, Music, Video, Shorts, Files, Contacts, Inbox, Web Library, Vault, AI sessions, and permission-aware Discovery objects.'}</p><form className="search-form" onSubmit={runSearch}><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'Введите текст для поиска…' : 'Search local data…'} aria-label={t.search}/><button className="primary-button" type="submit" disabled={busy || !query.trim()}>{busy ? <Icon name="loader" size={14} /> : <Icon name="search" size={14} />}<span>{t.search}</span></button></form>{notice && <p className="maps-notice" role="alert">{notice}</p>}{query.trim() && !busy && <p className="search-count" role="status">{total} {ru ? ruPlural(total, 'результат', 'результата', 'результатов') : total === 1 ? 'result' : 'results'}</p>}<div className="search-results">{captureResults.length > 0 && <section><span className="section-label">{t.capture}</span>{captureResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }, { allowDuplicate: true })}><strong>{item.title}</strong><small>{captureStateLabel(item.state, ru)} · {capturePreviewText(item).slice(0, 180)}</small></button>)}</section>}{taskResults.length > 0 && <section><span className="section-label">{t.tasks}</span>{taskResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'tasks', id: item.id, label: item.title }, { allowDuplicate: true })}><strong>{item.title}</strong><small>{taskStatusLabel(item.status, ru)} · {formatTimestamp(item.updatedAt, ru)}</small></button>)}</section>}{documentResults.length > 0 && <section><span className="section-label">{t.documents}</span>{documentResults.map(item => <button key={`${item.documentId}:${item.locator.page ?? item.locator.chapterId ?? item.snippet}`} onClick={() => shell.openReference({ kind: 'document', id: item.fileId, label: item.title }, { allowDuplicate: true })}><strong>{item.title}</strong><small>{item.format} · {item.snippet}</small></button>)}</section>}{musicResults.length > 0 && <section><span className="section-label">{t.music}</span>{musicResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'music', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.codec} · {formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}{videoResults.length > 0 && <section><span className="section-label">{t.video}</span>{videoResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'video', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.videoStream.container} · {formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}{shortResults.length > 0 && <section><span className="section-label">{t.shorts}</span>{shortResults.map(item => <button key={item.id} onClick={() => shell.openReference({ kind: 'shorts', id: item.id, label: item.payload.title }, { allowDuplicate: true })}><strong>{item.payload.title}</strong><small>{item.payload.shortForm?.caption ?? formatMediaDuration(item.payload.durationMs)}</small></button>)}</section>}{fileResults.length > 0 && <section><span className="section-label">{t.files}</span>{fileResults.map(item => <button key={item.entry.id} onClick={() => shell.openReference({ kind: 'file', id: item.entry.id, label: item.entry.name }, { allowDuplicate: true })}><strong>{item.entry.name}</strong><small>{item.folder.name} · {item.entry.kind}</small></button>)}</section>}{extendedResults}{discoveryResults.length > 0 && <section><span className="section-label">Discovery</span>{discoveryResults.map(result => <button key={result.object.id} onClick={() => shell.openReference({ kind: discoveryObjectKind(result.object.type), id: result.object.id, label: discoveryObjectLabel(result.object) }, { allowDuplicate: true })}><strong>{discoveryObjectLabel(result.object)}</strong><small>{result.object.type} · {result.highlights.join(', ') || result.object.author}</small></button>)}</section>}{query.trim() && !busy && total === 0 && <div className="adapter-note"><span><Icon name="search" size={17} /></span><div><strong>{ru ? 'Ничего не найдено.' : 'No local matches.'}</strong><small>{ru ? 'Попробуйте другой запрос или сначала создайте локальный объект.' : 'Try another query or create a local object first.'}</small></div></div>}</div></div>;
 }
 
 function discoveryObjectKind(type: string): DesktopTab['kind'] {
@@ -2894,8 +2769,9 @@ function CaptureSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShel
   const [runtime, setRuntime] = React.useState<DesktopCaptureRuntime | undefined>(getDesktopCaptureRuntime);
   const [page, setPage] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['list']>>>({ items: [], total: 0 });
   const initialCaptureId = tab.object?.id && tab.object.id !== 'capture' ? tab.object.id : '';
-  const [value, setValue] = React.useState(''); const [query, setQuery] = React.useState(''); const [selectedId, setSelectedId] = React.useState(initialCaptureId); const [suggestions, setSuggestions] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['suggestions']>>>([]); const [destination, setDestination] = React.useState<CaptureDestinationKind>('VAULT'); const [preview, setPreview] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['preview']>>>(); const [notice, setNotice] = React.useState(''); const ru = t.home === 'Главная';
-  const refresh = React.useCallback(async () => { if (!runtime) return; try { const next = await runtime.list({ query: query.trim() || undefined, limit: 64 }); setPage(next); setSelectedId(current => current && next.items.some(item => item.id === current) ? current : initialCaptureId && next.items.some(item => item.id === initialCaptureId) ? initialCaptureId : ''); setNotice(''); } catch { setNotice(t.captureNoRuntime); } }, [initialCaptureId, query, runtime, t.captureNoRuntime]);
+  const [value, setValue] = React.useState(''); const [query, setQuery] = React.useState(''); const [selectedId, setSelectedId] = React.useState(initialCaptureId); const [suggestions, setSuggestions] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['suggestions']>>>([]); const [destination, setDestination] = React.useState<CaptureDestinationKind>('TASK'); const [preview, setPreview] = React.useState<Awaited<ReturnType<DesktopCaptureRuntime['preview']>>>(); const [notice, setNotice] = React.useState(''); const ru = t.home === 'Главная';
+  const destinations: readonly CaptureDestinationKind[] = runtime?.destinations ?? ['TASK', 'VAULT', 'WEB_LIBRARY', 'FILES', 'PHOTOS', 'DOCUMENTS', 'CONTACTS', 'CALENDAR', 'WORKBOARD', 'SHARED_FOLDER'];
+  const refresh = React.useCallback(async () => { if (!runtime) return; try { const next = await runtime.list({ query: query.trim() || undefined, limit: 64 }); setPage(next); setSelectedId(current => current && next.items.some(item => item.id === current) ? current : initialCaptureId && next.items.some(item => item.id === initialCaptureId) ? initialCaptureId : ''); } catch { setNotice(t.captureNoRuntime); } }, [initialCaptureId, query, runtime, t.captureNoRuntime]);
   React.useEffect(() => subscribeDesktopCaptureRuntime(() => setRuntime(getDesktopCaptureRuntime())), []);
   React.useEffect(() => { void refresh(); }, [refresh]);
   React.useEffect(() => { if (!runtime?.subscribe) return; return runtime.subscribe(() => void refresh()); }, [refresh, runtime]);
@@ -2913,7 +2789,7 @@ function CaptureSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShel
       await refresh(); await select(item);
     } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); }
   };
-  const route = async () => { if (!runtime || !selectedId) return; try { if (!preview) { setPreview(await runtime.preview(selectedId, destination)); return; } await runtime.route(selectedId, destination); setNotice(ru ? 'Маршрут выполнен.' : 'Capture routed.'); setPreview(undefined); await refresh(); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); } };
+  const route = async () => { if (!runtime || !selectedId) return; try { if (!preview) { setPreview(await runtime.preview(selectedId, destination)); return; } const result = await runtime.route(selectedId, destination); setNotice(ru ? 'Объект отправлен.' : 'Capture routed.'); setPreview(undefined); await refresh(); if (destination === 'TASK') shell.openReference({ kind: 'tasks', id: result.reference.id, label: result.reference.label }); } catch (error) { setNotice(error instanceof Error ? error.message : t.captureNoRuntime); } };
   const selected = page.items.find(item => item.id === selectedId);
   return <div className="capture-surface" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); event.stopPropagation(); const files = [...event.dataTransfer.files].slice(0, 32); if (files.length) { void Promise.all(files.map(captureFile)); return; } const raw = event.dataTransfer.getData('application/x-keystone-ref'); if (raw && runtime) { try { const ref = JSON.parse(raw) as { type: string; id: string; label?: string; dataClass?: 'PUBLIC' | 'USER_EXPLICIT' | 'PRIVATE' | 'SECRET' }; void runtime.capture.captureReference({ reference: { type: ref.type, id: ref.id, label: ref.label, dataClass: ref.dataClass ?? 'USER_EXPLICIT' }, source: { kind: 'KEYSTONE_OBJECT', label: ref.label } }).then(item => { void refresh(); void select(item); }); } catch { setNotice(t.captureUnsafe); } } }}>
     <div className="surface-kicker"><span className="surface-icon"><Icon name="capture" size={15} /></span><span>{t.capture}</span><span className="surface-badge">{runtime?.hostConnected ? (ru ? 'Подключено' : 'Connected') : t.local}</span></div>
@@ -2921,29 +2797,12 @@ function CaptureSurface({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShel
     {!runtime?.hostConnected && <div className="adapter-note"><span><Icon name="info" size={17} /></span><div><strong>{t.captureNoRuntime}</strong><small>{t.captureUnsafe}</small></div></div>}
     <div className="capture-composer"><textarea value={value} onChange={event => setValue(event.target.value)} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} onKeyDown={event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void capture(); } }} /><div className="capture-actions"><button className="primary-button" onClick={() => void capture()} disabled={!value.trim()}>{t.capture}</button><button className="secondary-button" onClick={() => void captureClipboard()}>{t.captureClipboard}</button><button className="secondary-button" onClick={() => void pickCaptureFile()}>{t.files}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserPage({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureBrowser}</button><button className="secondary-button" onClick={() => { if (!runtime) { setNotice(t.captureNoRuntime); return; } void runtime.captureBrowserSelection({ ownerConfirmed: true }).then(item => { void refresh(); void select(item); }).catch(error => setNotice(error instanceof Error ? error.message : t.captureNoRuntime)); }}>{t.captureSelection}</button></div></div>
     <div className="capture-toolbar"><input value={query} onChange={event => setQuery(event.target.value)} placeholder={ru ? 'Поиск захватов' : 'Search tray'} aria-label={ru ? 'Поиск захватов' : 'Search tray'} /><span>{page.total} · {t.captureTray}</span><button className="secondary-button" onClick={() => void refresh()}>{t.refresh}</button></div>
-    <div className="capture-layout"><div className="capture-list"><span className="section-label">{t.captureTray}</span>{page.items.length ? page.items.map(item => <button key={item.id} className={`capture-item${item.id === selectedId ? ' active' : ''}`} onClick={() => void select(item)}><span className="capture-item-icon"><Icon name={item.payload.kind === 'URL' || item.payload.kind === 'BROWSER_PAGE' ? 'external-link' : item.payload.kind === 'FILE' || item.payload.kind === 'IMAGE' || item.payload.kind === 'DOCUMENT' ? 'file-text' : 'capture'} size={16} /></span><span><strong>{item.title}</strong><small>{captureSourceLabel(item.provenance.source.kind, ru)} · {captureStateLabel(item.state, ru)}</small></span></button>) : <div className="adapter-note"><span><Icon name="capture" size={17} /></span><div><strong>{t.captureNoItems}</strong><small>{t.captureDrop}</small></div></div>}</div><div className="capture-detail">{selected ? <><span className="section-label">{t.captureSource}</span><h2>{selected.title}</h2><p className="capture-preview-text">{capturePreviewText(selected)}</p><small>{captureSourceLabel(selected.provenance.source.kind, ru)} · {captureStateLabel(selected.state, ru)} · {captureAccessLabel(selected.provenance.dataClass, ru)}</small><div className="capture-suggestions"><span className="section-label">{t.captureSuggestions}</span>{suggestions.map(item => <button key={item.destination} className={destination === item.destination ? 'selected' : ''} onClick={() => { setDestination(item.destination); setPreview(undefined); }}><strong>{captureDestinationLabel(item.destination, ru)}</strong><small>{item.reason}</small></button>)}</div><div className="capture-route"><select value={destination} onChange={event => { setDestination(event.target.value as CaptureDestinationKind); setPreview(undefined); }}><option value="TASK">{captureDestinationLabel('TASK', ru)}</option><option value="VAULT">{captureDestinationLabel('VAULT', ru)}</option><option value="WEB_LIBRARY">{captureDestinationLabel('WEB_LIBRARY', ru)}</option><option value="FILES">{captureDestinationLabel('FILES', ru)}</option><option value="PHOTOS">{captureDestinationLabel('PHOTOS', ru)}</option><option value="DOCUMENTS">{captureDestinationLabel('DOCUMENTS', ru)}</option><option value="CONTACTS">{captureDestinationLabel('CONTACTS', ru)}</option><option value="CALENDAR">{captureDestinationLabel('CALENDAR', ru)}</option><option value="WORKBOARD">{captureDestinationLabel('WORKBOARD', ru)}</option><option value="SHARED_FOLDER">{captureDestinationLabel('SHARED_FOLDER', ru)}</option></select><button className="primary-button" onClick={() => void route()}>{preview ? t.captureConfirm : t.capturePreview}</button><button className="secondary-button" onClick={() => { void runtime!.dismiss(selected.id).then(() => refresh()); }}>{t.captureDismiss}</button></div>{preview && <div className="capture-consequence"><strong>{preview.title}</strong><small>{preview.summary}</small><small>{preview.disclosure} · {preview.warnings.join(' ') || t.privacy}</small></div>}</> : <div className="placeholder-surface"><span className="placeholder-icon"><Icon name="capture" size={26} /></span><h2>{t.captureTray}</h2><p>{t.captureDrop}</p></div>}</div></div>{notice && <small className="continuity-notice">{notice}</small>}
+    <div className="capture-layout"><div className="capture-list"><span className="section-label">{t.captureTray}</span>{page.items.length ? page.items.map(item => <button key={item.id} className={`capture-item${item.id === selectedId ? ' active' : ''}`} onClick={() => void select(item)}><span className="capture-item-icon"><Icon name={item.payload.kind === 'URL' || item.payload.kind === 'BROWSER_PAGE' ? 'external-link' : item.payload.kind === 'FILE' || item.payload.kind === 'IMAGE' || item.payload.kind === 'DOCUMENT' ? 'file-text' : 'capture'} size={16} /></span><span><strong>{item.title}</strong><small>{captureSourceLabel(item.provenance.source.kind, ru)} · {captureStateLabel(item.state, ru)}</small></span></button>) : <div className="adapter-note"><span><Icon name="capture" size={17} /></span><div><strong>{t.captureNoItems}</strong><small>{t.captureDrop}</small></div></div>}</div><div className="capture-detail">{selected ? <><span className="section-label">{t.captureSource}</span><h2>{selected.title}</h2><p className="capture-preview-text">{capturePreviewText(selected)}</p><small>{captureSourceLabel(selected.provenance.source.kind, ru)} · {captureStateLabel(selected.state, ru)} · {captureAccessLabel(selected.provenance.dataClass, ru)}</small><div className="capture-suggestions"><span className="section-label">{t.captureSuggestions}</span>{suggestions.filter(item => destinations.includes(item.destination)).map(item => <button key={item.destination} className={destination === item.destination ? 'selected' : ''} onClick={() => { setDestination(item.destination); setPreview(undefined); }}><strong>{captureDestinationLabel(item.destination, ru)}</strong><small>{item.reason}</small></button>)}</div><div className="capture-route"><select aria-label={ru ? 'Куда отправить' : 'Destination'} value={destination} onChange={event => { setDestination(event.target.value as CaptureDestinationKind); setPreview(undefined); }}>{destinations.map(kind => <option key={kind} value={kind}>{captureDestinationLabel(kind, ru)}</option>)}</select><button className="primary-button" disabled={!destinations.includes(destination) || (runtime?.destinations?.length === 1 && !['TEXT', 'URL'].includes(selected.payload.kind))} onClick={() => void route()}>{preview ? t.captureConfirm : t.capturePreview}</button><button className="secondary-button" onClick={() => { void runtime!.dismiss(selected.id).then(() => refresh()); }}>{t.captureDismiss}</button></div>{preview && <div className="capture-consequence"><strong>{preview.title}</strong><small>{preview.summary}</small><small>{preview.disclosure} · {preview.warnings.join(' ') || t.privacy}</small></div>}</> : <div className="placeholder-surface"><span className="placeholder-icon"><Icon name="capture" size={26} /></span><h2>{t.captureTray}</h2><p>{t.captureDrop}</p></div>}</div></div>{notice && <small className="continuity-notice">{notice}</small>}
   </div>;
 }
 
 
 function capturePreviewText(item: Awaited<ReturnType<DesktopCaptureRuntime['list']>>['items'][number]): string { const payload = item.payload; if (payload.kind === 'TEXT') return payload.text; if (payload.kind === 'URL') return payload.url; if (payload.kind === 'BROWSER_PAGE') return `${payload.url}\n${payload.excerpt ?? ''}`; if (payload.kind === 'BROWSER_SELECTION') return payload.selectedText; if (payload.kind === 'REFERENCE') return `${payload.reference.type} · ${payload.reference.id}`; if (payload.kind === 'CONTACT_CARD') return payload.vCard; if (payload.kind === 'MULTI') return `${payload.items.length} items`; return `${payload.file.name} · ${payload.file.size} B`;
-}
-
-function TypedReferenceDock({ tab, shell, t }: { tab: DesktopTab; shell: DesktopShellController; t: Copy }) {
-  const ref = tab.object;
-  if (!ref) return null;
-  const link = keystoneLinkForReference(ref);
-  const copyLink = async () => {
-    try { await navigator.clipboard?.writeText(link); shell.setNotice(t.home === 'Главная' ? 'Ссылка скопирована' : 'Link copied'); }
-    catch { shell.setNotice(t.home === 'Главная' ? 'Не удалось скопировать ссылку' : 'Could not copy link'); }
-  };
-  return <div className="reference-dock" aria-label={t.links}>
-    <span className="section-label">{t.links}</span>
-    <div>
-      <button type="button" onClick={() => void copyLink()}><span><Icon name="link" size={13}/></span>{t.shareLink}</button>
-      <button type="button" onClick={() => shell.openReference(ref, { allowDuplicate: true })}><span><Icon name="plus" size={13}/></span>{t.openInTab}</button>
-    </div>
-  </div>;
 }
 
 function InlineKeystoneLinks({ text, shell }: { text: string; shell: DesktopShellController }) {
@@ -2986,22 +2845,6 @@ function WorkspaceMenu({ shell, t, onClose }: { shell: DesktopShellController; t
   return <div className="floating-menu workspace-menu"><span className="section-label">{t.switcher}</span>{records.map(record => <button key={record.id} className={record.id === shell.getSnapshot().workspace.id ? 'workspace-option active' : 'workspace-option'} onClick={() => { shell.switchWorkspace(record.id); onClose(); }}><span className="workspace-dot"/><span>{record.name}</span><small>{tabCount(record.tabs.length)}</small></button>)}<div className="workspace-create"><input value={newName} onChange={event => setNewName(event.target.value)} placeholder={t.newWorkspace} onKeyDown={event => { if (event.key === 'Enter' && newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}/><button onClick={() => { if (newName.trim()) { shell.createWorkspace(newName); setNewName(''); onClose(); } }}>+</button></div><div className="workspace-menu-actions"><button onClick={() => { shell.renameWorkspace(window.prompt(t.rename, shell.getSnapshot().workspace.name) ?? shell.getSnapshot().workspace.name); onClose(); }}>{t.rename}</button><button onClick={() => { shell.removeWorkspace(); onClose(); }}>{t.delete}</button></div></div>;
 }
 
-function CommandPalette({ commands, t, onRun, onClose }: { commands: ShellCommand[]; t: Copy; onRun: (command: ShellCommand) => void; onClose: () => void }) {
-  const [query, setQuery] = React.useState('');
-  const [selectedIndex, setSelectedIndex] = React.useState(0);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  React.useEffect(() => inputRef.current?.focus(), []);
-  const filtered = commands.filter(command => command.available !== false && `${command.label} ${command.description ?? ''} ${(command.keywords ?? []).join(' ')}`.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
-  React.useEffect(() => setSelectedIndex(index => Math.min(index, Math.max(0, filtered.length - 1))), [filtered.length]);
-  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown') { event.preventDefault(); setSelectedIndex(index => filtered.length ? (index + 1) % filtered.length : 0); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); setSelectedIndex(index => filtered.length ? (index - 1 + filtered.length) % filtered.length : 0); }
-    else if (event.key === 'Enter') { event.preventDefault(); const command = filtered[selectedIndex]; if (command) onRun(command); }
-    else if (event.key === 'Escape') { event.preventDefault(); onClose(); }
-  };
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label={t.command}><div className="palette-input"><span>⌘</span><input ref={inputRef} value={query} onChange={event => { setQuery(event.target.value); setSelectedIndex(0); }} onKeyDown={onKeyDown} placeholder={t.commandHint} aria-controls="command-palette-list"/><kbd>ESC</kbd></div><div className="palette-list" id="command-palette-list">{filtered.length ? filtered.map((command, index) => <button key={command.id} type="button" className={index === selectedIndex ? 'palette-command selected' : 'palette-command'} onMouseEnter={() => setSelectedIndex(index)} onClick={() => onRun(command)}><span className="command-symbol">›</span><span><strong>{command.label}</strong>{command.description && <small>{command.description}</small>}</span><kbd>{command.id === 'split-pane' ? 'Ctrl \\' : index < 9 ? `${index + 1}` : ''}</kbd></button>) : <div className="palette-empty">{t.noCommands}</div>}</div><footer><span>{t.local}</span><span>↑↓ {t.navigate} · Enter {t.run.toLowerCase()}</span></footer></section></div>;
-}
-
 function OmniboxMenu({ value, t, onChoose }: { value: string; t: Copy; onChoose: (value: string) => void }) {
   const trimmed = value.trim();
   const suggestions: Array<{ value: string; icon: IconName; label: string }> = trimmed ? [{ value: trimmed, icon: 'search', label: t.search }, { value: `>${trimmed}`, icon: 'command', label: t.command }] : [];
@@ -3011,8 +2854,8 @@ function OmniboxMenu({ value, t, onChoose }: { value: string; t: Copy; onChoose:
 function QuickActions({ t, onChoose, onCapture, onNewTab }: { t: Copy; onChoose: (ref: KeystoneObjectReference) => void; onCapture: () => void; onNewTab: () => void }) {
   const ru = t.home === 'Главная';
   const actions: Array<{ key: string; label: string; icon: IconName; ref?: KeystoneObjectReference; run?: () => void }> = [
-    { key: 'task', label: ru ? 'Новая задача' : 'New Task', icon: 'task', ref: { kind: 'tasks', id: 'tasks', label: t.task } },
-    { key: 'document', label: ru ? 'Новый документ' : 'New Document', icon: 'document', ref: { kind: 'document', id: 'documents', label: t.documents } },
+    { key: 'task', label: ru ? 'Новая задача' : 'New Task', icon: 'task', ref: { kind: 'tasks', id: 'new-task', label: t.task } },
+    { key: 'document', label: ru ? 'Новый документ' : 'New Document', icon: 'document', ref: { kind: 'document', id: 'new-document', label: ru ? 'Новый документ' : 'New document' } },
     { key: 'ai', label: ru ? 'Новый AI-чат' : 'New AI Chat', icon: 'bot', ref: { kind: 'ai', id: 'new-ai-chat', label: t.localAI } },
     { key: 'tab', label: ru ? 'Новая вкладка' : 'New Tab', icon: 'plus', run: onNewTab },
     { key: 'capture', label: t.capture, icon: 'capture', run: onCapture },
@@ -3040,7 +2883,7 @@ function QuickCaptureOverlay({ shell, t, onClose }: { shell: DesktopShellControl
       setBusy(false);
     }
   };
-  return <div className="quick-capture-backdrop" role="presentation" onPointerDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="quick-capture-overlay" role="dialog" aria-modal="true" aria-labelledby="quick-capture-title"><div className="quick-capture-heading"><div><span className="section-label">{t.local}</span><h2 id="quick-capture-title">{t.capture}</h2></div><IconButton icon="close" size={14} label={t.close} onClick={onClose} /></div><textarea ref={inputRef} value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') onClose(); if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} /><div className="quick-capture-footer"><small>{isMac() ? '⌘' : 'Ctrl'} + Enter · {t.saved.toLowerCase()}</small><div><button type="button" className="secondary-button" onClick={onClose}>{t.cancel}</button><button type="button" className="primary-button" onClick={() => void save()} disabled={!value.trim() || busy}>{busy ? '…' : t.capture}</button></div></div></section></div>;
+  return <div className="quick-capture-backdrop" role="presentation" onPointerDown={event => { if (event.currentTarget === event.target) onClose(); }}><section className="quick-capture-overlay" role="dialog" aria-modal="true" aria-labelledby="quick-capture-title"><div className="quick-capture-heading"><div><span className="section-label">{t.local}</span><h2 id="quick-capture-title">{t.capture}</h2></div><IconButton icon="close" size={14} label={t.close} onClick={onClose} /></div><textarea ref={inputRef} value={value} onChange={event => setValue(event.target.value)} onKeyDown={event => { if (event.key === 'Escape') onClose(); if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); void save(); } }} placeholder={t.capturePlaceholder} aria-label={t.capturePlaceholder} /><div className="quick-capture-footer"><button type="button" className="quiet-button" onClick={() => { shell.openReference({ kind: 'capture', id: 'capture', label: t.capture }); onClose(); }}>{t.home === 'Главная' ? 'Открыть список' : 'Open capture tray'}</button><small>{isMac() ? '⌘' : 'Ctrl'} + Enter · {t.saved.toLowerCase()}</small><div><button type="button" className="secondary-button" onClick={onClose}>{t.cancel}</button><button type="button" className="primary-button" onClick={() => void save()} disabled={!value.trim() || busy}>{busy ? '…' : t.capture}</button></div></div></section></div>;
 }
 
 function handleDrop(event: React.DragEvent, shell: DesktopShellController, fallback?: KeystoneObjectReference, paneId = shell.currentPaneId) {

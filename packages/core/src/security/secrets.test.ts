@@ -80,6 +80,8 @@ describe('R0P60 secret boundary', () => {
     service.consumeExportIntent(intent, handle, 'alice');
     expect(() => service.consumeExportIntent(intent, handle, 'alice')).toThrow(/replayed/i);
     const importIntent = service.createImportIntent({ ownerIdentityId: 'alice', confirmed: true });
+    // Owner identities are base64url public keys: about 3% start with '-' or '_'.
+    expect(service.createImportIntent({ ownerIdentityId: '-9VeCNqpWnkNsOW5KqFsK2SqyzNhLVkZJjhPnakKDaI', confirmed: true }).ownerIdentityId).toBe('-9VeCNqpWnkNsOW5KqFsK2SqyzNhLVkZJjhPnakKDaI');
     service.consumeImportIntent(importIntent, 'alice');
     expect(() => service.consumeImportIntent(importIntent, 'alice')).toThrow(/replayed/i);
   });

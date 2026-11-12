@@ -18,6 +18,7 @@ import {
 export interface DesktopCaptureRuntime {
   readonly capture: CaptureService;
   readonly hostConnected?: boolean;
+  readonly destinations?: readonly CaptureDestinationKind[];
   list(query?: CaptureListQuery): Promise<CapturePage>;
   search(query: string, options?: Omit<CaptureListQuery, 'query'>): Promise<CapturePage>;
   captureText(input: CaptureTextInput | string): Promise<CaptureItem>;
@@ -42,10 +43,11 @@ export function installDesktopCaptureRuntime(runtime: DesktopCaptureRuntime | un
 export function getDesktopCaptureRuntime(): DesktopCaptureRuntime | undefined { return current; }
 export function subscribeDesktopCaptureRuntime(listener: () => void): () => void { listeners.add(listener); return () => listeners.delete(listener); }
 
-export function createDesktopCaptureRuntime(service: CaptureService, options: { readonly hostConnected?: boolean; readonly browser?: CaptureBrowserBoundary } = {}): DesktopCaptureRuntime {
+export function createDesktopCaptureRuntime(service: CaptureService, options: { readonly hostConnected?: boolean; readonly destinations?: readonly CaptureDestinationKind[]; readonly browser?: CaptureBrowserBoundary } = {}): DesktopCaptureRuntime {
   return {
     capture: service,
     hostConnected: options.hostConnected ?? false,
+    destinations: options.destinations,
     list: query => service.list(query),
     search: (query, queryOptions) => service.search(query, queryOptions),
     captureText: input => service.captureText(input),
@@ -66,4 +68,4 @@ export function createDesktopCaptureRuntime(service: CaptureService, options: { 
 
 /** Text/tray fallback keeps Quick Capture useful before native bootstrap. */
 const fallback = new CaptureService();
-current = createDesktopCaptureRuntime(fallback, { hostConnected: false });
+current = createDesktopCaptureRuntime(fallback, { hostConnected: false, destinations: [] });
