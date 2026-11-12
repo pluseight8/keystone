@@ -625,7 +625,7 @@ describe('real Hyperswarm network validation', () => {
       const configPath = join(root, 'network.json'); await atomicWrite(configPath, { root, bootstrap: `127.0.0.1:${port}`, seeds });
       let alice = await startPeer('alice', configPath); let mallory = await startPeer('mallory', configPath);
       const warmup = await command(root, 'alice', { action: 'sendText', peer: 'mallory', text: 'warmup delivery' });
-      await eventually(async () => (await command(root, 'mallory', { action: 'history', peer: 'alice' })).result.messages.some((message: { id: string }) => message.id === warmup.result.id), 20_000);
+      await eventually(async () => (await command(root, 'mallory', { action: 'history', peer: 'alice' })).result.messages.some((message: { id: string }) => message.id === warmup.result.id), 30_000); // first contact includes DHT discovery; 30 s matches the first-message wait in the main scenario
       await command(root, 'mallory', { action: 'stop' }); await waitExit(mallory);
       const queued = await command(root, 'alice', { action: 'sendText', peer: 'mallory', text: 'queued across restart' });
       expect(queued.ok).toBe(true);

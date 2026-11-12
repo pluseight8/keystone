@@ -15,6 +15,15 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use url::Url;
+// Native players are paused by signal; Windows has no equivalent, and the non-unix send_*_signal helpers report that.
+#[cfg(unix)]
+const PAUSE_SIGNAL: i32 = libc::SIGSTOP;
+#[cfg(unix)]
+const RESUME_SIGNAL: i32 = libc::SIGCONT;
+#[cfg(not(unix))]
+const PAUSE_SIGNAL: i32 = 0;
+#[cfg(not(unix))]
+const RESUME_SIGNAL: i32 = 0;
 mod identity_store;
 mod knowledge;
 mod local_http;
@@ -426,7 +435,7 @@ fn desktop_video_pause(state: State<'_, DesktopVideoState>, payload: DesktopVide
     update_video_completion(session)?;
     if session.child.is_none() || session.paused { return Ok(()); }
     session.position_ms = video_position_ms(session);
-    if let Some(child) = session.child.as_ref() { send_video_signal(child, libc::SIGSTOP)?; }
+    if let Some(child) = session.child.as_ref() { send_video_signal(child, PAUSE_SIGNAL)?; }
     session.started_at = None; session.paused = true;
     Ok(())
 }
@@ -437,7 +446,7 @@ fn desktop_video_resume(state: State<'_, DesktopVideoState>, payload: DesktopVid
     let session = sessions.get_mut(&payload.session_id).ok_or("Desktop video session is unavailable")?;
     update_video_completion(session)?;
     if session.child.is_none() || !session.paused { return Ok(()); }
-    if let Some(child) = session.child.as_ref() { send_video_signal(child, libc::SIGCONT)?; }
+    if let Some(child) = session.child.as_ref() { send_video_signal(child, RESUME_SIGNAL)?; }
     session.started_at = Some(Instant::now()); session.paused = false;
     Ok(())
 }
@@ -450,7 +459,7 @@ fn desktop_video_seek(state: State<'_, DesktopVideoState>, payload: DesktopVideo
     let position = payload.position_ms.min(session.duration_ms);
     start_video_process(session, position)?;
     if was_paused {
-        if let Some(child) = session.child.as_ref() { send_video_signal(child, libc::SIGSTOP)?; }
+        if let Some(child) = session.child.as_ref() { send_video_signal(child, PAUSE_SIGNAL)?; }
         session.started_at = None; session.paused = true;
     }
     Ok(())
@@ -468,7 +477,7 @@ fn desktop_video_volume(state: State<'_, DesktopVideoState>, payload: DesktopVid
     if was_playing || was_paused {
         start_video_process(session, position)?;
         if was_paused {
-            if let Some(child) = session.child.as_ref() { send_video_signal(child, libc::SIGSTOP)?; }
+            if let Some(child) = session.child.as_ref() { send_video_signal(child, PAUSE_SIGNAL)?; }
             session.started_at = None; session.paused = true;
         }
     }
@@ -658,7 +667,7 @@ fn desktop_audio_pause(state: State<'_, DesktopAudioState>, payload: DesktopAudi
     update_audio_completion(session)?;
     if session.child.is_none() || session.paused { return Ok(()); }
     session.position_ms = audio_position_ms(session);
-    if let Some(child) = session.child.as_ref() { send_audio_signal(child, libc::SIGSTOP)?; }
+    if let Some(child) = session.child.as_ref() { send_audio_signal(child, PAUSE_SIGNAL)?; }
     session.started_at = None; session.paused = true;
     Ok(())
 }
@@ -669,7 +678,7 @@ fn desktop_audio_resume(state: State<'_, DesktopAudioState>, payload: DesktopAud
     let session = sessions.get_mut(&payload.session_id).ok_or("Desktop audio session is unavailable")?;
     update_audio_completion(session)?;
     if session.child.is_none() || !session.paused { return Ok(()); }
-    if let Some(child) = session.child.as_ref() { send_audio_signal(child, libc::SIGCONT)?; }
+    if let Some(child) = session.child.as_ref() { send_audio_signal(child, RESUME_SIGNAL)?; }
     session.started_at = Some(Instant::now()); session.paused = false;
     Ok(())
 }
@@ -682,7 +691,7 @@ fn desktop_audio_seek(state: State<'_, DesktopAudioState>, payload: DesktopAudio
     let position = payload.position_ms.min(session.duration_ms);
     start_audio_process(session, position)?;
     if was_paused {
-        if let Some(child) = session.child.as_ref() { send_audio_signal(child, libc::SIGSTOP)?; }
+        if let Some(child) = session.child.as_ref() { send_audio_signal(child, PAUSE_SIGNAL)?; }
         session.started_at = None; session.paused = true;
     }
     Ok(())
@@ -700,7 +709,7 @@ fn desktop_audio_volume(state: State<'_, DesktopAudioState>, payload: DesktopAud
     if was_playing || was_paused {
         start_audio_process(session, position)?;
         if was_paused {
-            if let Some(child) = session.child.as_ref() { send_audio_signal(child, libc::SIGSTOP)?; }
+            if let Some(child) = session.child.as_ref() { send_audio_signal(child, PAUSE_SIGNAL)?; }
             session.started_at = None; session.paused = true;
         }
     }
